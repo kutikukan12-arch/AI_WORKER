@@ -1695,7 +1695,20 @@ async function handleNext(message) {
   const next = filtered.find(t => t.state === taskManager.STATES.PENDING);
 
   if (!next) {
-    await message.reply(`📋 **次タスク**\n\nProject: **${currentPid}**\n実行可能なタスクはありません。`);
+    // なぜ実行できないか状態別に詳細を表示
+    const stateDetail = {};
+    filtered.forEach(t => { stateDetail[t.state] = (stateDetail[t.state] || 0) + 1; });
+    const detailLines = Object.entries(stateDetail)
+      .filter(([, c]) => c > 0)
+      .map(([s, c]) => `  ${taskManager.STATE_EMOJI[s] || '❓'} ${s}: ${c}件`);
+    const hint = stateDetail['レビュー待ち'] > 0 || stateDetail['保留'] > 0
+      ? '\n💡 `!task cleanup` で整理するか `!task resume <id>` で再開できます。'
+      : '';
+    await message.reply(
+      `📋 **次タスク**\n\nProject: **${currentPid}**\n実行可能な未着手タスクはありません。` +
+      (detailLines.length > 0 ? '\n\n現在のタスク:\n' + detailLines.join('\n') : '') +
+      hint
+    );
     return;
   }
 
@@ -2816,9 +2829,22 @@ async function handleAutoRun(message, args) {
   const prepared = await prepareNextTask(message, 'auto');
 
   if (!prepared) {
+    // なぜ実行できないか状態別に詳細を表示
+    const currentPidAuto = projectManager.getCurrentProject(message.channelId);
+    const allForAuto     = taskManager.listTasksByPriority();
+    const filteredAuto   = projectManager.filterTasksByProject(allForAuto, currentPidAuto);
+    const stateDetailAuto = {};
+    filteredAuto.forEach(t => { stateDetailAuto[t.state] = (stateDetailAuto[t.state] || 0) + 1; });
+    const detailLinesAuto = Object.entries(stateDetailAuto)
+      .filter(([, c]) => c > 0)
+      .map(([s, c]) => `  ${taskManager.STATE_EMOJI[s] || '❓'} ${s}: ${c}件`);
+    const hintAuto = stateDetailAuto['レビュー待ち'] > 0 || stateDetailAuto['保留'] > 0
+      ? '\n💡 `!task cleanup` で整理するか `!task resume <id>` で再開できます。'
+      : '';
     await message.reply(
-      '📋 **Auto Task Runner**\n\n実行可能なタスクはありません。\n' +
-      '`!task cleanup` で孤立タスクを整理してから再度お試しください。'
+      `📋 **Auto Task Runner**\n\nProject: **${currentPidAuto}**\n実行可能な未着手タスクはありません。` +
+      (detailLinesAuto.length > 0 ? '\n\n現在のタスク:\n' + detailLinesAuto.join('\n') : '') +
+      hintAuto
     );
     return;
   }
