@@ -180,7 +180,7 @@ function formatRunnerStatus(projectId) {
 
   const projectName  = project?.name || projectId;
   const runnerFlag   = state.enabled ? '✅ 有効' : '⛔ 無効';
-  const loopInfo     = `${state.plannerCallCount}/${project?.runner?.maxPlannerCalls ?? 10}回`;
+  const loopInfo     = `${state.loopCount}/${project?.runner?.maxPlannerCalls ?? 10}回`;
   const lastTaskInfo = state.lastTaskId ? `\`${state.lastTaskId}\`` : 'なし';
   const phaseInfo    = state.currentPhase || '—';
 
