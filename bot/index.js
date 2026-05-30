@@ -802,12 +802,13 @@ async function handleApplyReview(message, taskId) {
     logger.info(`フィードバック適用完了 | ${taskId} | ${result.verdict}`);
 
   } catch (error) {
-    logger.error(`apply-review エラー: ${error.message}`);
+    const { maskSecret } = require('./utils/github');
+    logger.error(`apply-review エラー: ${maskSecret(error.message)}`);
     reviewHistory.addEntry(
       reviewHistory.EVENT_TYPES.ERROR, taskId, 'エラー',
-      `apply-review 失敗: ${error.message}`
+      'apply-review 失敗 (詳細はログ参照)'
     );
-    const errorText = `❌ **Codexフィードバックでエラー**\n${error.message}`;
+    const errorText = `❌ **Codexフィードバックでエラー**\n詳細はログを確認してください`;
     await processingMsg.edit(errorText);
     await sendNotification('error', message.channel, errorText);
   }
@@ -884,16 +885,18 @@ async function handleCreatePR(message, taskId) {
     logger.info(`PR 作成完了 | #${prResult.prNumber} | ${prResult.prUrl}`);
 
   } catch (error) {
-    logger.error(`create-pr エラー: ${error.message}`);
+    const { maskSecret } = require('./utils/github');
+    const maskedMsg = maskSecret(error.message);
+    logger.error(`create-pr エラー: ${maskedMsg}`);
     reviewHistory.addEntry(
       reviewHistory.EVENT_TYPES.ERROR, taskId, 'エラー',
-      `create-pr 失敗: ${error.message}`
+      'create-pr 失敗 (詳細はログ参照)'
     );
 
     const errorEmbed = new EmbedBuilder()
       .setColor(0xFF3333)
       .setTitle('❌ PR 作成に失敗しました')
-      .setDescription(fmt.embedDesc(error.message))
+      .setDescription('詳細はログを確認してください')
       .setTimestamp();
 
     await processingMsg.edit({ content: '', embeds: [errorEmbed] });
@@ -2322,12 +2325,13 @@ async function executeClaudeTask({
             await sendPRHumanConfirm(message.channel, taskId, prResult, prDanger);
           }
         } catch (prErr) {
-          logger.error(`PR 作成エラー: ${prErr.message}`);
+          const { maskSecret } = require('./utils/github');
+          logger.error(`PR 作成エラー: ${maskSecret(prErr.message)}`);
           await sendNotification('pr', message.channel, {
             embeds: [new EmbedBuilder()
               .setColor(0xFF3333)
               .setTitle('❌ PR 作成に失敗しました')
-              .setDescription(prErr.message.slice(0, 1000))
+              .setDescription('詳細はログを確認してください')
               .setTimestamp()
             ],
           });
@@ -2368,16 +2372,19 @@ async function executeClaudeTask({
           });
 
           if (!gitResult?.pushed && gitResult?.pushError && DISCORD_OWNER_ID) {
+            // セキュリティ: pushError の中身（トークン等）は Discord に出さない
+            // 詳細はマスク済みのログを確認すること
             await sendHumanMention(
               message.channel, taskId,
               'GitHub Push が失敗しました',
-              `エラー: ${gitResult.pushError.slice(0, 200)}`,
+              '詳細はログを確認してください',
               '中',
               { channelType: 'git' }
             );
           }
         } catch (gitErr) {
-          logger.error(`GitHub Push エラー: ${gitErr.message}`);
+          const { maskSecret } = require('./utils/github');
+          logger.error(`GitHub Push エラー: ${maskSecret(gitErr.message)}`);
         }
       }
     }

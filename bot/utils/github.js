@@ -40,6 +40,33 @@ const GIT_REPO_PATH = process.env.GIT_REPO_PATH
   || path.join(__dirname, '..', '..');
 
 // ─────────────────────────────────────────────────────
+// maskSecret(str) — ログ・エラーメッセージからトークン類をマスク
+//
+// マスク対象:
+//   - github_pat_* / ghp_* トークン
+//   - Authorization: Basic/Bearer <値>
+//   - http.extraheader の値
+//   - URL 埋め込みトークン (https://token@github.com)
+//
+// Discord にもログにも生のトークンが出ないようにする。
+// ─────────────────────────────────────────────────────
+function maskSecret(str) {
+  if (typeof str !== 'string') return str;
+  return str
+    // github_pat_xxx / ghp_xxx
+    .replace(/github_pat_[A-Za-z0-9_]+/gi, '[MASKED]')
+    .replace(/ghp_[A-Za-z0-9]+/gi, '[MASKED]')
+    // Authorization: Basic/Bearer <値>
+    .replace(/(Authorization:\s*(?:Basic|Bearer)\s+)[A-Za-z0-9+/=_\-]+/gi, '$1[MASKED]')
+    // http.extraheader="Authorization: ..."
+    .replace(/(extraheader[="\s]*Authorization[^"]*?)[A-Za-z0-9+/=_\-]{8,}/gi, '$1[MASKED]')
+    // URL 埋め込み (https://TOKEN@github.com)
+    .replace(/https?:\/\/[^@\s]+@/gi, 'https://[MASKED]@')
+    // 汎用: 40文字以上の英数字列（トークンらしき値）を含む行はマスク
+    .replace(/\b[A-Za-z0-9_\-]{40,}\b/g, '[MASKED]');
+}
+
+// ─────────────────────────────────────────────────────
 // 現在の git branch 名を取得（main/master 固定しない）
 // ─────────────────────────────────────────────────────
 function getCurrentBranch(repoPath) {
@@ -306,7 +333,8 @@ async function commitAndPush(prompt, taskId) {
       pushed = true;
       logger.info(`git push 完了 (branch: ${currentBranch})`);
     } catch (err) {
-      pushError = err.message.slice(0, 300);
+      // トークン類をマスクしてからログ・pushError に格納
+      pushError = maskSecret(err.message).slice(0, 300);
       logger.error(`git push 失敗: ${pushError}`);
     }
   }
@@ -324,4 +352,4 @@ async function commitAndPush(prompt, taskId) {
   };
 }
 
-module.exports = { commitAndPush, getChangedFiles, generateCommitMessage };
+module.exports = { commitAndPush, getChangedFiles, generateCommitMessage, maskSecret };
