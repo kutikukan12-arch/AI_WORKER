@@ -157,53 +157,165 @@ function planNextTask(projectId, context = {}) {
 }
 
 // ─────────────────────────────────────────────────────
-// planProjectGoals(projectId, input) — Phase D-3
+// キーワード → 必要タスク のルールテーブル（Phase D-4a）
+//
+// keyword:  goals / description に含まれるキーワード
+// tasks:    keyword が検出された場合に必要と推定されるタスク定義
+// doneHint: doneTasks にこのキーワードが含まれていれば「実装済み」とみなす
+// ─────────────────────────────────────────────────────
+const KEYWORD_RULES = [
+  {
+    keyword:  'YouTube',
+    tasks: [
+      { type: 'RESEARCH',  priority: '高', title: 'YouTube API 仕様調査',   reason: 'API 仕様の確認が必要' },
+      { type: 'DOCS',      priority: '高', title: 'MVP 仕様書作成',         reason: '仕様が未確定' },
+      { type: 'IMPLEMENT', priority: '中', title: 'YouTube データ取得実装', reason: 'MVP 中核機能' },
+    ],
+    doneHint: 'YouTube',
+  },
+  {
+    keyword:  'AI',
+    tasks: [
+      { type: 'RESEARCH',  priority: '高', title: 'AI モデル選定・調査',   reason: 'モデル選定が必要' },
+      { type: 'IMPLEMENT', priority: '中', title: 'AI 推論エンジン実装',   reason: 'コア機能' },
+      { type: 'TEST',      priority: '低', title: 'AI 精度テスト',          reason: '品質確認' },
+    ],
+    doneHint: 'AI',
+  },
+  {
+    keyword:  'API',
+    tasks: [
+      { type: 'IMPLEMENT', priority: '高', title: 'API エンドポイント実装', reason: 'API は MVP 必須' },
+      { type: 'DOCS',      priority: '中', title: 'API ドキュメント作成',   reason: '利用者向け仕様書' },
+      { type: 'TEST',      priority: '低', title: 'API テスト追加',          reason: '動作保証' },
+    ],
+    doneHint: 'API',
+  },
+  {
+    keyword:  '認証',
+    tasks: [
+      { type: 'IMPLEMENT', priority: '高', title: '認証機能実装',           reason: 'セキュリティ必須' },
+      { type: 'TEST',      priority: '中', title: '認証テスト追加',          reason: '脆弱性防止' },
+    ],
+    doneHint: '認証',
+  },
+  {
+    keyword:  'DB',
+    tasks: [
+      { type: 'IMPLEMENT', priority: '高', title: 'DB スキーマ設計・実装',  reason: 'データ永続化' },
+      { type: 'TEST',      priority: '中', title: 'DB マイグレーションテスト', reason: 'データ整合性' },
+    ],
+    doneHint: 'DB',
+  },
+  {
+    keyword:  'UI',
+    tasks: [
+      { type: 'IMPLEMENT', priority: '中', title: 'UI 実装',                reason: 'ユーザー操作画面' },
+      { type: 'REVIEW',    priority: '低', title: 'UI/UX レビュー',          reason: 'UX 品質確認' },
+    ],
+    doneHint: 'UI',
+  },
+  {
+    keyword:  '診断',
+    tasks: [
+      { type: 'DOCS',      priority: '高', title: '診断ロジック仕様書',      reason: '診断基準の明文化' },
+      { type: 'IMPLEMENT', priority: '高', title: '診断エンジン実装',        reason: 'MVP コア機能' },
+    ],
+    doneHint: '診断',
+  },
+  {
+    keyword:  '予測',
+    tasks: [
+      { type: 'RESEARCH',  priority: '高', title: '予測モデル調査',          reason: 'モデル選定が必要' },
+      { type: 'IMPLEMENT', priority: '高', title: '予測モデル実装',          reason: 'コア機能' },
+    ],
+    doneHint: '予測',
+  },
+];
+
+// ─────────────────────────────────────────────────────
+// doneHint が doneTasks に含まれているか判定するヘルパー
+// ─────────────────────────────────────────────────────
+function isDone(hint, doneTasks) {
+  const hintL = hint.toLowerCase();
+  return doneTasks.some(d => d.toLowerCase().includes(hintL));
+}
+
+// ─────────────────────────────────────────────────────
+// planProjectGoals(projectId, input) — Phase D-4a
 //
 // プロジェクト目標から不足機能（gaps）を推定し、
-// 次タスク候補を返す。Phase D-3 は骨格のみ。
+// 次タスク候補（nextCandidates）を返す。
+// Phase D-4a はルールベース推定。Claude/Codex API はまだ使わない。
 //
 // 引数:
 //   projectId - プロジェクトID
 //   input     - {
 //                 description: string,  // project の説明・目標
 //                 docs:        string,  // docs/*.md の内容（任意）
-//                 doneTasks:   string[], // 完了済みタスクのサマリー（任意）
+//                 doneTasks:   string[], // 完了済みタスクのサマリー
 //               }
 //
 // 戻り値:
-//   {
-//     goals:          string[],  // 目標リスト（入力から抽出）
-//     implemented:    string[],  // 実装済みと推定されるもの
-//     gaps:           string[],  // 不足していると推定されるもの
-//     nextCandidates: object[],  // 次タスク候補（suggestedTask 形式）
-//     summary:        string,    // Discord 通知用の短文
-//   }
-//
-// Phase D-3 では実際の AI 推論はしない（骨格のみ）。
-// Phase D-4 以降で Claude Code / Codex と接続する。
+//   { goals, implemented, gaps, nextCandidates, summary }
 // ─────────────────────────────────────────────────────
 function planProjectGoals(projectId, input = {}) {
   logger.debug(`[Planner] planProjectGoals called: ${projectId}`);
 
-  const description  = (input.description || '').trim();
-  const docs         = (input.docs        || '').trim();
-  const doneTasks    = input.doneTasks    || [];
+  const description = (input.description || '').trim();
+  const docs        = (input.docs        || '').trim();
+  const doneTasks   = input.doneTasks    || [];
+  const allText     = (description + ' ' + docs).toLowerCase();
 
-  // Phase D-3: 骨格のみ。AI 推論は Phase D-4 以降。
-  // description から目標を簡易抽出（改行・箇条書き区切り）
+  // goals: description から簡易抽出
   const goals = description
     .split(/[\n\r・\-\*]/)
     .map(l => l.trim())
     .filter(l => l.length > 5)
     .slice(0, 10);
 
-  // Phase D-3: implemented / gaps は空配列（AI 推論が必要）
   const implemented = doneTasks.slice(0, 10);
-  const gaps        = [];         // Phase D-4 で Claude/Codex が推定する
-  const nextCandidates = [];      // Phase D-4 で生成する
+
+  // ── Phase D-4a: ルールベース gaps / nextCandidates 生成 ──
+  const gapSet       = new Set();   // 重複なし gap
+  const candidateMap = new Map();   // title → candidate（重複排除）
+
+  for (const rule of KEYWORD_RULES) {
+    if (!allText.includes(rule.keyword.toLowerCase())) continue;
+
+    const alreadyDone = isDone(rule.doneHint, doneTasks);
+
+    for (const task of rule.tasks) {
+      if (candidateMap.has(task.title)) continue;
+
+      // doneTasks にその type のキーワードが含まれていれば済みとみなす
+      const typeAlreadyDone = doneTasks.some(d =>
+        d.toUpperCase().includes(task.type)
+      );
+      if (typeAlreadyDone && task.type !== 'REVIEW' && task.type !== 'TEST') continue;
+      if (alreadyDone && task.type === 'RESEARCH') continue;
+
+      gapSet.add(task.title);
+      candidateMap.set(task.title, {
+        type:     task.type,
+        priority: task.priority,
+        title:    task.title,
+        reason:   task.reason,
+        prompt:   `[${task.type}] ${task.title}\n${task.reason}`,
+      });
+    }
+  }
+
+  const gaps           = [...gapSet];
+  const nextCandidates = [...candidateMap.values()]
+    .sort((a, b) => {
+      const p = { '高': 0, '中': 1, '低': 2 };
+      return (p[a.priority] ?? 3) - (p[b.priority] ?? 3);
+    })
+    .slice(0, 5);
 
   logger.info(
-    `[Planner] planProjectGoals: ${projectId} | goals:${goals.length} | done:${implemented.length}`
+    `[Planner] planProjectGoals D-4a: ${projectId} | goals:${goals.length} | gaps:${gaps.length} | candidates:${nextCandidates.length}`
   );
 
   return {
@@ -212,11 +324,16 @@ function planProjectGoals(projectId, input = {}) {
     gaps,
     nextCandidates,
     summary:
-      `📊 **Project Goals 分析** (Phase D-3: 骨格)\n` +
+      `📊 **Project Goals 分析** (D-4a: ルールベース)\n` +
       `Project: \`${projectId}\`\n` +
       `目標: ${goals.length}件\n` +
       `実装済み: ${implemented.length}件\n` +
-      `不足推定: ${gaps.length}件（Phase D-4 以降で AI 推論）`,
+      `不足推定: ${gaps.length}件\n` +
+      (nextCandidates.length > 0
+        ? `\n**次タスク候補:**\n` + nextCandidates.slice(0, 3).map(
+            c => `・[${c.type}] ${c.title}`
+          ).join('\n')
+        : ''),
   };
 }
 
