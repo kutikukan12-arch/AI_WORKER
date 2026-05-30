@@ -301,6 +301,34 @@ function runPlannerStep(projectId, context = {}) {
     plannerResult = { action: 'error', reason: plannerErr.message, suggestedTask: null, summary: 'Planner エラー' };
   }
 
+  // ⑤-pre Phase D-2: project_done 検出 → runner を安全停止
+  if (plannerResult.action === 'project_done') {
+    logger.info(`[AutoRunner] project_done 検出: ${projectId} → runner 停止`);
+    saveRunnerState(projectId, {
+      enabled:     false,
+      pauseReason: 'project_done',
+      pausedAt:    new Date().toISOString(),
+    });
+    syncProjectsEnabled(projectId, false);
+
+    const doneMsg =
+      `🎉 **Project Done**\n` +
+      `Project: \`${projectId}\`\n` +
+      `残作業: 0件\n` +
+      `Runner: stopped\n\n` +
+      `次:\n\`\`\`\n!project runner status\n\`\`\``;
+
+    return {
+      action:        'project_done',
+      summary:       doneMsg,
+      projectId,
+      loopCount:     nextCount,
+      plannerResult,
+      createdTask:   null,
+      nextExecutableTaskId: null,
+    };
+  }
+
   // ⑤ Phase B-6: create_task の場合に tasks.json へ登録
   let createdTask     = null;
   let plannerSummaryLine;
