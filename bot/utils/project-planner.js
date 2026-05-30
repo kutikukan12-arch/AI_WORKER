@@ -39,17 +39,57 @@ const logger = require('./logger');
 function planNextTask(projectId, context = {}) {
   logger.debug(`[Planner] planNextTask called: ${projectId}`);
 
-  // Phase B-3: 骨格のみ。常に 'none' を返す。
-  // Phase B-4 でここに判断ロジックを追加する:
-  //   - Codex高/中危険度レビュー → FIX タスク生成
-  //   - IMPLEMENT完了後 → REVIEW タスク生成
-  //   - 全タスク完了 → 'project_done'
+  // ── Phase B-4: Codex レビュー結果からの FIX タスク候補生成 ──
+  // context.reviewResult がある場合、危険度を判定して FIX タスクを提案する。
+  // ※ tasks.json への書き込みはまだしない（副作用なし）。
+  const reviewResult = context.reviewResult || null;
 
+  if (reviewResult) {
+    const danger  = reviewResult.danger || '';
+    const isHigh  = danger.includes('高');
+    const isMid   = danger.includes('中');
+
+    if (isHigh || isMid) {
+      const priority    = isHigh ? '高' : '中';
+      const dangerEmoji = isHigh ? '🔴' : '🟡';
+      const problem     = (reviewResult.problem || 'Codex指摘事項あり').slice(0, 120);
+      const suggestion  = (reviewResult.suggestion || '').slice(0, 120);
+
+      const fixPrompt = [
+        `[Codex指摘対応] ${problem}`,
+        suggestion ? `\n改善案: ${suggestion}` : '',
+        `\n最小限の修正のみ行うこと。関係ない変更は禁止。`,
+      ].join('');
+
+      logger.info(`[Planner] FIX タスク候補を生成: ${projectId} | 危険度 ${danger}`);
+
+      return {
+        action: 'create_task',
+        reason: `Codexレビューで危険度 ${dangerEmoji} ${danger.trim()} を検出`,
+        suggestedTask: {
+          type:     'FIX',
+          priority,
+          title:    `Codex指摘対応 (危険度: ${danger.trim()})`,
+          prompt:   fixPrompt,
+          sourceReviewDanger: danger.trim(),
+        },
+        summary:
+          `🔧 **Planner: FIX タスク候補**\n` +
+          `危険度: ${dangerEmoji} ${danger.trim()}\n` +
+          `問題: ${problem.slice(0, 60)}${problem.length > 60 ? '...' : ''}\n` +
+          `(Phase B-5 以降で自動登録されます)`,
+      };
+    }
+  }
+
+  // Codexレビューがない / 低危険度 / その他 → まだ何もしない
   return {
     action:        'none',
-    reason:        'Planner は骨格実装中です (Phase B-3)',
+    reason:        reviewResult
+      ? `Codexレビューの危険度が低いため自動生成不要 (danger: ${reviewResult.danger || 'なし'})`
+      : 'レビュー結果がないため判断不可',
     suggestedTask: null,
-    summary:       '📋 Planner: まだ自動タスク生成はしません (Phase B-4 以降)',
+    summary:       '📋 Planner: 自動生成条件を満たしません',
   };
 }
 
