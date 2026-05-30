@@ -308,18 +308,32 @@ function runPlannerStep(projectId, context = {}) {
   if (plannerResult.action === 'create_task' && plannerResult.suggestedTask) {
     const suggested = plannerResult.suggestedTask;
 
-    // Phase C-2: REVIEW は候補提示のみ（登録は Phase C-3 以降）
-    // FIX のみ登録を許可する
-    if (suggested.type !== 'FIX') {
+    // Phase C-3: REVIEW も登録対象に追加（FIX と同様の登録フロー）
+    // 登録可能タイプ: FIX / REVIEW
+    // それ以外は候補提示のみ
+    const isRegistrable = suggested.type === 'FIX' || suggested.type === 'REVIEW';
+    if (!isRegistrable) {
       plannerSummaryLine =
-        `Planner: ${suggested.type} 候補あり（未登録 — Phase C-3 以降で自動登録）\n` +
+        `Planner: ${suggested.type} 候補あり（未登録）\n` +
         `type: ${suggested.type} | priority: ${suggested.priority}`;
     } else {
-    // 重複ガード: 同プロジェクト内に同じ prompt prefix の FIX タスクが PENDING/作業中 で残っていないか確認
+    // 重複ガード:
+    //   FIX  → 同 prompt prefix でPENDING/作業中があればスキップ
+    //   REVIEW → 同 sourceImplementId でPENDING/作業中があればスキップ
     const isDuplicate = (() => {
       try {
         const tm      = require('./task-manager');
         const allTasks = tm.listTasks();
+        if (suggested.type === 'REVIEW') {
+          const srcId = suggested.sourceImplementId || '';
+          return srcId && allTasks.some(t =>
+            t.type === 'REVIEW' &&
+            t.projectId === projectId &&
+            (t.state === tm.STATES.PENDING || t.state === tm.STATES.IN_PROGRESS) &&
+            (t.prompt || '').includes(srcId)
+          );
+        }
+        // FIX: 既存の prompt prefix チェック
         const promptPrefix = (suggested.prompt || '').slice(0, 60);
         return allTasks.some(t =>
           t.type === 'FIX' &&
@@ -331,16 +345,22 @@ function runPlannerStep(projectId, context = {}) {
     })();
 
     if (isDuplicate) {
-      logger.info(`[AutoRunner] 重複ガード: 同内容の FIX タスクが既に存在 (${projectId})`);
+      logger.info(`[AutoRunner] 重複ガード: 同内容の ${suggested.type} タスクが既に存在 (${projectId})`);
       plannerSummaryLine =
-        `Planner: FIX 候補あり (重複のためスキップ)\n` +
-        `危険度: ${suggested.sourceReviewDanger || '—'}`;
+        `Planner: ${suggested.type} 候補あり (重複のためスキップ)\n` +
+        (suggested.type === 'REVIEW'
+          ? `元IMPLEMENT: ${suggested.sourceImplementId || '—'}`
+          : `危険度: ${suggested.sourceReviewDanger || '—'}`);
     } else {
       // tasks.json に登録（自動実行はしない）
       try {
         const tm = require('./task-manager');
+        // REVIEW タスクは重複ガードで検索できるよう sourceImplementId を prompt に含める
+        const taskPrompt = (suggested.type === 'REVIEW' && suggested.sourceImplementId)
+          ? suggested.prompt + `\n[対象IMPLEMENT: ${suggested.sourceImplementId}]`
+          : suggested.prompt;
         createdTask = tm.createTask(
-          suggested.prompt,
+          taskPrompt,
           'auto-runner',
           null,
           suggested.priority === '高' ? '高' : '低',
@@ -366,11 +386,19 @@ function runPlannerStep(projectId, context = {}) {
 
         logger.info(`[AutoRunner] FIX タスク登録: ${createdTask.id} | ${projectId} | priority:${createdTask.priority}`);
 
-        plannerSummaryLine =
-          `Planner: FIX タスクを登録しました ✅\n` +
-          `ID: \`${createdTask.id}\`\n` +
-          `危険度: ${suggested.sourceReviewDanger || '—'} | priority: ${createdTask.priority}\n` +
-          `次に実行:\n\`\`\`\n!auto run 1\n\`\`\``;
+        if (suggested.type === 'REVIEW') {
+          plannerSummaryLine =
+            `Planner: REVIEW タスクを登録しました ✅\n` +
+            `ID: \`${createdTask.id}\`\n` +
+            `元IMPLEMENT: ${suggested.sourceImplementId || '—'} | priority: ${createdTask.priority}\n` +
+            `次に実行:\n\`\`\`\n!auto run 1\n\`\`\``;
+        } else {
+          plannerSummaryLine =
+            `Planner: FIX タスクを登録しました ✅\n` +
+            `ID: \`${createdTask.id}\`\n` +
+            `危険度: ${suggested.sourceReviewDanger || '—'} | priority: ${createdTask.priority}\n` +
+            `次に実行:\n\`\`\`\n!auto run 1\n\`\`\``;
+        }
       } catch (createErr) {
         logger.error(`[AutoRunner] createTask エラー: ${createErr.message}`);
         plannerSummaryLine = `Planner: create_task 試みたが失敗 (${createErr.message.slice(0, 40)})`;
