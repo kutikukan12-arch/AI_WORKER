@@ -301,13 +301,73 @@ function runPlannerStep(projectId, context = {}) {
     plannerResult = { action: 'error', reason: plannerErr.message, suggestedTask: null, summary: 'Planner エラー' };
   }
 
-  // ⑤ summary を plannerResult に応じて組み立てる
+  // ⑤ Phase B-6: create_task の場合に tasks.json へ登録
+  let createdTask     = null;
   let plannerSummaryLine;
+
   if (plannerResult.action === 'create_task' && plannerResult.suggestedTask) {
-    // 候補あり → まだ登録しないことを明示
-    plannerSummaryLine =
-      `Planner: ${plannerResult.suggestedTask.type} 候補あり (未登録)\n` +
-      `危険度: ${plannerResult.suggestedTask.sourceReviewDanger || '—'} | priority: ${plannerResult.suggestedTask.priority}`;
+    const suggested = plannerResult.suggestedTask;
+
+    // 重複ガード: 同プロジェクト内に同じ prompt prefix の FIX タスクが PENDING/作業中 で残っていないか確認
+    const isDuplicate = (() => {
+      try {
+        const tm      = require('./task-manager');
+        const allTasks = tm.listTasks();
+        const promptPrefix = (suggested.prompt || '').slice(0, 60);
+        return allTasks.some(t =>
+          t.type === 'FIX' &&
+          t.projectId === projectId &&
+          (t.state === tm.STATES.PENDING || t.state === tm.STATES.IN_PROGRESS) &&
+          (t.prompt || '').slice(0, 60) === promptPrefix
+        );
+      } catch { return false; }
+    })();
+
+    if (isDuplicate) {
+      logger.info(`[AutoRunner] 重複ガード: 同内容の FIX タスクが既に存在 (${projectId})`);
+      plannerSummaryLine =
+        `Planner: FIX 候補あり (重複のためスキップ)\n` +
+        `危険度: ${suggested.sourceReviewDanger || '—'}`;
+    } else {
+      // tasks.json に登録（自動実行はしない）
+      try {
+        const tm = require('./task-manager');
+        createdTask = tm.createTask(
+          suggested.prompt,
+          'auto-runner',
+          null,
+          suggested.priority === '高' ? '高' : '低',
+          projectId,
+          suggested.type || 'FIX'
+        );
+        // priority は priority.calculate() で算出されるため、
+        // suggestedTask の値で上書きする
+        if (suggested.priority && createdTask.priority !== suggested.priority) {
+          tm.updateTask(createdTask.id, {
+            priority:       suggested.priority,
+            priorityReason: `Auto Planner 指定 (危険度: ${suggested.sourceReviewDanger || '—'})`,
+          });
+          createdTask.priority = suggested.priority;
+        }
+
+        // runner state の lastTaskId / totalTasksCreated を更新
+        const currentState = getRunnerState(projectId);
+        saveRunnerState(projectId, {
+          lastTaskId:         createdTask.id,
+          totalTasksCreated:  (currentState.totalTasksCreated || 0) + 1,
+        });
+
+        logger.info(`[AutoRunner] FIX タスク登録: ${createdTask.id} | ${projectId} | priority:${createdTask.priority}`);
+
+        plannerSummaryLine =
+          `Planner: FIX タスクを登録しました ✅\n` +
+          `ID: \`${createdTask.id}\`\n` +
+          `危険度: ${suggested.sourceReviewDanger || '—'} | priority: ${createdTask.priority}`;
+      } catch (createErr) {
+        logger.error(`[AutoRunner] createTask エラー: ${createErr.message}`);
+        plannerSummaryLine = `Planner: create_task 試みたが失敗 (${createErr.message.slice(0, 40)})`;
+      }
+    }
   } else {
     plannerSummaryLine = `Planner: ${plannerResult.action}`;
   }
@@ -316,11 +376,11 @@ function runPlannerStep(projectId, context = {}) {
     action:    'step',
     summary:
       `📋 **[AutoRunner] ステップ ${nextCount}/${maxLoop}** | \`${projectId}\`\n` +
-      plannerSummaryLine + '\n' +
-      `(Phase B-5: 候補生成のみ。タスク登録は Phase B-6 以降)`,
+      plannerSummaryLine,
     projectId,
     loopCount:     nextCount,
     plannerResult,
+    createdTask,
   };
 }
 
