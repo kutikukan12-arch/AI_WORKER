@@ -380,10 +380,14 @@ function validate(output, repoPath, taskId = '', passedFiles = null, beforeMs = 
   logger.info(`完了バリデーション開始: ${taskId} [${taskType}]`);
 
   // ── 1. 変更検出（IMPLEMENT以外でも参考情報として取得）──
+  // DOCS タイプは .md / .txt も変更対象に含める
+  const DOCS_SCAN_EXTENSIONS = ['.js', '.md', '.txt', '.json'];
+  const scanExtensions = (taskType === 'DOCS') ? DOCS_SCAN_EXTENSIONS : ['.js'];
+
   const changedFiles   = passedFiles ?? getChangedFilesFromGit(repoPath);
   const { diffStat, addedLines, removedLines, raw: diffRaw } = getDiffStat(repoPath);
   const sinceMs        = beforeMs ?? (Date.now() - 60 * 1000);
-  const modifiedFiles  = findRecentlyModified(repoPath, sinceMs);
+  const modifiedFiles  = findRecentlyModified(repoPath, sinceMs, scanExtensions);
   const hasAnyChanges  = changedFiles.length > 0 || modifiedFiles.length > 0 || addedLines > 0;
 
   // ── 2. 構文チェック（変更があった .js のみ）──
@@ -400,8 +404,9 @@ function validate(output, repoPath, taskId = '', passedFiles = null, beforeMs = 
   let isShortResponse  = false;
   let isQuestionEnding = false;
 
-  if (taskType === 'RESEARCH' || taskType === 'DESIGN' || taskType === 'REVIEW') {
+  if (taskType === 'RESEARCH' || taskType === 'DESIGN' || taskType === 'REVIEW' || taskType === 'DOCS') {
     // ── 非IMPLEMENTタイプ: コード変更なしでOK、出力内容で判定 ──
+    // DOCS: .md ファイルの作成・更新でも完了OK。出力内容チェックで判定。
     const nonImplResult = validateNonImplement(output, taskType);
     ok     = nonImplResult.ok;
     reason = nonImplResult.reason;
