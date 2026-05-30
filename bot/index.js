@@ -2309,7 +2309,8 @@ async function prepareNextTask(message, source = 'run-next') {
   }
 
   // ─── TaskType / TaskSize 判定 ───
-  const taskType       = taskTypeUtil.detectTaskType(prompt);
+  // task.type が保存されていれば優先して使う（DOCS/REVIEW/RESEARCH等を上書きしない）
+  const taskType       = next.type || taskTypeUtil.detectTaskType(prompt);
   const taskSizeResult = taskTypeUtil.estimateTaskSize(prompt);
 
   if (taskSizeResult.size === taskTypeUtil.TASK_SIZES.LARGE) {
