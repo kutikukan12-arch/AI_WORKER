@@ -32,11 +32,25 @@ const logger = require('./logger');
 // ─── 設定（環境変数から取得）───
 const GITHUB_TOKEN  = process.env.GITHUB_TOKEN;
 const GITHUB_REPO   = process.env.GITHUB_REPO;   // 例: username/repo-name
-const GITHUB_BRANCH = process.env.GITHUB_BRANCH || 'main';
+// GITHUB_BRANCH は push 先のデフォルト branch（未指定なら現在branch を使う）
+const GITHUB_BRANCH_DEFAULT = process.env.GITHUB_BRANCH || null;
 
 // git リポジトリのパス（デフォルト: AI_WORKER ルート）
 const GIT_REPO_PATH = process.env.GIT_REPO_PATH
   || path.join(__dirname, '..', '..');
+
+// ─────────────────────────────────────────────────────
+// 現在の git branch 名を取得（main/master 固定しない）
+// ─────────────────────────────────────────────────────
+function getCurrentBranch(repoPath) {
+  try {
+    return execSync('git branch --show-current', {
+      cwd: repoPath, stdio: 'pipe', encoding: 'utf8',
+    }).trim() || 'master';
+  } catch {
+    return 'master';
+  }
+}
 
 // ─────────────────────────────────────────────────────
 // git がインストールされているか確認
@@ -152,8 +166,12 @@ function generateCommitMessage(prompt, taskId, changedFiles) {
 }
 
 // ─────────────────────────────────────────────────────
-// GitHub Push 用のリモート URL を設定
-// GITHUB_TOKEN + GITHUB_REPO が揃っている場合のみ
+// GitHub Push 用のリモート URL を設定（トークンを URL に埋め込まない）
+//
+// セキュリティ設計:
+//   GITHUB_TOKEN は .git/config の remote URL に入れない。
+//   push 時に HTTP Authorization ヘッダーで渡すことで
+//   git remote -v にトークンが表示されないようにする。
 // ─────────────────────────────────────────────────────
 function configureGitHubRemote(repoPath) {
   if (!GITHUB_TOKEN || !GITHUB_REPO) {
@@ -161,8 +179,8 @@ function configureGitHubRemote(repoPath) {
     return false;
   }
 
-  // https://TOKEN@github.com/user/repo.git 形式で認証
-  const remoteUrl = `https://${GITHUB_TOKEN}@github.com/${GITHUB_REPO}.git`;
+  // トークンなしのクリーンな URL を remote に設定する
+  const remoteUrl = `https://github.com/${GITHUB_REPO}.git`;
 
   try {
     const remotes = execSync('git remote', {
@@ -170,11 +188,18 @@ function configureGitHubRemote(repoPath) {
     }).trim();
 
     if (remotes.includes('origin')) {
-      execSync(`git remote set-url origin "${remoteUrl}"`, { cwd: repoPath, stdio: 'pipe' });
+      // 既存 remote がトークン埋め込みになっていたら修正する
+      const currentUrl = execSync('git remote get-url origin', {
+        cwd: repoPath, stdio: 'pipe', encoding: 'utf8'
+      }).trim();
+      if (currentUrl !== remoteUrl) {
+        execSync(`git remote set-url origin "${remoteUrl}"`, { cwd: repoPath, stdio: 'pipe' });
+        logger.info(`GitHub remote を修正: ${remoteUrl}`);
+      }
     } else {
       execSync(`git remote add origin "${remoteUrl}"`, { cwd: repoPath, stdio: 'pipe' });
     }
-    logger.info(`GitHub リモートを設定: ${GITHUB_REPO} (${GITHUB_BRANCH})`);
+    logger.info(`GitHub リモート確認済み: ${GITHUB_REPO}`);
     return true;
   } catch (err) {
     logger.warn(`GitHub リモート設定失敗: ${err.message}`);
@@ -260,19 +285,26 @@ async function commitAndPush(prompt, taskId) {
   const remoteReady = configureGitHubRemote(repoPath);
 
   if (remoteReady) {
+    // 現在の branch を動的に取得（main 固定しない）
+    const currentBranch = GITHUB_BRANCH_DEFAULT || getCurrentBranch(repoPath);
+
+    // トークンを HTTP Authorization ヘッダーで渡す（remote URL には埋め込まない）
+    const authHeader = Buffer.from(`x-oauth-basic:${GITHUB_TOKEN}`).toString('base64');
+    const gitAuthConfig = `-c http.extraheader="Authorization: Basic ${authHeader}"`;
+
     try {
-      logger.info(`git push origin ${GITHUB_BRANCH}`);
-      execSync(`git push origin ${GITHUB_BRANCH} --set-upstream`, {
+      logger.info(`git push origin ${currentBranch}`);
+      execSync(`git ${gitAuthConfig} push origin ${currentBranch}`, {
         cwd: repoPath,
         stdio: 'pipe',
-        timeout: 30000,   // 30秒タイムアウト
+        timeout: 30000,
         env: {
           ...process.env,
-          GIT_TERMINAL_PROMPT: '0', // パスワードプロンプトを無効化（ハング防止）
+          GIT_TERMINAL_PROMPT: '0',
         },
       });
       pushed = true;
-      logger.info('git push 完了');
+      logger.info(`git push 完了 (branch: ${currentBranch})`);
     } catch (err) {
       pushError = err.message.slice(0, 300);
       logger.error(`git push 失敗: ${pushError}`);
@@ -287,7 +319,7 @@ async function commitAndPush(prompt, taskId) {
     pushed,
     pushError,
     repoPath,
-    branch: GITHUB_BRANCH,
+    branch: GITHUB_BRANCH_DEFAULT || getCurrentBranch(repoPath),
     repo: GITHUB_REPO || '（未設定）',
   };
 }

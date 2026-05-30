@@ -81,8 +81,9 @@ const restartManager = require('./utils/restart-manager');
 const approvalManager = require('./utils/approval-manager');
 
 // ─── Project 判定 ───
-const projectDetector  = require('./utils/project-detector');
-const projectManager   = require('./utils/project-manager');
+const projectDetector    = require('./utils/project-detector');
+const projectManager     = require('./utils/project-manager');
+const autoProjectRunner  = require('./utils/auto-project-runner');
 
 // 承認待ちの実行待機Map: taskId → () => void
 // ※ Bot 再起動で消える設計（意図的割り切り）
@@ -1360,6 +1361,79 @@ async function handleMeeting(message, rawTopic) {
 async function handleProject(message, args) {
   const sub  = args[0] || 'current';
   const name = args.slice(1).join(' ').trim();
+
+  // ─── !project runner <サブコマンド> — Phase A-2 ───────────────
+  if (sub === 'runner') {
+    const runnerSub = args[1] || 'status';
+    const pid       = projectManager.getCurrentProject(message.channelId);
+    const project   = projectManager.getProject(pid);
+
+    if (!project) {
+      await message.reply(`❌ プロジェクトが見つかりません: \`${pid}\`\n\`!project list\` で確認してください。`);
+      return;
+    }
+
+    // !project runner status
+    if (runnerSub === 'status') {
+      const statusText = autoProjectRunner.formatRunnerStatus(pid);
+      await message.reply(
+        statusText + '\n\n' +
+        '```\n' +
+        '!project runner on     → 有効化\n' +
+        '!project runner off    → 無効化\n' +
+        '!project runner reset  → リセット\n' +
+        '```'
+      );
+      return;
+    }
+
+    // !project runner on
+    if (runnerSub === 'on') {
+      autoProjectRunner.enableRunner(pid);
+      const state = autoProjectRunner.getRunnerState(pid);
+      await message.reply(
+        `✅ **Auto Runner を有効化しました**\n\n` +
+        `Project: **${project.name}** (\`${pid}\`)\n\n` +
+        `現在は状態管理のみです。自動実行は Phase B 以降に実装されます。\n\n` +
+        `状態確認:\n\`\`\`\n!project runner status\n\`\`\``
+      );
+      return;
+    }
+
+    // !project runner off
+    if (runnerSub === 'off') {
+      autoProjectRunner.disableRunner(pid);
+      await message.reply(
+        `⛔ **Auto Runner を無効化しました**\n\n` +
+        `Project: **${project.name}** (\`${pid}\`)\n\n` +
+        `再開するには:\n\`\`\`\n!project runner on\n\`\`\``
+      );
+      return;
+    }
+
+    // !project runner reset
+    if (runnerSub === 'reset') {
+      autoProjectRunner.resetRunner(pid);
+      await message.reply(
+        `🔄 **Auto Runner をリセットしました**\n\n` +
+        `Project: **${project.name}** (\`${pid}\`)\n` +
+        `ループカウント・完了数・フェーズをすべて初期値に戻しました。\n` +
+        `Runner は無効状態です。\n\n` +
+        `再開するには:\n\`\`\`\n!project runner on\n\`\`\``
+      );
+      return;
+    }
+
+    await message.reply(
+      '**!project runner の使い方**\n```\n' +
+      '!project runner status  → 状態確認\n' +
+      '!project runner on      → 有効化\n' +
+      '!project runner off     → 無効化\n' +
+      '!project runner reset   → リセット\n' +
+      '```'
+    );
+    return;
+  }
 
   // !project current
   if (sub === 'current' || (!sub)) {
