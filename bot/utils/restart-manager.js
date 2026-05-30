@@ -36,16 +36,177 @@ const ROOT_DIR      = path.join(__dirname, '..', '..');
 const BOT_ENTRY     = path.join(__dirname, '..', 'index.js');
 const DATA_DIR      = path.join(ROOT_DIR, 'data');
 const PID_FILE      = path.join(DATA_DIR, 'bot.pid');
+const LOCK_FILE     = path.join(DATA_DIR, 'bot.lock');      // 起動ロック
+const RESTART_LOCK  = path.join(DATA_DIR, 'restart.lock'); // 再起動ロック
 const RESTART_STATE = path.join(DATA_DIR, 'restart-state.json');
 
 // ─────────────────────────────────────────────────────
 // 起動時: 現在のPIDをファイルに記録
-// 古いプロセス検知に使う
+// 後方互換用。新コードは acquireStartupLock() を使う。
 // ─────────────────────────────────────────────────────
 function writePid() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(PID_FILE, String(process.pid), 'utf8');
   logger.info(`PID記録: ${process.pid} → data/bot.pid`);
+}
+
+// ─────────────────────────────────────────────────────
+// 起動ロック取得（多重起動防止）
+//
+// !restart 経由の起動（restart-state.json が存在する）は
+// 正当な再起動なのでチェックをスキップする。
+//
+// それ以外（手動起動等）の場合:
+//   ・bot.pid の PID が生きていれば起動を中止する
+//   ・PID が死んでいれば（古い残骸）上書きして起動続行
+//
+// 戻り値:
+//   { ok: true }                     — 起動を続けてよい
+//   { ok: false, existingPid: pid }  — 既存プロセスが生きている → abort
+// ─────────────────────────────────────────────────────
+function acquireStartupLock() {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+
+  // ─── restart-state.json がある場合: 正当な !restart 経由 ───
+  // ただし「別の」プロセスが lock を持っていれば拒否する。
+  // 旧実装はチェックを完全スキップしていた → 他プロセスが存在しても通過できた。
+  let prevPid = null;
+  if (fs.existsSync(RESTART_STATE)) {
+    try {
+      const state = JSON.parse(fs.readFileSync(RESTART_STATE, 'utf8'));
+      prevPid = state.prevPid || null;
+      logger.info(`[LOCK] restart経由の起動 (prevPid: ${prevPid})`);
+    } catch {
+      logger.warn(`[LOCK] restart-state.json の読み取り失敗 → 通常チェックへ`);
+    }
+  }
+
+  // ─── 主判定: bot.lock を唯一の真実ソースとして使う ───
+  // bot.lock は Bot 起動時に書き、終了時に削除する。
+  // restart経由でも同じルールを適用する（prevPid は許可）。
+  if (fs.existsSync(LOCK_FILE)) {
+    try {
+      const lockData = JSON.parse(fs.readFileSync(LOCK_FILE, 'utf8'));
+      const isAllowed = lockData.pid === process.pid || lockData.pid === prevPid;
+      if (!isAllowed) {
+        try {
+          process.kill(lockData.pid, 0); // 存在確認のみ
+          logger.error(`[LOCK] 既存Botプロセスが稼働中 (PID: ${lockData.pid}). 起動を中止します。`);
+          return { ok: false, existingPid: lockData.pid };
+        } catch {
+          // PID が存在しない → bot.lock は古い残骸
+          logger.warn(`[LOCK] 古い bot.lock (PID: ${lockData.pid}) を上書きします`);
+        }
+      } else {
+        logger.info(`[LOCK] bot.lock PID=${lockData.pid} は許可対象 (prevPid or self)`);
+      }
+    } catch {
+      logger.warn(`[LOCK] bot.lock が破損しています。上書きします。`);
+    }
+  }
+
+  _writeLockFilesAtomic();
+  return { ok: true };
+}
+
+// ─────────────────────────────────────────────────────
+// 内部: bot.pid と bot.lock をアトミックに書き込む
+//
+// wx フラグ (O_CREAT|O_EXCL) で既存ファイルがあれば失敗する。
+// 失敗した場合は上書きする（acquireStartupLock でチェック済み）。
+// ─────────────────────────────────────────────────────
+function _writeLockFilesAtomic() {
+  fs.writeFileSync(PID_FILE, String(process.pid), 'utf8');
+
+  const lockData = JSON.stringify({
+    pid:       process.pid,
+    startedAt: new Date().toISOString(),
+    entry:     BOT_ENTRY,
+  }, null, 2);
+
+  try {
+    // O_CREAT|O_EXCL: ファイルが存在しない場合のみ作成（アトミック）
+    const fd = fs.openSync(LOCK_FILE, 'wx');
+    fs.writeSync(fd, lockData);
+    fs.closeSync(fd);
+  } catch (e) {
+    if (e.code === 'EEXIST') {
+      // チェック後に別プロセスが作成した可能性 → 上書き（チェックは済んでいる）
+      logger.warn(`[LOCK] bot.lock が競合作成されました。上書きします。`);
+      fs.writeFileSync(LOCK_FILE, lockData, 'utf8');
+    } else {
+      throw e;
+    }
+  }
+
+  logger.info(`[LOCK] 起動ロック取得: PID=${process.pid}`);
+}
+
+// 旧名称との互換性エイリアス
+const _writeLockFiles = _writeLockFilesAtomic;
+
+// ─────────────────────────────────────────────────────
+// 起動ロック解放（プロセス終了時に呼ぶ）
+//
+// 重要: bot.lock が自分のものである場合のみ削除する。
+// 多重起動で弾かれたプロセスが exit 時に他プロセスの
+// bot.lock を削除しないようにする。
+// ─────────────────────────────────────────────────────
+function releaseStartupLock() {
+  try {
+    if (fs.existsSync(LOCK_FILE)) {
+      const lockData = JSON.parse(fs.readFileSync(LOCK_FILE, 'utf8'));
+      if (lockData.pid === process.pid) {
+        fs.unlinkSync(LOCK_FILE);
+        logger.info(`[LOCK] 起動ロック解放: PID=${process.pid}`);
+      } else {
+        // 他プロセスの lock は削除しない
+        logger.info(`[LOCK] 起動ロック解放スキップ: 所有者=PID=${lockData.pid} (自分=PID=${process.pid})`);
+      }
+    }
+  } catch { /* ignore */ }
+}
+
+// ─────────────────────────────────────────────────────
+// 再起動ロック取得（多重 !restart 防止）
+//
+// restart.lock が存在してそのPIDが生きている場合 → 多重再起動拒否
+// restart.lock が存在してもPIDが死んでいる場合 → stale → 上書きして続行
+//
+// 戻り値:
+//   { ok: true }                  — ロック取得成功
+//   { ok: false, lockData: {...} } — 既に再起動中
+// ─────────────────────────────────────────────────────
+function acquireRestartLock(channelId) {
+  if (fs.existsSync(RESTART_LOCK)) {
+    try {
+      const lockData = JSON.parse(fs.readFileSync(RESTART_LOCK, 'utf8'));
+      try {
+        process.kill(lockData.pid, 0);
+        // そのPIDがまだ生きている → 正当なロック
+        logger.warn(`[RESTART_LOCK] 再起動処理中 (PID: ${lockData.pid})`);
+        return { ok: false, lockData };
+      } catch {
+        // PIDが死んでいる → stale lock → 上書き
+        logger.warn(`[RESTART_LOCK] 古いロック (PID: ${lockData.pid}) を上書きします`);
+      }
+    } catch { /* 破損ファイル → 無視して上書き */ }
+  }
+
+  fs.writeFileSync(RESTART_LOCK, JSON.stringify({
+    pid:       process.pid,
+    startedAt: new Date().toISOString(),
+    channelId: channelId || '',
+  }, null, 2), 'utf8');
+  logger.info(`[RESTART_LOCK] 再起動ロック取得: PID=${process.pid}`);
+  return { ok: true };
+}
+
+// ─────────────────────────────────────────────────────
+// 再起動ロック解放
+// ─────────────────────────────────────────────────────
+function releaseRestartLock() {
+  try { if (fs.existsSync(RESTART_LOCK)) fs.unlinkSync(RESTART_LOCK); } catch { /* ignore */ }
 }
 
 // ─────────────────────────────────────────────────────
@@ -158,6 +319,9 @@ function saveRestartState(taskQueue, channelId) {
 // ファイルがあれば再起動後の起動。読んだら即削除。
 // ─────────────────────────────────────────────────────
 function readRestartState() {
+  // 新Bot起動が確認されたので restart.lock を解放する
+  releaseRestartLock();
+
   if (!fs.existsSync(RESTART_STATE)) return null;
   try {
     const state = JSON.parse(fs.readFileSync(RESTART_STATE, 'utf8'));
@@ -234,6 +398,10 @@ function formatChecksForDiscord(checks) {
 
 module.exports = {
   writePid,
+  acquireStartupLock,
+  releaseStartupLock,
+  acquireRestartLock,
+  releaseRestartLock,
   checkSyntax,
   checkToken,
   checkOldProcess,

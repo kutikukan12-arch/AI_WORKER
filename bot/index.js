@@ -171,8 +171,10 @@ client.once('ready', async () => {
   // プロセス情報はログにのみ記録（Discord には表示しない）
   logger.info(`起動診断 | Node v${process.versions.node} | PID=${process.pid} | argv_count=${process.argv.length}`);
 
-  // ─── PIDファイル記録（再起動検知用）───
-  restartManager.writePid();
+  // ─── ready 内ではロック確認のみ（取得は login 前に完了済み）───
+  // acquireStartupLock() は client.login() より前で実行済み。
+  // ここに到達した時点でロックは取得されている。
+  logger.info(`[LOCK] Discord接続確認 | PID=${process.pid}`);
 
   const flags = [
     ENABLE_GITHUB ? '✅ GitHub' : '⭕ GitHub',
@@ -491,6 +493,16 @@ async function handleHelp(message) {
         inline: false,
       },
       {
+        name: '!auto run 1',
+        value: 'Auto Task Runner Phase3: 未着手タスクを1件だけ安全実行します\n例: `!auto run 1`',
+        inline: false,
+      },
+      {
+        name: '!auto on',
+        value: 'Auto Task Runner Phase4: 未着手タスクを最大3件まで順次自動実行します\n停止条件: タスクなし / 高危険度 / バリデーション失敗 / 人間確認待ち / 上限(3件)',
+        inline: false,
+      },
+      {
         name: '!batch',
         value: 'ナイトバッチを今すぐ手動実行します',
         inline: false,
@@ -508,6 +520,16 @@ async function handleHelp(message) {
       {
         name: '!history [タスクID]',
         value: 'レビュー履歴を表示します\n例: `!history` / `!history task_1748344800000`',
+        inline: false,
+      },
+      {
+        name: '!research list / show <ID>',
+        value: '調査レポートを一覧表示 / フル表示します\n例: `!research list` / `!research show task_xxx`',
+        inline: false,
+      },
+      {
+        name: '!review list',
+        value: '過去の Codex レビュー結果を新しい順に一覧表示します\n例: `!review list`',
         inline: false,
       },
       {
@@ -825,6 +847,224 @@ async function handleTask(message, args) {
     return;
   }
 
+  // !task merge <id1> <id2> — 2つのタスクを1つに統合
+  if (sub === 'merge') {
+    const mergeId1 = args[1] || '';
+    const mergeId2 = args[2] || '';
+    if (!mergeId1 || !mergeId2) {
+      await message.reply(
+        '**使い方**\n```\n!task merge <タスクID1> <タスクID2>\n```\n' +
+        '2つのタスクを1つに統合します。元タスクはアーカイブされます。'
+      );
+      return;
+    }
+    const result = taskManager.mergeTasks(mergeId1, mergeId2);
+    if (!result.ok) {
+      await message.reply(`❌ ${result.reason}`);
+      return;
+    }
+    const { mergedTask, typeMerged } = result;
+    const typeEmoji = taskManager.TYPE_EMOJI[mergedTask.type] || '📋';
+    const sizeEmoji = taskManager.SIZE_EMOJI[mergedTask.size] || '🟡';
+    const lines = [
+      `🔗 **タスク統合完了**`,
+      ``,
+      `統合元: \`${mergeId1}\` + \`${mergeId2}\` → アーカイブ済み`,
+      ``,
+      `**統合後タスク:**`,
+      `ID: \`${mergedTask.id}\``,
+      `[${mergedTask.type}/${mergedTask.size}] ${typeEmoji}${sizeEmoji}`,
+      `内容: ${mergedTask.prompt.slice(0, 100)}${mergedTask.prompt.length > 100 ? '...' : ''}`,
+    ];
+    if (typeMerged) {
+      lines.push(``, `⚠️ 2件の type が異なるため **IMPLEMENT** に統一しました。`);
+    }
+    lines.push('', '`!task list` で確認できます。');
+    await message.reply(lines.join('\n'));
+    return;
+  }
+
+  // !task split <id> / !task split preview <id>
+  if (sub === 'split') {
+    // ─── !task split preview <id> — 登録せず分割案だけ確認 ───
+    if (taskId === 'preview') {
+      const previewId = args[2] || '';
+      if (!previewId) {
+        await message.reply(
+          '**使い方**\n```\n!task split preview <タスクID>\n```\n' +
+          '分割案をプレビュー表示します。タスク登録・元タスクのアーカイブはしません。'
+        );
+        return;
+      }
+      const targetTask = taskManager.getTask(previewId);
+      if (!targetTask) {
+        await message.reply(`❌ \`${previewId}\` が見つかりません。`);
+        return;
+      }
+      const proposals      = taskManager.generateSplitProposals(targetTask.prompt);
+      const inheritedType  = targetTask.type || taskManager.TASK_TYPES.IMPLEMENT;
+      const typeEmoji      = taskManager.TYPE_EMOJI[inheritedType] || '📋';
+      const origSizeLabel  = targetTask.size || taskManager.TASK_SIZES.MEDIUM;
+      const origSizeEmoji  = taskManager.SIZE_EMOJI[origSizeLabel] || '🟡';
+
+      const lines = [
+        `🔍 **タスク分割プレビュー**`,
+        ``,
+        `元タスク: \`${previewId}\``,
+        `タイプ: ${typeEmoji} **${inheritedType}**  サイズ: ${origSizeEmoji} **${origSizeLabel}**`,
+        ``,
+        `**分割案 (${proposals.length}件) — まだ登録されていません:**`,
+      ];
+      proposals.forEach((p, i) => {
+        const estSize    = taskManager.estimateTaskSize(p);
+        const sizeEmoji2 = taskManager.SIZE_EMOJI[estSize] || '🟡';
+        lines.push(
+          `${i + 1}. ${typeEmoji}${sizeEmoji2} [${inheritedType}/${estSize}]`,
+          `   ${p.slice(0, 70)}${p.length > 70 ? '...' : ''}`
+        );
+      });
+      lines.push('', `登録するには: \`!task split ${previewId}\``);
+      await message.reply(lines.join('\n'));
+      return;
+    }
+
+    // ─── !task split <id> — 実際に分割登録 ───
+    if (!taskId) {
+      await message.reply(
+        '**使い方**\n```\n!task split <タスクID>\n!task split preview <タスクID>\n```\n' +
+        'LARGEタスクを3〜5個の小さいタスクに分割します。\n' +
+        'preview を付けると登録せず分割案だけ確認できます。'
+      );
+      return;
+    }
+    const result = taskManager.splitTask(taskId);
+    if (!result.ok) {
+      await message.reply(`❌ ${result.reason}`);
+      return;
+    }
+    const lines = [
+      `✂️ **タスク分割完了**`,
+      ``,
+      `元タスク: \`${taskId}\` → アーカイブ済み`,
+      ``,
+      `**新タスク (${result.newTasks.length}件):**`,
+    ];
+    result.newTasks.forEach((t, i) => {
+      const sizeEmoji = taskManager.SIZE_EMOJI[t.size] || '🟡';
+      const typeEmoji = taskManager.TYPE_EMOJI[t.type] || '📋';
+      lines.push(
+        `${i + 1}. ${typeEmoji}${sizeEmoji} \`${t.id}\``,
+        `   [${t.type}/${t.size}] ${t.prompt.slice(0, 60)}${t.prompt.length > 60 ? '...' : ''}`
+      );
+    });
+    lines.push('', '`!task list` で確認できます。');
+    await message.reply(lines.join('\n'));
+    return;
+  }
+
+  // !task archive — 30日超過の保留・レビュー待ちを data/archive_tasks.json へ移動
+  if (sub === 'archive') {
+    const result = taskManager.archiveStaleTasks(30);
+    const lines = [
+      '📦 **アーカイブ完了**',
+      '',
+      `保留: **${result.onHold}件**`,
+      `レビュー待ち: **${result.reviewing}件**`,
+      `合計: **${result.total}件**`,
+    ];
+    if (result.total === 0) {
+      lines.push('\n対象タスクはありませんでした（30日未満 or 該当状態なし）。');
+    } else {
+      lines.push('\n移動先: `data/archive_tasks.json`');
+    }
+    await message.reply(lines.join('\n'));
+    return;
+  }
+
+  // !task add [TYPE] <content> — タスクを手動登録
+  // 書式: !task add IMPLEMENT 内容  → type=IMPLEMENT
+  //       !task add 内容            → type=IMPLEMENT (デフォルト)
+  if (sub === 'add') {
+    const rest = args.slice(1); // args[0]='add' を除いた残り
+    if (rest.length === 0) {
+      await message.reply(
+        '**使い方**\n```\n!task add <内容>\n!task add IMPLEMENT <内容>\n!task add FIX <内容>\n```\n' +
+        `利用可能タイプ: ${Object.keys(taskManager.TASK_TYPES).join(' / ')}`
+      );
+      return;
+    }
+
+    // 先頭が有効な TYPE かどうかを判定
+    const maybeType = taskManager.normalizeTaskType(rest[0]);
+    let taskType, promptParts;
+    if (maybeType && rest.length > 1) {
+      taskType    = maybeType;
+      promptParts = rest.slice(1);
+    } else {
+      taskType    = taskManager.TASK_TYPES.IMPLEMENT;
+      promptParts = rest;
+    }
+
+    const prompt = promptParts.join(' ').trim();
+    if (!prompt) {
+      await message.reply('依頼内容が空です。内容を入力してください。');
+      return;
+    }
+
+    const newTask = taskManager.createTask(
+      prompt,
+      message.author.id,
+      null,    // taskId 自動生成
+      '低',    // dangerLevel
+      projectId,
+      taskType
+    );
+
+    const typeEmoji = taskManager.TYPE_EMOJI[newTask.type] || '📋';
+    const sizeEmoji = taskManager.SIZE_EMOJI[newTask.size] || '🟡';
+    const sizeWarn  = newTask.size === taskManager.TASK_SIZES.LARGE
+      ? '\n\n⚠️ **このタスクは大きすぎる可能性があります。**\n分割をおすすめします。'
+      : '';
+
+    await message.reply(
+      `✅ **タスクを登録しました**\n\n` +
+      `ID: \`${newTask.id}\`\n` +
+      `タイプ: ${typeEmoji} **${newTask.type}**\n` +
+      `サイズ: ${sizeEmoji} **${newTask.size}**\n` +
+      `内容: ${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}` +
+      sizeWarn
+    );
+    return;
+  }
+
+  // !task edit <id> type <TYPE> — タスクの type を変更
+  if (sub === 'edit') {
+    const editId    = args[1] || '';
+    const editField = args[2] || '';
+    const editValue = args[3] || '';
+
+    if (!editId || editField !== 'type' || !editValue) {
+      await message.reply(
+        '**使い方**\n```\n!task edit <タスクID> type <TYPE>\n```\n' +
+        `利用可能タイプ: ${Object.keys(taskManager.TASK_TYPES).join(' / ')}`
+      );
+      return;
+    }
+
+    const result = taskManager.updateTaskType(editId, editValue);
+    if (!result.ok) {
+      await message.reply(`❌ ${result.reason}`);
+      return;
+    }
+    const typeEmoji = taskManager.TYPE_EMOJI[result.task.type] || '📋';
+    await message.reply(
+      `✅ **タスクタイプを変更しました**\n\n` +
+      `ID: \`${editId}\`\n` +
+      `タイプ: ${typeEmoji} **${result.task.type}**`
+    );
+    return;
+  }
+
   // !task cleanup — 孤立タスク整理（24時間超過の作業中・レビュー待ち → 保留）
   if (sub === 'cleanup') {
     const result = taskManager.cleanupStaleTasks(24);
@@ -850,7 +1090,7 @@ async function handleTask(message, args) {
   }
 
   await message.reply(
-    '**使い方**\n```\n!task list\n!task <タスクID>\n!task done <タスクID>\n!task hold <タスクID>\n!task resume <タスクID>\n!task stats\n!task cleanup\n```'
+    '**使い方**\n```\n!task list\n!task <タスクID>\n!task add <内容>\n!task add IMPLEMENT|FIX|REFACTOR|RESEARCH|DOCS|TEST|REVIEW <内容>\n!task edit <ID> type <TYPE>\n!task split preview <タスクID>\n!task split <タスクID>\n!task merge <タスクID1> <タスクID2>\n!task done <タスクID>\n!task hold <タスクID>\n!task resume <タスクID>\n!task stats\n!task cleanup\n!task archive\n```'
   );
 }
 
@@ -910,6 +1150,213 @@ async function handleMeeting(message, rawTopic) {
 }
 
 // ─────────────────────────────────────────────────────
+// !research list / show <id> — 調査レポートの一覧・詳細表示
+//
+// list: reports/research_*.md を新しい順に最大10件表示する。
+// show: reports/research_<id>.md のフル内容を表示する。
+// reports/ フォルダがない場合も安全に処理する。
+// ─────────────────────────────────────────────────────
+async function handleResearch(message, sub) {
+  const reportsDir = path.join(AI_WORKER_ROOT, 'reports');
+
+  // ─── !research show <id> — フル調査レポートを表示 ───
+  if (sub === 'show') {
+    // args[2] 相当: !research show task_xxx → content.split()[2]
+    const rawId = message.content.split(/\s+/)[2] || '';
+    if (!rawId) {
+      await message.reply(
+        '**使い方**\n```\n!research show <タスクID>\n```\n' +
+        '例: `!research show task_1780123456789`\n\n' +
+        'タスクIDは `!research list` で確認できます。'
+      );
+      return;
+    }
+
+    const reportPath = path.join(reportsDir, `research_${rawId}.md`);
+    if (!fs.existsSync(reportPath)) {
+      await message.reply(
+        `❌ **調査レポートが見つかりません**\n\n` +
+        `ID: \`${rawId}\`\n` +
+        `確認場所: \`reports/research_${rawId}.md\`\n\n` +
+        `\`!research list\` で利用可能なレポート一覧を確認できます。`
+      );
+      return;
+    }
+
+    const content  = fs.readFileSync(reportPath, 'utf8');
+    const date     = new Date(fs.statSync(reportPath).mtimeMs).toLocaleString('ja-JP');
+    const header   = `📄 **調査レポート: \`${rawId}\`** | ${date}\n\n`;
+    const MAX_BODY = 1800 - header.length;
+
+    if (content.length <= MAX_BODY) {
+      // 全文を1メッセージで送信
+      await message.reply(header + content);
+    } else {
+      // 先頭 MAX_BODY 文字 + 省略案内
+      const truncated = content.slice(0, MAX_BODY);
+      const suffix    = `\n\n...[省略] フル内容: \`reports/research_${rawId}.md\``;
+      await message.reply(header + truncated + suffix);
+    }
+    return;
+  }
+
+  // ─── !research list 以外は使い方を表示 ───
+  if (sub !== 'list') {
+    await message.reply(
+      '**使い方**\n```\n!research list\n!research show <タスクID>\n```\n' +
+      '`list` — 調査レポート一覧を表示\n' +
+      '`show <ID>` — 特定のレポートをフル表示'
+    );
+    return;
+  }
+
+  // reports/ フォルダがない場合
+  if (!fs.existsSync(reportsDir)) {
+    await message.reply(
+      '📂 **調査レポートがありません**\n\n' +
+      '`reports/` フォルダが存在しません。\n' +
+      '`!auto run 1` または `!auto on` で RESEARCH タスクを実行すると保存されます。'
+    );
+    return;
+  }
+
+  // research_*.md ファイルを取得
+  const files = fs.readdirSync(reportsDir)
+    .filter(f => f.startsWith('research_') && f.endsWith('.md'))
+    .map(f => ({
+      name:  f,
+      mtime: fs.statSync(path.join(reportsDir, f)).mtimeMs,
+      full:  path.join(reportsDir, f),
+    }))
+    .sort((a, b) => b.mtime - a.mtime) // 新しい順
+    .slice(0, 10);                       // 最大10件
+
+  if (files.length === 0) {
+    await message.reply(
+      '📂 **調査レポートがありません**\n\n' +
+      '`reports/` フォルダは存在しますが、調査レポートがまだ保存されていません。\n' +
+      'RESEARCH タスクを実行すると `reports/research_<id>.md` に保存されます。'
+    );
+    return;
+  }
+
+  // 各ファイルの先頭サマリーを抽出
+  const lines = [
+    `📚 **調査レポート一覧** (${files.length}件 / 最新10件)`,
+    ``,
+  ];
+
+  files.forEach((f, i) => {
+    // ファイル名から taskId を抽出: research_<taskId>.md
+    const taskId  = f.name.replace(/^research_/, '').replace(/\.md$/, '');
+    const date    = new Date(f.mtime).toLocaleString('ja-JP');
+    const content = fs.readFileSync(f.full, 'utf8');
+
+    // 「## 調査結果」セクションの先頭100文字を抽出
+    const resultMatch = content.match(/## 調査結果\n+([^\n].{0,100})/);
+    const summary     = resultMatch
+      ? resultMatch[1].trim().slice(0, 80)
+      : content.split('\n').filter(l => l.trim() && !l.startsWith('#')).slice(0, 1).join('').slice(0, 80);
+
+    lines.push(
+      `**${i + 1}.** \`${taskId}\``,
+      `　📅 ${date}`,
+      summary ? `　${summary}${summary.length >= 80 ? '...' : ''}` : '',
+      ``,
+    );
+  });
+
+  lines.push(`> \`reports/research_<id>.md\` でフルレポートを確認できます。`);
+
+  await message.reply(lines.filter(l => l !== null).join('\n'));
+}
+
+// ─────────────────────────────────────────────────────
+// !review list — 過去の Codex レビュー結果一覧を表示
+//
+// reviews/result_*.md を新しい順に最大10件表示する。
+// 各ファイルから危険度・問題点サマリーを抽出して表示。
+// reviews/ フォルダがない場合も安全に処理する。
+// ─────────────────────────────────────────────────────
+async function handleReview(message, sub) {
+  if (sub !== 'list') {
+    await message.reply(
+      '**使い方**\n```\n!review list\n```\n' +
+      '`reviews/` フォルダ内の Codex レビュー結果を新しい順に一覧表示します。'
+    );
+    return;
+  }
+
+  const reviewsDir = path.join(AI_WORKER_ROOT, 'reviews');
+
+  // reviews/ フォルダがない場合
+  if (!fs.existsSync(reviewsDir)) {
+    await message.reply(
+      '📂 **Codex レビュー結果がありません**\n\n' +
+      '`reviews/` フォルダが存在しません。\n' +
+      'REVIEW タスクを実行すると `reviews/result_<id>.md` に保存されます。'
+    );
+    return;
+  }
+
+  // result_*.md ファイルを取得（最大10件・新しい順）
+  const files = fs.readdirSync(reviewsDir)
+    .filter(f => f.startsWith('result_') && f.endsWith('.md'))
+    .map(f => ({
+      name:  f,
+      mtime: fs.statSync(path.join(reviewsDir, f)).mtimeMs,
+      full:  path.join(reviewsDir, f),
+    }))
+    .sort((a, b) => b.mtime - a.mtime)
+    .slice(0, 10);
+
+  if (files.length === 0) {
+    await message.reply(
+      '📂 **Codex レビュー結果がありません**\n\n' +
+      '`reviews/` フォルダは存在しますが、`result_*.md` がまだ保存されていません。\n' +
+      'REVIEW タスクを実行すると保存されます。'
+    );
+    return;
+  }
+
+  // 各ファイルから危険度・問題点を抽出
+  const lines = [
+    `🔍 **Codex レビュー結果一覧** (${files.length}件 / 最新10件)`,
+    ``,
+  ];
+
+  files.forEach((f, i) => {
+    const taskId  = f.name.replace(/^result_/, '').replace(/\.md$/, '');
+    const date    = new Date(f.mtime).toLocaleString('ja-JP');
+    const content = fs.readFileSync(f.full, 'utf8');
+
+    // 危険度を抽出: `| 危険度   | 🔴 高 |` 形式
+    const dangerMatch  = content.match(/\|\s*危険度\s*\|\s*([^\|]+)\|/);
+    const dangerLabel  = dangerMatch
+      ? dangerMatch[1].trim()
+      : '未評価';
+
+    // 問題点の先頭80文字を抽出
+    const problemMatch = content.match(/## 問題点\n+([^\n#].{0,100})/);
+    const problem      = problemMatch
+      ? problemMatch[1].trim().slice(0, 80)
+      : '';
+
+    lines.push(
+      `**${i + 1}.** \`${taskId}\``,
+      `　📅 ${date}  |  危険度: ${dangerLabel}`,
+      problem ? `　❗ ${problem}${problem.length >= 80 ? '...' : ''}` : '',
+      `　✅ \`!apply-review ${taskId}\``,
+      ``,
+    );
+  });
+
+  lines.push(`> \`reviews/result_<id>.md\` でフル結果を確認できます。`);
+
+  await message.reply(lines.filter(l => l !== null).join('\n'));
+}
+
+// ─────────────────────────────────────────────────────
 // !next コマンド — 最優先の実行可能タスクを1件表示
 // ─────────────────────────────────────────────────────
 async function handleNext(message) {
@@ -921,16 +1368,27 @@ async function handleNext(message) {
     return;
   }
 
+  // task.type / task.size（後方互換: 未設定は IMPLEMENT / MEDIUM）
+  const typeLabel = next.type || taskManager.TASK_TYPES.IMPLEMENT;
+  const sizeLabel = next.size || taskManager.TASK_SIZES.MEDIUM;
+  const typeEmoji = taskManager.TYPE_EMOJI[typeLabel]  || '📋';
+  const sizeEmoji = taskManager.SIZE_EMOJI[sizeLabel]  || '🟡';
+
   const PRIORITY_EN = { '高': 'HIGH', '中': 'MEDIUM', '低': 'LOW' };
-  const priorityEn = PRIORITY_EN[next.priority] || next.priority;
-  const reason = next.priorityReason || '未着手かつ最優先';
+  const priorityEn  = PRIORITY_EN[next.priority] || next.priority;
+
+  // LARGE タスクは警告を付ける
+  const largeWarn = sizeLabel === taskManager.TASK_SIZES.LARGE
+    ? `\n\n⚠️ このタスクは **LARGE** です。\`!claude\` で手動実行を推奨します。`
+    : '';
 
   await message.reply(
     `📋 **次タスク**\n\n` +
     `Task:\n\`${next.id}\`\n\n` +
-    `Priority:\n${priorityEn}\n\n` +
-    `State:\n${next.state}\n\n` +
-    `理由:\n${reason}`
+    `[${typeLabel}/${sizeLabel}] ${typeEmoji}${sizeEmoji}\n\n` +
+    `内容: ${next.prompt.slice(0, 80)}${next.prompt.length > 80 ? '...' : ''}\n\n` +
+    `Priority: ${priorityEn}` +
+    largeWarn
   );
 }
 
@@ -1463,47 +1921,45 @@ async function executeClaudeTask({
 }
 
 // ─────────────────────────────────────────────────────
-// !run-next コマンド — 最優先の未着手タスクを安全実行
+// prepareNextTask — !run-next / !auto run 共通の次タスク準備ヘルパー
 //
-// executeClaudeTask() を通じて !claude と完全に同じ
-// フロー（completionValidator・AIレビュー・Codex等）を実行する。
-// 無条件DONE禁止。高危険度タスクは実行しない。
+// 未着手タスクを1件選択し、安全チェック（セキュリティ・危険度・サイズ）
+// を行ってタスク実行に必要な情報を返す。
+// ブロック時は message.reply() でエラーを返し { blocked: true } を返す。
+// タスクなし時は null を返す（呼び出し元でメッセージを出す）。
+//
+// 戻り値:
+//   null                           — 未着手タスクなし
+//   { blocked: true }              — セキュリティ/危険度/サイズで拒否済み
+//   { task, prompt, taskType, taskSizeResult, projectId, taskWorkspace }
 // ─────────────────────────────────────────────────────
-async function handleRunNext(message) {
-  // ── [DIAG-3] handleRunNext 到達ログ ──
-  logger.info(`[DIAG-3] handleRunNext reached | ch:${message.channelId} | author:${message.author.id}`);
-
+async function prepareNextTask(message, source = 'run-next') {
   const tasks = taskManager.listTasksByPriority();
   const next  = tasks.find(t => t.state === taskManager.STATES.PENDING);
-
-  if (!next) {
-    await message.reply('📋 **!run-next**\n\n実行可能な未着手タスクはありません。\n`!task cleanup` で孤立タスクを整理できます。');
-    return;
-  }
+  if (!next) return null;
 
   const prompt = next.prompt || '';
 
   // ─── セキュリティチェック ───
   const sec = security.checkPrompt(prompt);
   if (!sec.safe) {
-    logger.warn(`!run-next セキュリティブロック: ${next.id} | ${sec.reason}`);
+    logger.warn(`${source} セキュリティブロック: ${next.id} | ${sec.reason}`);
     await message.reply(
       `🚫 **セキュリティチェックで拒否**\n\n` +
-      `タスク \`${next.id}\` をスキップします。\n` +
-      `理由: ${sec.reason}`
-    );
-    return;
+      `タスク \`${next.id}\` をスキップします。\n理由: ${sec.reason}`
+    ).catch(() => {});
+    return { blocked: true };
   }
 
-  // ─── 高危険度は !run-next で実行しない ───
+  // ─── 高危険度は自動実行しない ───
   const preDanger = codex.assessDanger(prompt, '', []);
   if (preDanger === '高') {
     await message.reply(
-      `🔴 **高危険度タスクは \`!run-next\` で実行できません**\n\n` +
+      `🔴 **高危険度タスクは自動実行できません**\n\n` +
       `タスク: \`${next.id}\`\n\n` +
-      `高危険度タスクは \`!claude\` から直接実行し、\n承認フロー（\`!approve\`）を経てください。`
-    );
-    return;
+      `高危険度タスクは \`!claude\` から直接実行し、承認フロー（\`!approve\`）を経てください。`
+    ).catch(() => {});
+    return { blocked: true };
   }
 
   // ─── TaskType / TaskSize 判定 ───
@@ -1514,16 +1970,256 @@ async function handleRunNext(message) {
     const splitMsg = taskTypeUtil.buildSplitSuggestion(prompt, taskSizeResult);
     await message.reply(
       `⚠️ **タスクが大きすぎます**\n\nタスク: \`${next.id}\`\n\n` + splitMsg
-    );
-    return;
+    ).catch(() => {});
+    return { blocked: true };
   }
 
-  // タスク作成時に保存した projectId を優先して使用。
-  // 旧タスク（projectId 未保存）はフォールバックとして現チャンネルで判定。
+  // ─── projectId / workspace 解決 ───
   const projectId     = next.projectId
     || projectDetector.detectProjectId(message.channel)
     || 'default';
   const taskWorkspace = path.join(WORKSPACE_PATH, projectId, next.id);
+
+  return { task: next, prompt, taskType, taskSizeResult, projectId, taskWorkspace };
+}
+
+// ─────────────────────────────────────────────────────
+// executeReviewTask — REVIEW タスクを Codex へ転送する
+//
+// task.type === REVIEW の場合、Claude Code を実行せず
+// Codex レビュー依頼を生成して #codex-review へ通知する。
+//
+// フロー:
+//   1. タスクを IN_PROGRESS に更新
+//   2. Codex 用依頼文を生成（元プロンプト全文を保存）
+//   3. OPENAI_API_KEY が設定されていれば API を呼び出す
+//   4. reviews/codex_<id>.md に保存
+//   5. #codex-review へ通知
+//   6. タスクを DONE（アーカイブ）にする
+//
+// 引数:
+//   message   - Discord メッセージオブジェクト
+//   task      - タスクオブジェクト（task.id / task.prompt）
+//   projectId - プロジェクトID
+// ─────────────────────────────────────────────────────
+async function executeReviewTask({ message, task, projectId }) {
+  const taskId = task.id;
+  const prompt = task.prompt;
+
+  logger.info(`[AUTO] REVIEW task routed to Codex: ${taskId}`);
+
+  taskManager.updateState(taskId, taskManager.STATES.IN_PROGRESS, 'REVIEWタスク: Codex転送開始');
+
+  // Codex 依頼文を生成（Claude Code 実行なし・output は空）
+  const codexRequest = codex.generateCodexRequest(taskId, prompt, '', []);
+  const discordMsg   = codex.generateDiscordMessage(taskId, codexRequest);
+  codex.saveReview(taskId, { ...codexRequest, discordMessage: discordMsg });
+
+  // API 呼び出し（OPENAI_API_KEY が設定されていれば）
+  let apiResult = null;
+  let parsed    = null;
+  if (process.env.OPENAI_API_KEY) {
+    try {
+      apiResult = await codex.callCodexAPI(prompt, '');
+      if (apiResult) {
+        codex.saveCodexResponse(taskId, apiResult);
+        parsed = codex.parseCodexResult(apiResult);
+        logger.info(`[AUTO] REVIEW Codex API回答取得: ${taskId} | 危険度: ${parsed.danger}`);
+      }
+    } catch (e) {
+      logger.error(`[AUTO] REVIEW Codex API失敗: ${e.message}`);
+    }
+  }
+
+  // ─ Codex 結果がある場合: reviews/result_<id>.md に保存 ─
+  if (parsed) {
+    const reviewsPath = path.join(AI_WORKER_ROOT, 'reviews');
+    const resultPath  = path.join(reviewsPath, `result_${taskId}.md`);
+    const dangerEmoji = { '高': '🔴', '中': '🟡', '低': '🟢' }[parsed.danger] || '⬜';
+    fs.writeFileSync(resultPath, [
+      `# Codex レビュー結果: ${taskId}`,
+      ``,
+      `| 項目 | 内容 |`,
+      `|------|------|`,
+      `| 作成日時 | ${new Date().toLocaleString('ja-JP')} |`,
+      `| タスクID | ${taskId} |`,
+      `| 危険度   | ${dangerEmoji} ${parsed.danger} |`,
+      ``,
+      `## 問題点`,
+      ``,
+      parsed.problem || '（なし）',
+      ``,
+      `## 改善案`,
+      ``,
+      parsed.suggestion || '（なし）',
+      ``,
+      `## フィードバック適用コマンド`,
+      ``,
+      `\`!apply-review ${taskId}\``,
+    ].join('\n'), 'utf8');
+    logger.info(`[AUTO] REVIEW 結果保存: reviews/result_${taskId}.md | 危険度: ${parsed.danger}`);
+  }
+
+  // タスクを DONE にする（アーカイブ）
+  taskManager.updateState(taskId, taskManager.STATES.DONE, 'REVIEWタスク: Codex転送完了');
+
+  // ─ #codex-review へ通知 ─
+  const dangerLabel = parsed?.danger || '未評価';
+  const dangerEmoji2 = { '高': '🔴', '中': '🟡', '低': '🟢' }[dangerLabel] || '⬜';
+  const reviewNotice = apiResult && parsed
+    ? `👀 **REVIEW → Codex 結果あり** | \`${taskId}\`\n` +
+      `${dangerEmoji2} 危険度: ${dangerLabel}\n` +
+      `📄 \`reviews/result_${taskId}.md\`\n` +
+      `✅ \`!apply-review ${taskId}\` でフィードバック適用`
+    : `👀 **REVIEW タスク → Codex 転送** | \`${taskId}\`\n` +
+      `📄 \`reviews/codex_${taskId}.md\` を確認してください。\n` +
+      `⭕ API 未設定 — 手動レビューをお願いします`;
+  await sendNotification('codexReview', message.channel, reviewNotice);
+
+  // ─ コマンドチャンネルに詳細表示 ─
+  let channelMsg;
+  if (apiResult && parsed) {
+    channelMsg =
+      `👀 **REVIEWタスク完了 — Codex 結果あり**\n\n` +
+      `タスク: \`${taskId}\`\n\n` +
+      `${dangerEmoji2} **危険度: ${parsed.danger}**\n\n` +
+      `**【問題点】**\n${(parsed.problem  || 'なし').slice(0, 150)}\n\n` +
+      `**【改善案】**\n${(parsed.suggestion || 'なし').slice(0, 150)}\n\n` +
+      `📄 \`reviews/result_${taskId}.md\`\n` +
+      `✅ フィードバック適用: \`!apply-review ${taskId}\``;
+  } else {
+    channelMsg =
+      `👀 **REVIEWタスク完了**\n\n` +
+      `タスク: \`${taskId}\`\n\n` +
+      `Codex レビュー依頼を生成しました。\n` +
+      `📄 \`reviews/codex_${taskId}.md\`\n\n` +
+      `⭕ API キー未設定のため手動レビューが必要です。\n` +
+      `レビュー後: \`!apply-review ${taskId}\``;
+  }
+  await message.channel.send(channelMsg).catch(() => {});
+}
+
+// ─────────────────────────────────────────────────────
+// executeResearchTask — RESEARCH タスクを調査専用モードで実行する
+//
+// task.type === RESEARCH の場合、
+// ファイル変更禁止 Type Guard を付与して Claude Code を実行し、
+// 調査結果を reports/research_<id>.md に保存する。
+// AI レビュー / Codex レビュー / PR 作成はスキップする。
+//
+// 引数:
+//   message   - Discord メッセージオブジェクト
+//   task      - タスクオブジェクト（task.id / task.prompt）
+//   projectId - プロジェクトID
+// ─────────────────────────────────────────────────────
+async function executeResearchTask({ message, task, projectId }) {
+  const taskId = task.id;
+  const prompt = task.prompt;
+
+  logger.info(`[AUTO] RESEARCH task routed to research mode: ${taskId}`);
+
+  taskManager.updateState(taskId, taskManager.STATES.IN_PROGRESS, 'RESEARCHタスク: 調査開始');
+
+  // ─ ワークスペース作成 + prompt.md 保存 ─
+  const taskWorkspace = path.join(WORKSPACE_PATH, projectId, taskId);
+  fs.mkdirSync(taskWorkspace, { recursive: true });
+  fs.writeFileSync(
+    path.join(taskWorkspace, 'prompt.md'),
+    `# 調査タスク: ${taskId}\n\n` +
+    `- **日時:** ${new Date().toLocaleString('ja-JP')}\n` +
+    `- **依頼者:** ${message.author.tag}\n` +
+    `- **Project:** ${projectId}\n\n## 指示内容\n${prompt}\n`,
+    'utf8'
+  );
+
+  // ─ Claude Code を調査専用プロンプトで実行 ─
+  const typeGuard      = taskManager.buildTypeGuard(taskManager.TASK_TYPES.RESEARCH);
+  const researchPrompt = prompt + typeGuard;
+
+  let resultOutput = '';
+  let duration     = 0;
+  try {
+    const result = await claudeRunner.run(researchPrompt, taskWorkspace, AI_WORKER_ROOT);
+    resultOutput = result.output;
+    duration     = result.duration;
+
+    // result.md を保存
+    fs.writeFileSync(
+      path.join(taskWorkspace, 'result.md'),
+      `# 調査結果: ${taskId}\n\n` +
+      `- **完了日時:** ${new Date().toLocaleString('ja-JP')}\n` +
+      `- **実行時間:** ${duration}秒\n\n## 調査結果\n${resultOutput}\n`,
+      'utf8'
+    );
+  } catch (e) {
+    logger.error(`[AUTO] RESEARCH 実行失敗: ${taskId} | ${e.message}`);
+    taskManager.updateState(taskId, taskManager.STATES.ON_HOLD,
+      `RESEARCHタスク失敗: ${e.message.slice(0, 50)}`
+    );
+    await message.channel.send(
+      `❌ **調査タスク失敗**\n\nタスク: \`${taskId}\`\nエラー: ${e.message.slice(0, 200)}`
+    ).catch(() => {});
+    return;
+  }
+
+  // ─ reports/research_<id>.md に調査レポートを保存 ─
+  const reportsDir  = path.join(AI_WORKER_ROOT, 'reports');
+  fs.mkdirSync(reportsDir, { recursive: true });
+  const reportPath  = path.join(reportsDir, `research_${taskId}.md`);
+  fs.writeFileSync(reportPath, [
+    `# 調査レポート: ${taskId}`,
+    ``,
+    `| 項目 | 内容 |`,
+    `|------|------|`,
+    `| 作成日時 | ${new Date().toLocaleString('ja-JP')} |`,
+    `| プロジェクト | ${projectId} |`,
+    `| 実行時間 | ${duration}秒 |`,
+    `| タスクID | ${taskId} |`,
+    ``,
+    `## 依頼内容`,
+    ``,
+    prompt,
+    ``,
+    `## 調査結果`,
+    ``,
+    resultOutput || '（出力なし）',
+  ].join('\n'), 'utf8');
+  logger.info(`[AUTO] RESEARCH レポート保存: reports/research_${taskId}.md`);
+
+  // ─ タスクを DONE にする（アーカイブ） ─
+  taskManager.updateState(taskId, taskManager.STATES.DONE, 'RESEARCHタスク: 調査完了');
+
+  // ─ Discord に完了通知 ─
+  await message.channel.send(
+    `🔍 **RESEARCH タスク完了**\n\n` +
+    `タスク: \`${taskId}\`\n\n` +
+    `調査レポートを保存しました。\n` +
+    `📄 \`reports/research_${taskId}.md\`\n\n` +
+    (resultOutput
+      ? `**結果（先頭200文字）:**\n${resultOutput.slice(0, 200)}${resultOutput.length > 200 ? '...' : ''}`
+      : '（出力なし）')
+  ).catch(() => {});
+}
+
+// ─────────────────────────────────────────────────────
+// !run-next コマンド — 最優先の未着手タスクを安全実行
+//
+// prepareNextTask() で安全チェックを行い
+// executeClaudeTask() を通じて完全フローを実行する。
+// ─────────────────────────────────────────────────────
+async function handleRunNext(message) {
+  // ── [DIAG-3] handleRunNext 到達ログ ──
+  logger.info(`[DIAG-3] handleRunNext reached | ch:${message.channelId} | author:${message.author.id}`);
+
+  const prepared = await prepareNextTask(message, 'run-next');
+
+  if (!prepared) {
+    await message.reply('📋 **!run-next**\n\n実行可能な未着手タスクはありません。\n`!task cleanup` で孤立タスクを整理できます。');
+    return;
+  }
+  if (prepared.blocked) return;
+
+  const { task: next, prompt, taskType, taskSizeResult, projectId, taskWorkspace } = prepared;
 
   await message.reply(
     `▶️ **!run-next: 通常フローで実行開始**\n\n` +
@@ -1532,13 +2228,320 @@ async function handleRunNext(message) {
     `completionValidator・AIレビュー・Codex を通常通り実行します。`
   ).catch(() => {});
 
-  // ─── キューに追加（!claude と同じ concurrency 管理）───
   const runNextExecuteTask = async () => executeClaudeTask({
     message, prompt, taskId: next.id, projectId, taskType, taskSizeResult,
     taskWorkspace, refTaskId: null, source: 'run-next',
   });
 
   const queuePos = taskQueue.enqueue(next.id, runNextExecuteTask);
+  if (queuePos > 0) {
+    await message.reply(
+      `📋 **キューに追加しました（待機 ${queuePos} 番目）**\n` +
+      `\`${next.id}\` は ${taskQueue.activeCount} 件の処理完了後に自動実行されます。\n` +
+      `\`!queue\` でキュー状況を確認できます。`
+    ).catch(() => {});
+  }
+}
+
+// ─────────────────────────────────────────────────────
+// enqueueAndWait — taskQueue 経由でタスクを実行し完了を待つ
+//
+// handleAutoOn() の順次実行に使用。
+// キューの concurrency 制限を尊重しつつ完了まで await できる。
+// ─────────────────────────────────────────────────────
+function enqueueAndWait(taskId, execute) {
+  return new Promise((resolve) => {
+    taskQueue.enqueue(taskId, async () => {
+      await execute();
+      resolve(); // execute 完了時に呼び出し元の await を解除
+    });
+  });
+}
+
+// ─────────────────────────────────────────────────────
+// !auto on — Auto Task Runner Phase4（最大3件を順次自動実行）
+//
+// prepareNextTask() / executeClaudeTask() / enqueueAndWait を再利用。
+// 各タスク完了後に状態を確認し、停止条件を満たしたら終了する。
+//
+// 停止条件:
+//   ・未着手タスクなし
+//   ・安全チェック拒否（高危険度・サイズ超過等）
+//   ・実行エラー（エラー状態 / IN_PROGRESS のまま）
+//   ・人間確認待ち（AIレビュー却下推奨）
+//   ・バリデーション未通過（変更なし / handoff 検出等）
+//   ・最大3件到達
+// ─────────────────────────────────────────────────────
+const AUTO_MAX_TASKS = 3;
+
+async function handleAutoOn(message) {
+  // キューが使用中なら拒否
+  if (taskQueue.activeCount > 0 || taskQueue.pendingCount > 0) {
+    await message.reply(
+      `⚠️ **タスクが実行中または待機中です**\n\n` +
+      `\`!queue\` でキュー状況を確認し、空になったら再度実行してください。`
+    );
+    return;
+  }
+
+  logger.info(`[AUTO-ON] 開始 | ch:${message.channelId} | max:${AUTO_MAX_TASKS}`);
+
+  await message.reply(
+    `▶ **Auto Task Runner 開始**\n\n` +
+    `最大 **${AUTO_MAX_TASKS}件** を順番に自動実行します。\n` +
+    `停止条件: タスクなし / 安全NG / バリデーション失敗 / 人間確認待ち / 上限到達`
+  ).catch(() => {});
+
+  let succeeded  = 0;
+  let failed     = 0;
+  let stopReason = '';
+
+  for (let i = 0; i < AUTO_MAX_TASKS; i++) {
+    // ─ ① 次タスク準備（安全チェック込み）─
+    const prepared = await prepareNextTask(message, 'auto-on');
+
+    if (!prepared) {
+      stopReason = '未着手タスクなし';
+      break;
+    }
+    if (prepared.blocked) {
+      // prepareNextTask が既にエラーメッセージを送信済み
+      stopReason = '安全チェック（高危険度・サイズ超過等）';
+      break;
+    }
+
+    const { task: next, prompt, taskType, taskSizeResult, projectId, taskWorkspace } = prepared;
+
+    // ─ task.type / task.size 取得（後方互換: 未設定は IMPLEMENT / MEDIUM）─
+    const storedType  = next.type || taskManager.TASK_TYPES.IMPLEMENT;
+    const storedSize  = next.size || taskManager.TASK_SIZES.MEDIUM;
+    const typeEmoji   = taskManager.TYPE_EMOJI[storedType]  || '📋';
+    const sizeEmoji   = taskManager.SIZE_EMOJI[storedSize]  || '🟡';
+
+    // ─ LARGE タスクは自動実行しない ─
+    if (storedSize === taskManager.TASK_SIZES.LARGE) {
+      logger.warn(`[AUTO-ON] LARGEタスクをスキップ: ${next.id} | type:${storedType}`);
+      await message.channel.send(
+        `⚠️ **[${i + 1}/${AUTO_MAX_TASKS}] LARGEタスクのため自動実行をスキップしました**\n\n` +
+        `タスク: \`${next.id}\`\n` +
+        `[${storedType}/${storedSize}] ${typeEmoji}${sizeEmoji}\n\n` +
+        `分割してから再実行してください。`
+      ).catch(() => {});
+      stopReason = 'LARGEタスクのためスキップ';
+      break;
+    }
+
+    // ─ REVIEW タスクは Codex へ転送（Claude Code は実行しない）─
+    if (storedType === taskManager.TASK_TYPES.REVIEW) {
+      await message.channel.send(
+        `👀 **[${i + 1}/${AUTO_MAX_TASKS}]** REVIEWタスク → Codex 転送\n` +
+        `タスク: \`${next.id}\`\n` +
+        `[${storedType}/${storedSize}] ${typeEmoji}${sizeEmoji}`
+      ).catch(() => {});
+      await executeReviewTask({ message, task: next, projectId });
+      succeeded++;
+      logger.info(`[AUTO-ON] REVIEW 転送完了 (${i + 1}/${AUTO_MAX_TASKS}): ${next.id}`);
+      continue;
+    }
+
+    // ─ RESEARCH タスクは調査専用モードで実行 ─
+    if (storedType === taskManager.TASK_TYPES.RESEARCH) {
+      await message.channel.send(
+        `🔍 **[${i + 1}/${AUTO_MAX_TASKS}]** RESEARCHタスク → 調査モード\n` +
+        `タスク: \`${next.id}\`\n` +
+        `[${storedType}/${storedSize}] ${typeEmoji}${sizeEmoji}\n` +
+        `ファイル変更は行いません。調査結果を reports/ に保存します。`
+      ).catch(() => {});
+      await executeResearchTask({ message, task: next, projectId });
+      succeeded++;
+      logger.info(`[AUTO-ON] RESEARCH 完了 (${i + 1}/${AUTO_MAX_TASKS}): ${next.id}`);
+      continue;
+    }
+
+    // ─ Type Guard をプロンプトに付与 ─
+    const typeGuard     = taskManager.buildTypeGuard(storedType);
+    const guardedPrompt = prompt + typeGuard;
+    const guardMode     = (storedType === taskManager.TASK_TYPES.RESEARCH ||
+                           storedType === taskManager.TASK_TYPES.REVIEW)
+      ? 'no file changes'
+      : 'implementation allowed';
+
+    logger.info(
+      `[AUTO-ON] Task: ${next.id} | Type: ${storedType} | Size: ${storedSize} | Mode: ${storedType}`
+    );
+    logger.info(`[AUTO] Type Guard: ${storedType} / ${guardMode}`);
+
+    await message.channel.send(
+      `▶ **[${i + 1}/${AUTO_MAX_TASKS}]** 実行中\n` +
+      `タスク: \`${next.id}\`\n` +
+      `[${storedType}/${storedSize}] ${typeEmoji}${sizeEmoji}\n` +
+      `指示: ${prompt.slice(0, 60)}${prompt.length > 60 ? '...' : ''}`
+    ).catch(() => {});
+
+    // ─ ② キュー経由で実行・完了を待機（Type Guard 付きプロンプトを使用）─
+    await enqueueAndWait(next.id, () => executeClaudeTask({
+      message, prompt: guardedPrompt, taskId: next.id, projectId, taskType, taskSizeResult,
+      taskWorkspace, refTaskId: null, source: 'auto-on',
+    }));
+
+    // ─ ③ 完了後の状態確認 → 続行/停止を判断 ─
+    const finalTask = taskManager.getTask(next.id);
+
+    if (!finalTask) {
+      // DONE → アーカイブ済み（success）
+      succeeded++;
+      logger.info(`[AUTO-ON] 成功 (${i + 1}/${AUTO_MAX_TASKS}): ${next.id}`);
+    } else if (finalTask.state === taskManager.STATES.AWAITING) {
+      // 人間確認待ち（AIレビュー却下推奨 or PR作成済み）
+      succeeded++;
+      stopReason = '人間確認待ち（AIレビュー却下推奨 or PR作成）';
+      logger.info(`[AUTO-ON] 人間確認待ちで停止: ${next.id}`);
+      break;
+    } else if (finalTask.state === taskManager.STATES.REVIEWING) {
+      // バリデーション未通過（変更なし / handoff / 短文等）
+      failed++;
+      stopReason = 'バリデーション未通過（変更なし・handoff検出等）';
+      logger.warn(`[AUTO-ON] バリデーション未通過で停止: ${next.id}`);
+      break;
+    } else {
+      // エラー or 予期しない状態（IN_PROGRESS のままなど）
+      failed++;
+      stopReason = `実行エラー（状態: ${finalTask.state}）`;
+      logger.warn(`[AUTO-ON] 予期しない状態で停止: ${next.id} → ${finalTask.state}`);
+      break;
+    }
+  }
+
+  if (!stopReason) stopReason = '上限到達';
+
+  await message.channel.send(
+    `✅ **Auto Task Runner 完了**\n\n` +
+    `成功: **${succeeded}件**\n` +
+    `失敗: **${failed}件**\n` +
+    `停止理由: **${stopReason}**`
+  ).catch(() => {});
+
+  logger.info(`[AUTO-ON] 完了 | 成功:${succeeded} 失敗:${failed} 理由:${stopReason}`);
+}
+
+// ─────────────────────────────────────────────────────
+// !auto コマンドルーター — Phase3: run 1 / Phase4: on
+//
+// prepareNextTask() / executeClaudeTask() / taskQueue を再利用。
+// 新しい実行ロジックは持たない。
+// ─────────────────────────────────────────────────────
+async function handleAutoRun(message, args) {
+  const sub   = args[0] || '';
+  const count = parseInt(args[1] || '0', 10);
+
+  // !auto on — Phase4: 最大3件を順次自動実行
+  if (sub === 'on') {
+    await handleAutoOn(message);
+    return;
+  }
+
+  // !auto run 1 のみ受け付ける
+  if (sub !== 'run') {
+    await message.reply(
+      '**使い方**\n```\n!auto run 1  — 未着手タスクを1件だけ実行\n!auto on     — 最大3件を順次自動実行\n```'
+    );
+    return;
+  }
+  if (count !== 1) {
+    await message.reply(
+      '🚫 **`!auto run 1` のみ対応しています**\n\n' +
+      '複数件の連続実行は禁止です。\n' +
+      '1件ずつ実行して結果を確認してください。'
+    );
+    return;
+  }
+
+  logger.info(`[AUTO] !auto run 1 | ch:${message.channelId} | author:${message.author.id}`);
+
+  // ─── prepareNextTask() で安全チェック（!run-next と同一ロジック）───
+  const prepared = await prepareNextTask(message, 'auto');
+
+  if (!prepared) {
+    await message.reply(
+      '📋 **Auto Task Runner**\n\n実行可能なタスクはありません。\n' +
+      '`!task cleanup` で孤立タスクを整理してから再度お試しください。'
+    );
+    return;
+  }
+  if (prepared.blocked) return;
+
+  const { task: next, prompt, taskType, taskSizeResult, projectId, taskWorkspace } = prepared;
+
+  // task.type / task.size 取得（後方互換: 未設定は IMPLEMENT / MEDIUM）
+  const storedType = next.type || taskManager.TASK_TYPES.IMPLEMENT;
+  const storedSize = next.size || taskManager.TASK_SIZES.MEDIUM;
+  const typeEmoji  = taskManager.TYPE_EMOJI[storedType]  || '📋';
+  const sizeEmoji  = taskManager.SIZE_EMOJI[storedSize]  || '🟡';
+
+  // LARGE タスクは自動実行しない
+  if (storedSize === taskManager.TASK_SIZES.LARGE) {
+    logger.warn(`[AUTO] LARGEタスクをスキップ: ${next.id} | type:${storedType}`);
+    await message.reply(
+      `⚠️ **LARGEタスクのため自動実行をスキップしました**\n\n` +
+      `タスク: \`${next.id}\`\n` +
+      `[${storedType}/${storedSize}] ${typeEmoji}${sizeEmoji}\n\n` +
+      `サイズが LARGE のタスクは手動で実行してください。\n` +
+      `\`!claude\` で直接実行するか、タスクを分割してから再実行してください。`
+    );
+    return;
+  }
+
+  // ─── REVIEW タスクは Codex へ転送（Claude Code は実行しない）───
+  if (storedType === taskManager.TASK_TYPES.REVIEW) {
+    await message.reply(
+      `👀 **REVIEWタスク → Codex 転送**\n\n` +
+      `タスク: \`${next.id}\`\n` +
+      `[${storedType}/${storedSize}] ${typeEmoji}${sizeEmoji}\n\n` +
+      `Codex レビュー依頼を生成します。ファイル変更は行いません。`
+    ).catch(() => {});
+    await executeReviewTask({ message, task: next, projectId });
+    return;
+  }
+
+  // ─── RESEARCH タスクは調査専用モードで実行 ───
+  if (storedType === taskManager.TASK_TYPES.RESEARCH) {
+    await message.reply(
+      `🔍 **RESEARCHタスク → 調査モード**\n\n` +
+      `タスク: \`${next.id}\`\n` +
+      `[${storedType}/${storedSize}] ${typeEmoji}${sizeEmoji}\n\n` +
+      `調査専用モードで実行します。ファイル変更は行いません。\n` +
+      `結果は \`reports/research_${next.id}.md\` に保存されます。`
+    ).catch(() => {});
+    await executeResearchTask({ message, task: next, projectId });
+    return;
+  }
+
+  // ─── Type Guard をプロンプトに付与 ───
+  const typeGuard1     = taskManager.buildTypeGuard(storedType);
+  const guardedPrompt1 = prompt + typeGuard1;
+  const guardMode1     = (storedType === taskManager.TASK_TYPES.RESEARCH ||
+                          storedType === taskManager.TASK_TYPES.REVIEW)
+    ? 'no file changes'
+    : 'implementation allowed';
+
+  logger.info(`[AUTO] Task: ${next.id} | Type: ${storedType} | Size: ${storedSize} | Mode: ${storedType}`);
+  logger.info(`[AUTO] Type Guard: ${storedType} / ${guardMode1}`);
+
+  await message.reply(
+    `▶ **Auto Task Runner**\n\n` +
+    `対象:\n\`${next.id}\`\n\n` +
+    `[${storedType}/${storedSize}] ${typeEmoji}${sizeEmoji}\n\n` +
+    `指示: ${prompt.slice(0, 80)}${prompt.length > 80 ? '...' : ''}\n\n` +
+    `状態:\n実行開始`
+  ).catch(() => {});
+
+  // ─── executeClaudeTask() / taskQueue を !run-next と同様に再利用（Type Guard 付き）───
+  const autoExecuteTask = async () => executeClaudeTask({
+    message, prompt: guardedPrompt1, taskId: next.id, projectId, taskType, taskSizeResult,
+    taskWorkspace, refTaskId: null, source: 'auto',
+  });
+
+  const queuePos = taskQueue.enqueue(next.id, autoExecuteTask);
   if (queuePos > 0) {
     await message.reply(
       `📋 **キューに追加しました（待機 ${queuePos} 番目）**\n` +
@@ -1676,6 +2679,17 @@ async function handleRestart(message, args) {
 
   // ⑥ 全OK（または confirm 付き）→ 再起動実行
   try {
+    // ─── 多重再起動防止: restart.lock を取得 ───
+    const restartLock = restartManager.acquireRestartLock(message.channelId);
+    if (!restartLock.ok) {
+      await processingMsg.edit(
+        `🔄 **再起動処理中です**\n\n` +
+        `別のBotプロセス (PID: ${restartLock.lockData?.pid}) が再起動処理を実行中です。\n` +
+        `しばらく待ってから確認してください。`
+      );
+      return;
+    }
+
     // キュー状態を保存（新プロセスが完了通知に使う）
     restartManager.saveRestartState(taskQueue, message.channelId);
 
@@ -2014,6 +3028,18 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  if (content.startsWith('!research')) {
+    const sub = content.split(/\s+/)[1] || 'list';
+    await handleResearch(message, sub);
+    return;
+  }
+
+  if (content.startsWith('!review')) {
+    const sub = content.split(/\s+/)[1] || 'list';
+    await handleReview(message, sub);
+    return;
+  }
+
   if (content.startsWith('!task')) {
     const args = content.split(/\s+/).slice(1);
     await handleTask(message, args);
@@ -2038,6 +3064,12 @@ client.on('messageCreate', async (message) => {
 
   if (content === '!run-next') {
     await handleRunNext(message);
+    return;
+  }
+
+  if (content.startsWith('!auto')) {
+    const args = content.split(/\s+/).slice(1);
+    await handleAutoRun(message, args);
     return;
   }
 
@@ -2206,6 +3238,30 @@ client.on('messageCreate', async (message) => {
 client.on('error', err => logger.error(`Discord エラー: ${err.message}`));
 process.on('unhandledRejection', r => logger.error(`未処理 Promise: ${r}`));
 process.on('uncaughtException', e => logger.error(`予期しないエラー（継続）: ${e.message}`));
+
+// ─── プロセス終了時に起動ロックを解放 ───
+process.on('exit',    () => restartManager.releaseStartupLock());
+process.on('SIGTERM', () => { restartManager.releaseStartupLock(); process.exit(0); });
+process.on('SIGINT',  () => { restartManager.releaseStartupLock(); process.exit(0); });
+
+// ═══════════════════════════════════════════════════════════
+// 【多重起動防止】Discord に接続する前にロックを確認・取得する
+//
+// 重要: ready イベント内でチェックしていた旧実装には
+//   「全プロセスが接続してからロック競合」という致命的な race condition があった。
+//   client.login() の前にチェックすることで、
+//   ロック取得に失敗したプロセスは Discord に接続すらしない。
+// ═══════════════════════════════════════════════════════════
+{
+  const lockResult = restartManager.acquireStartupLock();
+  if (!lockResult.ok) {
+    logger.error(
+      `[LOCK] 多重起動を検出しました (既存PID: ${lockResult.existingPid})。` +
+      `Discordに接続せずに終了します。`
+    );
+    process.exit(1);
+  }
+}
 
 // Discord ログイン
 client.login(DISCORD_TOKEN).catch(err => {

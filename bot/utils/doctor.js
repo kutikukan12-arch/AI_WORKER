@@ -168,39 +168,91 @@ function checkLogs() {
 }
 
 // ─────────────────────────────────────────────────────
-// 5. タスク状態
+// 5. タスク整理状況
+//
+// 全状態の件数 + 30日超アーカイブ候補を表示。
+// 初心者でも分かるおすすめコマンドを付記。
 // ─────────────────────────────────────────────────────
 function checkTasks() {
   try {
     if (!fs.existsSync(DATA_FILE)) {
-      return { label: 'タスク', status: 'OK', detail: 'データなし', action: '特になし' };
+      return { label: '🧹 タスク整理状況', status: 'OK', detail: 'データなし', action: '特になし' };
     }
     const { tasks } = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    const inProgress = tasks.filter(t => t.state === '作業中').length;
-    const awaiting   = tasks.filter(t => t.state === '人間確認待ち').length;
-    const total      = tasks.length;
+    const now = Date.now();
 
-    // 24時間以上「作業中」のタスクを検出
-    const cutoff24h = Date.now() - 24 * 60 * 60 * 1000;
-    const stuck     = tasks.filter(t =>
+    // 各状態の件数
+    const counts = {
+      pending:    tasks.filter(t => t.state === '未着手').length,
+      inProgress: tasks.filter(t => t.state === '作業中').length,
+      reviewing:  tasks.filter(t => t.state === 'レビュー待ち').length,
+      awaiting:   tasks.filter(t => t.state === '人間確認待ち').length,
+      done:       tasks.filter(t => t.state === '完了').length,
+      onHold:     tasks.filter(t => t.state === '保留').length,
+    };
+
+    // 30日超アーカイブ候補（保留 or レビュー待ちで30日超過）
+    const cutoff30d = now - 30 * 24 * 60 * 60 * 1000;
+    const archiveCandidates = tasks.filter(t =>
+      (t.state === '保留' || t.state === 'レビュー待ち') &&
+      new Date(t.updatedAt).getTime() < cutoff30d
+    ).length;
+
+    // 24時間超の「作業中」タスク（孤立タスク候補）
+    const cutoff24h = now - 24 * 60 * 60 * 1000;
+    const stuckCount = tasks.filter(t =>
       t.state === '作業中' && new Date(t.updatedAt).getTime() < cutoff24h
     ).length;
 
-    const status = awaiting > 0 ? '注意' : stuck > 0 ? '注意' : 'OK';
-    const action = awaiting > 0
-      ? `${awaiting}件が人間確認待ちです: !task list で確認してください`
-      : stuck > 0
-      ? `${stuck}件が24時間以上停止中です: !task hold で保留にしてください`
+    // 判定
+    const hasWarn = counts.awaiting > 0 || counts.inProgress > 0 ||
+                    counts.reviewing > 0 || archiveCandidates > 0;
+    const status  = hasWarn ? '注意' : 'OK';
+
+    // 詳細テキスト（各行を改行で並べる）
+    const detailLines = [
+      `未着手: ${counts.pending}件`,
+      `作業中: ${counts.inProgress}件${stuckCount > 0 ? ` （うち24時間超: ${stuckCount}件）` : ''}`,
+      `レビュー待ち: ${counts.reviewing}件`,
+      `人間確認待ち: ${counts.awaiting}件`,
+      `保留: ${counts.onHold}件`,
+      `完了: ${counts.done}件`,
+      `30日超アーカイブ候補: ${archiveCandidates}件`,
+    ];
+
+    // おすすめコマンドを判定して追記
+    const recs = [];
+    if (stuckCount > 0)          recs.push('作業中が古い場合は `!task cleanup`');
+    if (counts.onHold > 0)       recs.push('保留を戻す場合は `!task resume <taskId>`');
+    if (archiveCandidates > 0)   recs.push('30日超なら `!task archive`');
+    if (counts.awaiting > 0)     recs.push('確認待ちは `!approve` または `!deny <taskId>`');
+    if (counts.inProgress > 0 && stuckCount === 0)
+                                  recs.push('実行中タスクが完了するまでお待ちください');
+
+    const detail = detailLines.join('\n　') +
+      (recs.length > 0 ? '\n\nおすすめ:\n　' + recs.join('\n　') : '');
+
+    const action = counts.awaiting > 0
+      ? `${counts.awaiting}件が人間確認待ちです`
+      : archiveCandidates > 0
+      ? `${archiveCandidates}件が30日超です: !task archive でアーカイブできます`
+      : stuckCount > 0
+      ? `${stuckCount}件が24時間以上停止中です: !task cleanup を実行してください`
       : '特になし';
 
     return {
-      label:  'タスク',
+      label:  '🧹 タスク整理状況',
       status,
-      detail: `全${total}件 | 作業中:${inProgress} | 人間確認待ち:${awaiting}`,
+      detail,
       action,
     };
   } catch (e) {
-    return { label: 'タスク', status: '注意', detail: 'データ読み込みエラー', action: 'data/tasks.json を確認してください' };
+    return {
+      label:  '🧹 タスク整理状況',
+      status: '注意',
+      detail: 'データ読み込みエラー',
+      action: 'data/tasks.json を確認してください',
+    };
   }
 }
 
