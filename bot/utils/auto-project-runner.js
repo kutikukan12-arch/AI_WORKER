@@ -465,31 +465,33 @@ function runPlannerStep(projectId, context = {}) {
     } // end FIX branch
     } // end suggested.type === 'FIX'
   } else {
-    // Phase D-4d/D-4e: plannerResult.action === 'none' のとき追加処理
+    // Phase D-4d/D-4e/D-5: plannerResult.action === 'none' のとき追加処理
     let nextCandidatesHint = '';
 
     if (plannerResult.action === 'none') {
       try {
-        const pm2         = require('./project-manager');
-        const proj2       = pm2.getProject(projectId);
-        const description = (proj2?.description || proj2?.name || '');
-        const goalHint    = planProjectGoalsQuick(projectId, description);
+        const pm2           = require('./project-manager');
+        const proj2         = pm2.getProject(projectId);
+        const description   = (proj2?.description || proj2?.name || '');
+        const goalHint      = planProjectGoalsQuick(projectId, description);
         const currentState2 = getRunnerState(projectId);
 
-        // Phase D-4e: autoApplyPlanning=true なら上位1件（安全typeのみ）を自動登録
         const SAFE_TYPES = new Set(['DOCS', 'RESEARCH', 'TEST']);
+
         if (currentState2.autoApplyPlanning && goalHint > 0) {
           try {
-            const fullPlan  = require('./project-planner').planProjectGoals(projectId, { description });
-            const safeCand  = fullPlan.nextCandidates.find(c => SAFE_TYPES.has(c.type));
+            const fullPlan = require('./project-planner').planProjectGoals(projectId, { description });
+            const tm       = require('./task-manager');
+            const allT     = tm.listTasks();
+            const ACTIVE   = new Set([tm.STATES.PENDING, tm.STATES.IN_PROGRESS]);
+
+            // ── Phase D-4e: DOCS/RESEARCH/TEST を優先登録 ─────────
+            const safeCand = fullPlan.nextCandidates.find(c => SAFE_TYPES.has(c.type));
             if (safeCand) {
-              const tm = require('./task-manager');
-              // 重複チェック
-              const allT = tm.listTasks();
               const isDup = allT.some(t =>
                 t.projectId === projectId &&
                 t.type === safeCand.type &&
-                (t.state === tm.STATES.PENDING || t.state === tm.STATES.IN_PROGRESS) &&
+                ACTIVE.has(t.state) &&
                 (t.prompt || '').slice(0, 30) === (safeCand.prompt || '').slice(0, 30)
               );
               if (!isDup) {
@@ -498,10 +500,10 @@ function runPlannerStep(projectId, context = {}) {
                   safeCand.priority === '高' ? '高' : '低',
                   projectId, safeCand.type
                 );
-                const currentState3 = getRunnerState(projectId);
+                const st3 = getRunnerState(projectId);
                 saveRunnerState(projectId, {
                   lastTaskId:        autoAppliedTask.id,
-                  totalTasksCreated: (currentState3.totalTasksCreated || 0) + 1,
+                  totalTasksCreated: (st3.totalTasksCreated || 0) + 1,
                 });
                 logger.info(`[AutoRunner] D-4e auto-apply: ${autoAppliedTask.id} [${safeCand.type}] | ${projectId}`);
                 nextCandidatesHint =
@@ -514,8 +516,40 @@ function runPlannerStep(projectId, context = {}) {
                   `\`\`\`\n!project plan apply\n\`\`\``;
               }
             }
+
+            // ── Phase D-5: IMPLEMENT 候補の自動登録 ───────────────
+            // D-4e が登録済みの場合はスキップ（1ステップ最大1件）
+            // 同一プロジェクトに PENDING/IN_PROGRESS の IMPLEMENT が
+            // 既に存在する場合もスキップ（多重起動防止）
+            if (!autoAppliedTask) {
+              const hasPendingImpl = allT.some(t =>
+                t.projectId === projectId &&
+                t.type === 'IMPLEMENT' &&
+                ACTIVE.has(t.state)
+              );
+              if (!hasPendingImpl) {
+                const implCand = fullPlan.nextCandidates.find(c => c.type === 'IMPLEMENT');
+                if (implCand) {
+                  autoAppliedTask = tm.createTask(
+                    implCand.prompt, 'auto-runner', null,
+                    implCand.priority === '高' ? '高' : '低',
+                    projectId, 'IMPLEMENT'
+                  );
+                  const st5 = getRunnerState(projectId);
+                  saveRunnerState(projectId, {
+                    lastTaskId:        autoAppliedTask.id,
+                    totalTasksCreated: (st5.totalTasksCreated || 0) + 1,
+                  });
+                  logger.info(`[AutoRunner] D-5 auto-apply IMPLEMENT: ${autoAppliedTask.id} | ${projectId}`);
+                  nextCandidatesHint =
+                    `\n🔨 Auto Apply: [IMPLEMENT] タスクを登録\n` +
+                    `\`${autoAppliedTask.id}\`\n` +
+                    `次:\n\`\`\`\n!task list\n!auto run 1\n\`\`\``;
+                }
+              }
+            }
           } catch (applyErr) {
-            logger.warn(`[AutoRunner] D-4e auto-apply エラー: ${applyErr.message}`);
+            logger.warn(`[AutoRunner] D-4e/D-5 auto-apply エラー: ${applyErr.message}`);
           }
         } else if (goalHint > 0) {
           // autoApplyPlanning=false: ヒントのみ表示
