@@ -203,29 +203,42 @@ function formatRunnerStatus(projectId) {
 }
 
 // ─────────────────────────────────────────────────────
-// runPlannerStep(projectId) — Phase B-1
+// runPlannerStep(projectId, context = {}) — Phase B-5
 //
 // Auto Project Runner の1ステップを実行する。
-// Phase B-1 では状態管理のみ。タスク生成・Claude実行はまだしない。
+// Phase B-5 では planNextTask() を呼び出し結果を戻り値に含める。
+// ただし tasks.json への書き込みはまだしない。
 //
 // 動作:
 //   1. runner 状態を読み込む
 //   2. enabled=false なら何もせず { action: 'skip' } を返す
 //   3. loopCount を確認し上限超えなら停止状態にする
 //   4. loopCount / updatedAt を更新して保存
-//   5. 結果オブジェクトと Discord 通知用 summary を返す
+//   5. planNextTask(projectId, context) を呼び出す（副作用なし）
+//   6. 結果オブジェクトと Discord 通知用 summary を返す
+//
+// 引数:
+//   projectId - プロジェクトID
+//   context   - Planner に渡す情報 { reviewResult, ... }
+//               runner off 時は渡さない
 //
 // 戻り値:
 //   {
-//     action:  'skip' | 'stopped' | 'step',
-//     summary: string,         // Discord 通知用の短文
-//     projectId: string,
-//     loopCount: number,
+//     action:       'skip' | 'stopped' | 'step',
+//     summary:      string,         // Discord 通知用の短文
+//     projectId:    string,
+//     loopCount:    number,
+//     plannerResult: object | null, // planNextTask の戻り値
 //   }
 // ─────────────────────────────────────────────────────
 const MAX_LOOP_COUNT_DEFAULT = 10;
 
-function runPlannerStep(projectId) {
+// project-planner.js を遅延ロード（循環参照を防ぐ）
+function getPlanner() {
+  return require('./project-planner');
+}
+
+function runPlannerStep(projectId, context = {}) {
   const state   = getRunnerState(projectId);
   const project = (() => {
     try {
@@ -277,13 +290,37 @@ function runPlannerStep(projectId) {
 
   logger.info(`[AutoRunner] runPlannerStep: ${projectId} | loop ${nextCount}/${maxLoop}`);
 
-  // Phase B-1: タスク生成・Claude実行はまだしない
-  // Phase B-2 以降でここに planNextTask() 呼び出しを追加する
+  // ④ planNextTask() を呼び出し判断結果を取得（副作用なし）
+  let plannerResult = null;
+  try {
+    plannerResult = getPlanner().planNextTask(projectId, context);
+    logger.info(`[AutoRunner] Planner結果: ${projectId} | action:${plannerResult.action}`);
+  } catch (plannerErr) {
+    // Planner エラーは警告のみ。runner step 自体は継続。
+    logger.warn(`[AutoRunner] planNextTask エラー: ${plannerErr.message}`);
+    plannerResult = { action: 'error', reason: plannerErr.message, suggestedTask: null, summary: 'Planner エラー' };
+  }
+
+  // ⑤ summary を plannerResult に応じて組み立てる
+  let plannerSummaryLine;
+  if (plannerResult.action === 'create_task' && plannerResult.suggestedTask) {
+    // 候補あり → まだ登録しないことを明示
+    plannerSummaryLine =
+      `Planner: ${plannerResult.suggestedTask.type} 候補あり (未登録)\n` +
+      `危険度: ${plannerResult.suggestedTask.sourceReviewDanger || '—'} | priority: ${plannerResult.suggestedTask.priority}`;
+  } else {
+    plannerSummaryLine = `Planner: ${plannerResult.action}`;
+  }
+
   return {
     action:    'step',
-    summary:   `📋 **[AutoRunner] ステップ ${nextCount}/${maxLoop}** | \`${projectId}\`\n(Phase B-1: 状態管理のみ。タスク生成は Phase B-2 以降)`,
+    summary:
+      `📋 **[AutoRunner] ステップ ${nextCount}/${maxLoop}** | \`${projectId}\`\n` +
+      plannerSummaryLine + '\n' +
+      `(Phase B-5: 候補生成のみ。タスク登録は Phase B-6 以降)`,
     projectId,
-    loopCount: nextCount,
+    loopCount:     nextCount,
+    plannerResult,
   };
 }
 
