@@ -1258,10 +1258,31 @@ async function handleTask(message, args) {
     return;
   }
 
-  // !task <id> — 詳細表示
-  const task = taskManager.getTask(sub);
-  if (task) {
-    await message.reply(taskManager.formatTaskDetail(task));
+  // !task <id> — task_ プレフィックスは常にID扱い（サブコマンド扱いしない）
+  if (sub.startsWith('task_')) {
+    const task = taskManager.getTask(sub);
+    if (task) {
+      const currentPid = projectManager.getCurrentProject(message.channelId);
+      if (!projectManager.taskBelongsToProject(task, currentPid)) {
+        const taskPid = task.projectId || projectManager.DEFAULT_PROJECT_ID;
+        await message.reply(
+          `⚠️ **現在プロジェクト外のタスクです**\n\n` +
+          `タスクのプロジェクト: \`${taskPid}\`\n` +
+          `現在のプロジェクト: \`${currentPid}\`\n\n` +
+          `プロジェクトを切り替えてから再度確認してください:\n` +
+          `\`\`\`\n!project switch ${taskPid}\n!task ${sub}\n\`\`\``
+        );
+        return;
+      }
+      await message.reply(taskManager.formatTaskDetail(task));
+      return;
+    }
+    // タスクが存在しない場合は usage ではなく明示的なエラーを返す
+    await message.reply(
+      `❌ **タスクが見つかりません**\n\n` +
+      `**タスクID**\n\`\`\`\n${sub}\n\`\`\`\n` +
+      `タスク一覧を確認するには:\n\`\`\`\n!task list\n\`\`\``
+    );
     return;
   }
 
