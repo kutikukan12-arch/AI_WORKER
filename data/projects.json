@@ -1,0 +1,10 @@
+{
+  "projects": [
+    {
+      "id": "ai_worker",
+      "name": "AI_WORKER",
+      "description": "デフォルトプロジェクト（既存タスク用）",
+      "createdAt": "2026-05-30T17:27:18.574Z"
+    }
+  ]
+}

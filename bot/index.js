@@ -534,6 +534,18 @@ async function handleHelp(message) {
         inline: false,
       },
       {
+        name: '!project [サブコマンド]',
+        value: [
+          'プロジェクトを管理します',
+          '`!project current` — 現在のプロジェクトを表示',
+          '`!project list` — プロジェクト一覧',
+          '`!project create <名前>` — 新しいプロジェクトを作成',
+          '`!project switch <名前>` — プロジェクトを切り替え',
+          '例: `!project create youtube-ai` / `!project switch youtube-ai`',
+        ].join('\n'),
+        inline: false,
+      },
+      {
         name: '!doctor',
         value: '⚙️ システム診断（管理者のみ）\n設定・Claude・ログ・タスクの状態を確認します',
         inline: false,
