@@ -23,6 +23,8 @@ data/restart-state.json
 data/history/
 data/apply-counts.json
 data/current-project.json
+data/runner-state.json
+data/fix-counts.json
 
 # ─── 調査レポート（実行時に生成・大量蓄積）───
 reports/
