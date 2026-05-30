@@ -45,27 +45,31 @@ async function main() {
   test('REVIEW タスク作成', () => reviewTask.type === 'REVIEW' && reviewTask.state === '未着手');
   info('REVIEW taskId: ' + reviewTask.id);
 
-  // STEP 4: Codex 呼び出し (API or ダミー)
+  // STEP 4: Codex 依頼ファイル保存 + ランナーテスト用ダミー設定
+  // 注意: 実 API を呼ぶとプロンプト内容次第で '低' が返り FIX 生成テストが不安定になる。
+  // B-7b テストはランナーの FIX 生成ロジックを検証するため、
+  // reviewResult は固定の中危険度ダミーを使う（決定論的テスト）。
   console.log('\n--- STEP 4: Codex レビュー実行 ---');
   const codexRequest = codex.generateCodexRequest(reviewTask.id, reviewTask.prompt, '', []);
   const discordMsg   = codex.generateDiscordMessage(reviewTask.id, codexRequest);
   codex.saveReview(reviewTask.id, { ...codexRequest, discordMessage: discordMsg });
   CLEANUP_FILES.push(path.join(REVIEWS_DIR, 'codex_' + reviewTask.id + '.md'));
 
-  let parsed = null;
+  // API が利用可能な場合は呼び出してファイル保存まで行うが、
+  // FIX 生成テストには使用しない（'低' が返る可能性があるため）
   if (process.env.OPENAI_API_KEY) {
     const apiResult = await codex.callCodexAPI(reviewTask.prompt, '');
     if (apiResult) {
       codex.saveCodexResponse(reviewTask.id, apiResult);
-      parsed = codex.parseCodexResult(apiResult);
+      const apiParsed = codex.parseCodexResult(apiResult);
+      info('Codex API 実行 (参考): 危険度=' + apiParsed.danger + ' ← ランナーテストには不使用');
     }
   }
-  if (!parsed) {
-    parsed = { danger: '中', problem: 'テスト用ダミー: エラーハンドリング改善の余地があります', suggestion: 'try-catch を追加' };
-    info('API なし → 中危険度ダミー使用');
-  }
-  info('Codex 危険度: ' + parsed.danger);
-  info('Codex 問題点: ' + (parsed.problem || '').slice(0, 60));
+
+  // ランナーフックテスト用: 固定の中危険度ダミー
+  const parsed = { danger: '中', problem: 'テスト用ダミー: エラーハンドリング改善の余地があります', suggestion: 'try-catch を追加' };
+  info('Codex 危険度 (テスト固定): ' + parsed.danger);
+  info('Codex 問題点: ' + parsed.problem.slice(0, 60));
 
   // reviews/result_*.md に保存
   const dangerEmoji = { '高': '🔴', '中': '🟡', '低': '🟢' }[parsed.danger] || '⬜';
