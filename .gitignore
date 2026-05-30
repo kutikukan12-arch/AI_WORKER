@@ -1,0 +1,50 @@
+# =====================================================
+# AI_WORKER .gitignore
+# =====================================================
+
+# ─── 秘密情報（絶対にコミット禁止）───
+.env
+*.env.local
+*.env.*.local
+
+# ─── Node.js ───
+node_modules/
+npm-debug.log*
+
+# ─── 運用データ（実行時に生成・個人情報含む可能性あり）───
+data/tasks.json
+data/approvals.json
+data/bot.pid
+data/*.pid
+data/history/
+
+# ─── レビューファイル（大量蓄積・個人情報含む可能性あり）───
+reviews/
+
+# ─── 作業ワークスペース（タスクごとの一時ファイル）───
+workspace/
+
+# ─── ログ（大量になるため除外・.gitkeep は維持）───
+logs/*.log
+logs/*.txt
+
+# ─── 自動生成ドキュメント（実行時に上書きされる）───
+docs/history/
+docs/meetings/
+docs/batch_*.md
+docs/next_task.md
+
+# ─── 一時ファイル ───
+temp/
+
+# ─── Windows 固有ファイル ───
+Thumbs.db
+Desktop.ini
+
+# ─── エディタ設定 ───
+.vscode/
+.idea/
+
+# ─── 維持するファイル（! で除外対象から除く）───
+!logs/.gitkeep
+!.env.example
