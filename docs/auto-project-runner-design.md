@@ -1,7 +1,7 @@
 # Auto Project Runner 設計書 (Phase 6)
 
 > 作成日: 2026-05-31
-> ステータス: DRAFT
+> ステータス: FINAL
 > 目的: 人間が工程管理をしなくても AI 同士で開発を進めるシステム
 
 ---
@@ -318,7 +318,58 @@ module.exports = {
 
 ---
 
-### 5.5 apr-reporter.js (NEW)
+### 5.5 completion-validator.js との統合
+
+**役割**: 各 Phase 実行後の完了判定を自動化する。
+
+**判定フロー**:
+```
+PhaseOrchestrator
+  │
+  └─ completion-validator.js (既存)
+       │
+       ├─ IMPLEMENT / FIX タスク
+       │   1. git diff で変更ファイル数を確認
+       │   2. changedFiles = 0 → 「会話応答検出」として NG
+       │   3. 出力が「…してください」等の質問文 → NG
+       │   4. 出力長 < 50文字 → NG
+       │   5. すべてパス → OK → PhaseResult.ok = true
+       │
+       ├─ RESEARCH / DOCS タスク
+       │   1. 出力長 > 100文字 → OK（変更ファイル0でも可）
+       │   2. 出力が質問文・handoff文 → NG
+       │
+       └─ REVIEW タスク
+           1. Codex レスポンスあり → OK
+           2. severity を PhaseResult に格納
+```
+
+**CompletionResult 構造**:
+```json
+{
+  "ok": true,
+  "reason": "changes_detected",
+  "changedFiles": ["bot/utils/goal-analyzer.js"],
+  "diffStat": "+45 -2",
+  "outputLength": 1580,
+  "syntaxOk": true
+}
+```
+
+**失敗理由コード**:
+
+| reason | 意味 | APR の対処 |
+|---|---|---|
+| `no_changes` | 変更ファイル0件 | retry → attempts++ |
+| `conversation_response` | 会話応答検出 | retry（プロンプト強化） |
+| `short_output` | 出力50文字未満 | retry |
+| `question_detected` | 質問文検出 | retry |
+| `syntax_error` | JS構文エラー | FIX生成 |
+| `timeout` | タイムアウト | STALLED 遷移 |
+
+---
+
+### 5.6 apr-reporter.js (NEW)
 
 **役割**: Discord に4種類のスマホフレンドリーなレポートを投稿する。
 
@@ -549,3 +600,20 @@ AI_WORKER/
 └─ docs/
     └─ auto-project-runner-design.md ← このファイル
 ```
+
+---
+
+## 13. 要件トレーサビリティ
+
+| # | 要件 | 実装箇所 | 設計セクション |
+|---|------|---------|--------------|
+| 1 | プロジェクト目標から不足工程を判定 | `goal-analyzer.js` | §5.1 |
+| 2 | RESEARCH/DOCS/IMPLEMENT/REVIEW/FIX を自動生成 | `goal-analyzer.js` + `phase-orchestrator.js` | §5.1, §5.2 |
+| 3 | Codexレビュー結果から自動FIX生成 | `auto-fix-generator.js` + `codex-feedback.js` | §5.3 |
+| 4 | 完了判定を自動化 | `completion-validator.js` 統合 | §5.5 |
+| 5 | 無限ループ防止 | `loop-guard.js` | §5.4, §7 |
+| 6 | Discord進捗レポート生成 | `apr-reporter.js` レポートA | §5.6 |
+| 7 | Discordエラーレポート生成 | `apr-reporter.js` レポートB | §5.6 |
+| 8 | Discordレビューサマリー生成 | `apr-reporter.js` レポートC | §5.6 |
+| 9 | Discord開発履歴生成 | `apr-reporter.js` レポートD | §5.6 |
+| 10 | スマホのみで進行状況を把握 | 全レポートを15行以内 + コマンド付き | §11 |
