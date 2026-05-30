@@ -1424,12 +1424,53 @@ async function handleProject(message, args) {
       return;
     }
 
+    // !project runner auto-apply on/off/status
+    if (runnerSub === 'auto-apply') {
+      const aaSub   = args[2] || 'status';
+      const state   = autoProjectRunner.getRunnerState(pid);
+
+      if (aaSub === 'on') {
+        autoProjectRunner.setAutoApplyPlanning(pid, true);
+        await message.reply(
+          `✅ **Auto Apply Planning: ON**\n\n` +
+          `Project: **${project.name}**\n\n` +
+          `runner step で DOCS/RESEARCH/TEST 候補が1件だけ自動登録されます。\n` +
+          `IMPLEMENT/FIX/REVIEW は自動登録しません。\n\n` +
+          `OFF にするには:\n\`\`\`\n!project runner auto-apply off\n\`\`\``
+        );
+        return;
+      }
+      if (aaSub === 'off') {
+        autoProjectRunner.setAutoApplyPlanning(pid, false);
+        await message.reply(
+          `⛔ **Auto Apply Planning: OFF**\n\n` +
+          `Project: **${project.name}**\n\n` +
+          `次候補の自動登録を停止しました。手動で登録するには:\n\`\`\`\n!project plan apply\n\`\`\``
+        );
+        return;
+      }
+      // status
+      const apFlag = autoProjectRunner.getRunnerState(pid).autoApplyPlanning;
+      await message.reply(
+        `📋 **Auto Apply Planning 状態**\n\n` +
+        `Project: **${project.name}** (\`${pid}\`)\n` +
+        `状態: **${apFlag ? '✅ ON' : '⛔ OFF'}**\n\n` +
+        `ON: DOCS/RESEARCH/TEST を1件/step 自動登録\n` +
+        `OFF: ヒント表示のみ\n\n` +
+        `\`\`\`\n!project runner auto-apply on\n!project runner auto-apply off\n\`\`\``
+      );
+      return;
+    }
+
     await message.reply(
       '**!project runner の使い方**\n```\n' +
-      '!project runner status  → 状態確認\n' +
-      '!project runner on      → 有効化\n' +
-      '!project runner off     → 無効化\n' +
-      '!project runner reset   → リセット\n' +
+      '!project runner status              → 状態確認\n' +
+      '!project runner on                  → 有効化\n' +
+      '!project runner off                 → 無効化\n' +
+      '!project runner reset               → リセット\n' +
+      '!project runner auto-apply on       → 自動登録 ON\n' +
+      '!project runner auto-apply off      → 自動登録 OFF\n' +
+      '!project runner auto-apply status   → 自動登録 状態確認\n' +
       '```'
     );
     return;

@@ -26,19 +26,31 @@ const PROJECTS_FILE    = path.join(DATA_DIR, 'projects.json');
 // ─── runner-state.json の初期値 ──────────────────────
 function defaultState(projectId) {
   return {
-    enabled:          false,
+    enabled:            false,
     projectId,
-    currentPhase:     null,
-    lastTaskId:       null,
-    loopCount:        0,
-    startedAt:        null,
-    updatedAt:        null,
-    plannerCallCount: 0,
-    lastPlannerAt:    null,
-    totalTasksCreated: 0,
-    pausedAt:         null,
-    pauseReason:      null,
+    currentPhase:       null,
+    lastTaskId:         null,
+    loopCount:          0,
+    startedAt:          null,
+    updatedAt:          null,
+    plannerCallCount:   0,
+    lastPlannerAt:      null,
+    totalTasksCreated:  0,
+    pausedAt:           null,
+    pauseReason:        null,
+    autoApplyPlanning:  false, // Phase D-4e: 自動プラン適用（初期値 false）
   };
+}
+
+// ─────────────────────────────────────────────────────
+// setAutoApplyPlanning(projectId, enabled)
+//
+// autoApplyPlanning の ON/OFF を設定する。
+// true の場合、runner step で nextCandidates 上位1件（安全typeのみ）を自動登録する。
+// ─────────────────────────────────────────────────────
+function setAutoApplyPlanning(projectId, enabled) {
+  saveRunnerState(projectId, { autoApplyPlanning: !!enabled });
+  logger.info(`[AutoRunner] autoApplyPlanning: ${projectId} → ${enabled}`);
 }
 
 // ─────────────────────────────────────────────────────
@@ -179,11 +191,14 @@ function formatRunnerStatus(projectId) {
     ? new Date(state.updatedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })
     : '—';
 
+  const autoApplyStr = state.autoApplyPlanning ? '✅ ON' : '⛔ OFF';
+
   const lines = [
     '📊 **Auto Runner Status**',
     '──────────────────────────────',
     `Project:      ${projectName}`,
     `Runner:       ${runnerFlag}`,
+    `Auto Apply:   ${autoApplyStr}`,
     ``,
     `現在フェーズ:   ${phaseInfo}`,
     `最終タスク:     ${lastTaskInfo}`,
@@ -346,6 +361,7 @@ function runPlannerStep(projectId, context = {}) {
 
   // ⑤ Phase B-6: create_task の場合に tasks.json へ登録
   let createdTask     = null;
+  let autoAppliedTask = null; // Phase D-4e: none 時の安全type自動登録タスク
   let plannerSummaryLine;
 
   if (plannerResult.action === 'create_task' && plannerResult.suggestedTask) {
@@ -449,17 +465,60 @@ function runPlannerStep(projectId, context = {}) {
     } // end FIX branch
     } // end suggested.type === 'FIX'
   } else {
-    // Phase D-4d: plannerResult.action === 'none' のとき、
-    // planProjectGoals() でプロジェクト候補があれば通知に追加する
+    // Phase D-4d/D-4e: plannerResult.action === 'none' のとき追加処理
     let nextCandidatesHint = '';
+
     if (plannerResult.action === 'none') {
       try {
-        const planner2   = require('./project-planner');
-        const pm2        = require('./project-manager');
-        const proj2      = pm2.getProject(projectId);
+        const pm2         = require('./project-manager');
+        const proj2       = pm2.getProject(projectId);
         const description = (proj2?.description || proj2?.name || '');
-        const goalHint   = planProjectGoalsQuick(projectId, description);
-        if (goalHint > 0) {
+        const goalHint    = planProjectGoalsQuick(projectId, description);
+        const currentState2 = getRunnerState(projectId);
+
+        // Phase D-4e: autoApplyPlanning=true なら上位1件（安全typeのみ）を自動登録
+        const SAFE_TYPES = new Set(['DOCS', 'RESEARCH', 'TEST']);
+        if (currentState2.autoApplyPlanning && goalHint > 0) {
+          try {
+            const fullPlan  = require('./project-planner').planProjectGoals(projectId, { description });
+            const safeCand  = fullPlan.nextCandidates.find(c => SAFE_TYPES.has(c.type));
+            if (safeCand) {
+              const tm = require('./task-manager');
+              // 重複チェック
+              const allT = tm.listTasks();
+              const isDup = allT.some(t =>
+                t.projectId === projectId &&
+                t.type === safeCand.type &&
+                (t.state === tm.STATES.PENDING || t.state === tm.STATES.IN_PROGRESS) &&
+                (t.prompt || '').slice(0, 30) === (safeCand.prompt || '').slice(0, 30)
+              );
+              if (!isDup) {
+                autoAppliedTask = tm.createTask(
+                  safeCand.prompt, 'auto-runner', null,
+                  safeCand.priority === '高' ? '高' : '低',
+                  projectId, safeCand.type
+                );
+                const currentState3 = getRunnerState(projectId);
+                saveRunnerState(projectId, {
+                  lastTaskId:        autoAppliedTask.id,
+                  totalTasksCreated: (currentState3.totalTasksCreated || 0) + 1,
+                });
+                logger.info(`[AutoRunner] D-4e auto-apply: ${autoAppliedTask.id} [${safeCand.type}] | ${projectId}`);
+                nextCandidatesHint =
+                  `\n📋 Auto Apply: [${safeCand.type}] タスクを登録\n` +
+                  `\`${autoAppliedTask.id}\`\n` +
+                  `次:\n\`\`\`\n!task list\n!auto run 1\n\`\`\``;
+              } else {
+                nextCandidatesHint =
+                  `\n次候補があります (重複のためスキップ):\n` +
+                  `\`\`\`\n!project plan apply\n\`\`\``;
+              }
+            }
+          } catch (applyErr) {
+            logger.warn(`[AutoRunner] D-4e auto-apply エラー: ${applyErr.message}`);
+          }
+        } else if (goalHint > 0) {
+          // autoApplyPlanning=false: ヒントのみ表示
           nextCandidatesHint =
             `\n次候補があります (${goalHint}件):\n` +
             `\`\`\`\n!project plan\n!project plan apply\n\`\`\``;
@@ -482,6 +541,7 @@ function runPlannerStep(projectId, context = {}) {
     plannerResult,
     createdTask,
     nextExecutableTaskId,
+    autoAppliedTask,       // Phase D-4e: auto-apply で登録したタスク（null の場合が多い）
   };
 }
 
@@ -493,4 +553,5 @@ module.exports = {
   resetRunner,
   formatRunnerStatus,
   runPlannerStep,
+  setAutoApplyPlanning,
 };
