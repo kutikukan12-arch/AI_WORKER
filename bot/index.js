@@ -81,7 +81,8 @@ const restartManager = require('./utils/restart-manager');
 const approvalManager = require('./utils/approval-manager');
 
 // ─── Project 判定 ───
-const projectDetector = require('./utils/project-detector');
+const projectDetector  = require('./utils/project-detector');
+const projectManager   = require('./utils/project-manager');
 
 // 承認待ちの実行待機Map: taskId → () => void
 // ※ Bot 再起動で消える設計（意図的割り切り）
@@ -797,10 +798,20 @@ async function handleTask(message, args) {
     return;
   }
 
-  // !task list
+  // !task list — 現在プロジェクトのタスクのみ表示
   if (sub === 'list' || args.length === 0) {
-    const tasks = taskManager.listTasksByPriority();
-    await message.reply(`現在Project: **${projectId}**\n\n` + taskManager.formatTaskList(tasks, 'タスク一覧（優先度順）'));
+    const currentPid  = projectManager.getCurrentProject(message.channelId);
+    const currentProj = projectManager.getProject(currentPid);
+    const allTasks    = taskManager.listTasksByPriority();
+    const filtered    = projectManager.filterTasksByProject(allTasks, currentPid);
+    const projLabel   = currentProj ? `${currentProj.name} (${currentPid})` : currentPid;
+    await message.reply(
+      `現在Project: **${projLabel}**\n\n` +
+      taskManager.formatTaskList(filtered, 'タスク一覧（優先度順）') +
+      (filtered.length < allTasks.length
+        ? `\n\n_他 ${allTasks.length - filtered.length} 件は別プロジェクトのタスクです。_`
+        : '')
+    );
     return;
   }
 
@@ -1011,12 +1022,14 @@ async function handleTask(message, args) {
       return;
     }
 
+    // !task add: 現在の project を優先して使用
+    const addProjectId = projectManager.getCurrentProject(message.channelId);
     const newTask = taskManager.createTask(
       prompt,
       message.author.id,
-      null,    // taskId 自動生成
-      '低',    // dangerLevel
-      projectId,
+      null,         // taskId 自動生成
+      '低',         // dangerLevel
+      addProjectId, // 現在プロジェクト
       taskType
     );
 
@@ -1152,6 +1165,88 @@ async function handleMeeting(message, rawTopic) {
 // ─────────────────────────────────────────────────────
 // !research list / show <id> — 調査レポートの一覧・詳細表示
 //
+// ─────────────────────────────────────────────────────
+// !project コマンド — プロジェクト管理
+//
+// list    — プロジェクト一覧を表示
+// create  — 新しいプロジェクトを作成
+// switch  — 現在のプロジェクトを切り替え
+// current — 現在選択中のプロジェクトを表示
+// ─────────────────────────────────────────────────────
+async function handleProject(message, args) {
+  const sub  = args[0] || 'current';
+  const name = args.slice(1).join(' ').trim();
+
+  // !project current
+  if (sub === 'current' || (!sub)) {
+    const pid     = projectManager.getCurrentProject(message.channelId);
+    const project = projectManager.getProject(pid);
+    await message.reply(
+      `📁 **現在のプロジェクト**\n\n` +
+      `ID: \`${pid}\`\n` +
+      `名前: **${project?.name || pid}**\n\n` +
+      `変更するには: \`!project switch <プロジェクト名>\``
+    );
+    return;
+  }
+
+  // !project list
+  if (sub === 'list') {
+    const projects   = projectManager.listProjects();
+    const currentPid = projectManager.getCurrentProject(message.channelId);
+    await message.reply(
+      `📁 **プロジェクト一覧** (${projects.length}件)\n\n` +
+      projectManager.formatProjectList(projects, currentPid) + '\n\n' +
+      `\`!project switch <名前>\` で切り替え / \`!project create <名前>\` で作成`
+    );
+    return;
+  }
+
+  // !project create <name>
+  if (sub === 'create') {
+    if (!name) {
+      await message.reply('**使い方**\n```\n!project create <プロジェクト名>\n```\n例: `!project create YT予測`');
+      return;
+    }
+    const result = projectManager.createProject(name);
+    if (!result.ok) {
+      await message.reply(`❌ ${result.reason}`);
+      return;
+    }
+    await message.reply(
+      `✅ **プロジェクトを作成しました**\n\n` +
+      `ID: \`${result.project.id}\`\n` +
+      `名前: **${result.project.name}**\n\n` +
+      `\`!project switch ${result.project.name}\` で切り替えできます。`
+    );
+    return;
+  }
+
+  // !project switch <name>
+  if (sub === 'switch') {
+    if (!name) {
+      await message.reply('**使い方**\n```\n!project switch <プロジェクト名>\n```\n例: `!project switch AI_WORKER`');
+      return;
+    }
+    const result = projectManager.setCurrentProject(message.channelId, name);
+    if (!result.ok) {
+      await message.reply(`❌ ${result.reason}`);
+      return;
+    }
+    await message.reply(
+      `✅ **プロジェクトを切り替えました**\n\n` +
+      `現在: \`${result.projectId}\` — **${result.projectName}**\n\n` +
+      `以降の \`!task list\` / \`!next\` / \`!auto run 1\` はこのプロジェクトのタスクを対象にします。`
+    );
+    return;
+  }
+
+  // 不明なサブコマンド
+  await message.reply(
+    '**使い方**\n```\n!project current\n!project list\n!project create <名前>\n!project switch <名前>\n```'
+  );
+}
+
 // list: reports/research_*.md を新しい順に最大10件表示する。
 // show: reports/research_<id>.md のフル内容を表示する。
 // reports/ フォルダがない場合も安全に処理する。
@@ -1408,11 +1503,13 @@ async function handleReview(message, sub) {
 // !next コマンド — 最優先の実行可能タスクを1件表示
 // ─────────────────────────────────────────────────────
 async function handleNext(message) {
-  const tasks = taskManager.listTasksByPriority();
-  const next = tasks.find(t => t.state === taskManager.STATES.PENDING);
+  const currentPid = projectManager.getCurrentProject(message.channelId);
+  const tasks      = taskManager.listTasksByPriority();
+  const filtered   = projectManager.filterTasksByProject(tasks, currentPid);
+  const next = filtered.find(t => t.state === taskManager.STATES.PENDING);
 
   if (!next) {
-    await message.reply('📋 **次タスク**\n\n実行可能なタスクはありません。');
+    await message.reply(`📋 **次タスク**\n\nProject: **${currentPid}**\n実行可能なタスクはありません。`);
     return;
   }
 
@@ -1982,8 +2079,10 @@ async function executeClaudeTask({
 //   { task, prompt, taskType, taskSizeResult, projectId, taskWorkspace }
 // ─────────────────────────────────────────────────────
 async function prepareNextTask(message, source = 'run-next') {
-  const tasks = taskManager.listTasksByPriority();
-  const next  = tasks.find(t => t.state === taskManager.STATES.PENDING);
+  const currentPid = projectManager.getCurrentProject(message.channelId);
+  const tasks      = taskManager.listTasksByPriority();
+  const filtered   = projectManager.filterTasksByProject(tasks, currentPid);
+  const next       = filtered.find(t => t.state === taskManager.STATES.PENDING);
   if (!next) return null;
 
   const prompt = next.prompt || '';
@@ -3100,6 +3199,12 @@ client.on('messageCreate', async (message) => {
   if (content.startsWith('!research')) {
     const sub = content.split(/\s+/)[1] || 'list';
     await handleResearch(message, sub);
+    return;
+  }
+
+  if (content.startsWith('!project')) {
+    const args = content.split(/\s+/).slice(1);
+    await handleProject(message, args);
     return;
   }
 
