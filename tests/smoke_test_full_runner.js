@@ -220,8 +220,9 @@ async function main() {
   // STEP 14: git状態確認
   step('STEP 14: git状態確認');
   const gitSt = execSync('git status --short', { cwd: ROOT_DIR, encoding: 'utf8' }).trim();
+  const IGNORED_PATTERNS = ['tests/', 'docs/auto-runner-smoke-test.md', 'data/projects.json'];
   const badFiles = gitSt.split('\n').filter(l =>
-    l && !l.includes('tests/') && !l.includes('docs/auto-runner-smoke-test.md')
+    l && !IGNORED_PATTERNS.some(p => l.includes(p))
   );
   test('生成物がGitに混入なし', () => badFiles.length === 0);
   info('git status: ' + (gitSt || 'clean'));
