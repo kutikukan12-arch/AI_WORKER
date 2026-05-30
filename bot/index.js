@@ -2275,6 +2275,31 @@ async function executeClaudeTask({
       `次担当:${nextDecision?.assignee || '(RESEARCH)'}  | diff:${validation.diffStat}`
     );
 
+    // ─── Phase B-2: Auto Project Runner 完了フック ───────────────
+    // タスク完了後に runPlannerStep を呼ぶ（runner off 時は何もしない）
+    // エラーが出ても元タスク完了処理を壊さないよう try/catch で囲む
+    try {
+      const runnerResult = autoProjectRunner.runPlannerStep(projectId);
+      if (runnerResult.action !== 'skip') {
+        // runner が有効なときだけ Discord に短い通知を出す
+        const loopState = autoProjectRunner.getRunnerState(projectId);
+        const maxLoop   = 10; // project.runner.maxPlannerCalls のデフォルト
+        const notifyMsg =
+          `🤖 **Auto Project Runner**\n` +
+          `Project: \`${projectId}\`\n` +
+          `Action: ${runnerResult.action}\n` +
+          `Loop: ${runnerResult.loopCount}/${maxLoop}\n` +
+          (runnerResult.action === 'stopped'
+            ? `⛔ 上限到達 → Runner停止\n\`\`\`\n!project runner reset\n!project runner on\n\`\`\``
+            : `次: まだ自動生成なし (Phase B-3 以降)`);
+        await message.channel.send(notifyMsg).catch(() => {});
+        logger.info(`[AutoRunner] フック完了: ${projectId} | ${runnerResult.action} | loop:${runnerResult.loopCount}`);
+      }
+    } catch (runnerErr) {
+      // Planner フックのエラーは警告のみ（タスク完了は確定済み）
+      logger.warn(`[AutoRunner] runPlannerStep エラー: ${runnerErr.message}`);
+    }
+
   } catch (error) {
     logger.error(`タスク失敗 | ID: ${taskId} | source:${source} | ${error.message}`);
     reviewHistory.addEntry(
