@@ -1499,7 +1499,7 @@ async function handleProject(message, args) {
     return;
   }
 
-  // !project plan — プロジェクト計画を表示（ルールベース）
+  // !project plan / !project plan apply
   if (sub === 'plan') {
     const planSub = args[1] || '';
     const pid     = projectManager.getCurrentProject(message.channelId);
@@ -1545,6 +1545,80 @@ async function handleProject(message, args) {
         }
       }
     } catch { /* ignore */ }
+
+    // ─── !project plan apply — 候補を tasks.json に登録 ───
+    if (planSub === 'apply') {
+      const applyMsg = await message.reply(`⏳ **Plan Apply 中...**\n\`${pid}\``);
+
+      const planner2  = require('./utils/project-planner.js');
+      const allTasks2 = taskManager.listTasks();
+      const pTasks2   = projectManager.filterTasksByProject(allTasks2, pid);
+      const doneSums2 = pTasks2
+        .filter(t => t.state === taskManager.STATES.ON_HOLD)
+        .map(t => `${t.type}: ${(t.prompt || '').slice(0, 40)}`);
+      const histDir2  = path.join(AI_WORKER_ROOT, 'data', 'history');
+      try {
+        if (fs.existsSync(histDir2)) {
+          fs.readdirSync(histDir2).filter(f => f.endsWith('.json')).slice(-2).forEach(hf => {
+            try {
+              const hist = JSON.parse(fs.readFileSync(path.join(histDir2, hf), 'utf8'));
+              (hist.tasks || []).filter(t => (t.projectId || 'default') === pid)
+                .forEach(t => doneSums2.push(`${t.type}: ${(t.prompt || '').slice(0, 40)}`));
+            } catch {}
+          });
+        }
+      } catch {}
+
+      const proj2 = projectManager.getProject(pid);
+      const plan2 = planner2.planProjectGoals(pid, {
+        description: (proj2?.description || proj2?.name || '') + (proj2?.goal || ''),
+        doneTasks:   doneSums2,
+      });
+
+      // 上位3件を登録（重複チェック付き）
+      const candidates = plan2.nextCandidates.slice(0, 3);
+      const registered = [];
+      for (const cand of candidates) {
+        // 重複チェック: 同プロジェクト・同タイトルの PENDING/作業中 タスクがないか
+        const isDup = allTasks2.some(t =>
+          t.projectId === pid &&
+          t.type === cand.type &&
+          (t.state === taskManager.STATES.PENDING || t.state === taskManager.STATES.IN_PROGRESS) &&
+          (t.prompt || '').slice(0, 30) === (cand.prompt || '').slice(0, 30)
+        );
+        if (isDup) {
+          registered.push({ skipped: true, title: cand.title, type: cand.type });
+          continue;
+        }
+        const newTask = taskManager.createTask(
+          cand.prompt,
+          message.author.id,
+          null,
+          cand.priority === '高' ? '高' : '低',
+          pid,
+          cand.type
+        );
+        registered.push({ skipped: false, task: newTask, title: cand.title });
+      }
+
+      const regLines = registered.map((r, i) => {
+        if (r.skipped) return `${i+1}. [スキップ: 重複] ${r.title}`;
+        const typeEmoji = taskManager.TYPE_EMOJI[r.task.type] || '📋';
+        return `${i+1}. ${typeEmoji} [${r.task.type}/${r.task.priority}]\n\`\`\`\n${r.task.id}\n\`\`\``;
+      }).join('\n');
+
+      const newCount = registered.filter(r => !r.skipped).length;
+      const replyText =
+        `✅ **Plan Apply 完了**\n\n` +
+        `登録: ${newCount}件 / スキップ: ${registered.filter(r => r.skipped).length}件\n\n` +
+        regLines + '\n\n' +
+        (newCount > 0
+          ? `次:\n\`\`\`\n!task list\n!auto run 1\n\`\`\``
+          : '新規登録なし。`!task list` で確認してください。');
+
+      await applyMsg.edit(replyText.slice(0, 1900));
+      return;
+    }
 
     const processingMsg = await message.reply(`🔍 **Project Plan を分析中...**\n\`${pid}\``);
 
