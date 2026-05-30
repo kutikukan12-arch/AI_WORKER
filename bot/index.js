@@ -2293,28 +2293,65 @@ async function executeClaudeTask({
 
       if (runnerResult.action !== 'skip') {
         const plannerAct = runnerResult.plannerResult?.action || 'none';
-        const suggested  = runnerResult.plannerResult?.suggestedTask;
 
-        // REVIEW候補あり → 未登録であることを明示
-        let nextLine;
-        if (plannerAct === 'create_task' && suggested?.type === 'REVIEW') {
-          nextLine =
-            `📋 REVIEW 候補あり（未登録）\n` +
-            `Phase C-3 以降で自動登録予定\n` +
-            `手動: \`!task add REVIEW ${prompt.slice(0,40)}\``;
-        } else if (runnerResult.action === 'stopped') {
-          nextLine = `⛔ 上限到達 → Runner停止\n\`\`\`\n!project runner reset\n!project runner on\n\`\`\``;
-        } else {
-          nextLine = `Planner: ${plannerAct}`;
+        // ─── Phase C-4: REVIEW タスクを taskQueue に自動投入 ─────
+        // nextExecutableTaskId が REVIEW type の場合のみ投入する。
+        // FIX / IMPLEMENT 等は投入しない。
+        let autoQueuedReviewId = null;
+        if (runnerResult.nextExecutableTaskId) {
+          try {
+            const nextTask     = taskManager.getTask(runnerResult.nextExecutableTaskId);
+            const runnerState2 = autoProjectRunner.getRunnerState(projectId);
+            const alreadyQueued = taskQueue.getStatus().pendingIds.includes(runnerResult.nextExecutableTaskId);
+
+            if (nextTask &&
+                nextTask.type === taskManager.TASK_TYPES.REVIEW &&
+                nextTask.state === taskManager.STATES.PENDING &&
+                runnerState2.enabled &&
+                !alreadyQueued) {
+
+              // REVIEW タスクは executeReviewTask() で処理する
+              const reviewProjectId = nextTask.projectId || projectId;
+              taskQueue.enqueue(nextTask.id, async () => {
+                await executeReviewTask({ message, task: nextTask, projectId: reviewProjectId });
+              });
+              autoQueuedReviewId = nextTask.id;
+
+              await message.channel.send(
+                `🤖 **Auto Project Runner**\n` +
+                `REVIEWタスクを自動キュー投入しました。\n` +
+                `Task:\n\`\`\`\n${nextTask.id}\n\`\`\``
+              ).catch(() => {});
+
+              logger.info(`[AutoRunner] C-4: REVIEW 自動キュー投入 | ${nextTask.id} | ${projectId}`);
+            }
+          } catch (queueErr) {
+            logger.warn(`[AutoRunner] C-4 キュー投入エラー: ${queueErr.message}`);
+          }
         }
 
-        const notifyMsg =
-          `🤖 **Auto Project Runner**\n` +
-          `Project: \`${projectId}\`\n` +
-          `Loop: ${runnerResult.loopCount}/10\n` +
-          nextLine;
-        await message.channel.send(notifyMsg).catch(() => {});
-        logger.info(`[AutoRunner] C-2フック: ${projectId} | planner:${plannerAct} | loop:${runnerResult.loopCount}`);
+        // 通知（キュー投入済みの場合は重複しない）
+        if (!autoQueuedReviewId) {
+          let nextLine;
+          if (plannerAct === 'create_task') {
+            const suggested = runnerResult.plannerResult?.suggestedTask;
+            nextLine =
+              `Planner: ${suggested?.type || 'task'} 登録済み\n` +
+              `\`!auto run 1\` で実行できます`;
+          } else if (runnerResult.action === 'stopped') {
+            nextLine = `⛔ 上限到達 → Runner停止\n\`\`\`\n!project runner reset\n!project runner on\n\`\`\``;
+          } else {
+            nextLine = `Planner: ${plannerAct}`;
+          }
+          const notifyMsg =
+            `🤖 **Auto Project Runner**\n` +
+            `Project: \`${projectId}\`\n` +
+            `Loop: ${runnerResult.loopCount}/10\n` +
+            nextLine;
+          await message.channel.send(notifyMsg).catch(() => {});
+        }
+
+        logger.info(`[AutoRunner] C-4フック: ${projectId} | planner:${plannerAct} | loop:${runnerResult.loopCount}`);
       }
     } catch (runnerErr) {
       logger.warn(`[AutoRunner] runPlannerStep エラー: ${runnerErr.message}`);
