@@ -551,18 +551,169 @@ async function handleHelp(message) {
 }
 
 // ─────────────────────────────────────────────────────
+// スマートフロー用ヘルパー: ループ防止カウンタ管理
+// ─────────────────────────────────────────────────────
+const APPLY_COUNTS_FILE = path.join(AI_WORKER_ROOT, 'data', 'apply-counts.json');
+const MAX_AUTO_APPLY = 2;
+
+function getApplyCount(reviewId) {
+  if (!fs.existsSync(APPLY_COUNTS_FILE)) return 0;
+  try { return JSON.parse(fs.readFileSync(APPLY_COUNTS_FILE, 'utf8'))[reviewId] || 0; }
+  catch { return 0; }
+}
+
+function incrementApplyCount(reviewId) {
+  let data = {};
+  if (fs.existsSync(APPLY_COUNTS_FILE)) {
+    try { data = JSON.parse(fs.readFileSync(APPLY_COUNTS_FILE, 'utf8')); } catch {}
+  }
+  data[reviewId] = (data[reviewId] || 0) + 1;
+  fs.writeFileSync(APPLY_COUNTS_FILE, JSON.stringify(data, null, 2), 'utf8');
+  return data[reviewId];
+}
+
+// ─────────────────────────────────────────────────────
+// スマートフロー用ヘルパー: タスクから executeClaudeTask パラメータを構築
+// ─────────────────────────────────────────────────────
+function buildExecuteParamsFromTask(task, message, projectId) {
+  const prompt         = task.prompt || '';
+  const taskType       = task.type   || taskTypeUtil.TASK_TYPES.IMPLEMENT;
+  const taskSizeResult = taskTypeUtil.estimateTaskSize(prompt);
+  const effectivePid   = task.projectId || projectId || 'default';
+  const taskWorkspace  = path.join(WORKSPACE_PATH, effectivePid, task.id);
+  return {
+    message, prompt, taskId: task.id,
+    projectId: effectivePid, taskType, taskSizeResult,
+    taskWorkspace, refTaskId: null,
+  };
+}
+
+// ─────────────────────────────────────────────────────
 // !apply-review コマンド
+//
+// result_<id>.md が存在する場合: スマートフロー（スマホ完結）
+//   1. 危険度確認 → 低なら 適用不要
+//   2. ループ防止チェック（最大2回）
+//   3. FIX タスクを取得 or 生成
+//   4. Claude Code で FIX 実行
+//   5. REVIEW タスクを自動生成 → Codex 再レビュー
+//   6. 結果をスマホ向け短文で通知
+//
+// result_<id>.md がない場合: 既存の applyFeedback() フローを使用
 // ─────────────────────────────────────────────────────
 async function handleApplyReview(message, taskId) {
   if (!taskId) {
     await message.reply(
-      '**使い方**\n```\n!apply-review <タスクID>\n```\n' +
-      '**例**\n```\n!apply-review task_1748344800000\n```\n\n' +
-      'タスクIDは `workspace/` フォルダ内のフォルダ名です。'
+      '**使い方**\n```\n!apply-review <レビューID>\n```\n' +
+      'Codex レビュー結果に基づき Claude が自動修正し、再レビューまで実行します。\n' +
+      'ID は `!review list` で確認できます。'
     );
     return;
   }
 
+  // ── スマートフロー: reviews/result_<id>.md が存在する場合 ──
+  const reviewsPath = path.join(AI_WORKER_ROOT, 'reviews');
+  const resultPath  = path.join(reviewsPath, `result_${taskId}.md`);
+
+  if (fs.existsSync(resultPath)) {
+    const resultContent = fs.readFileSync(resultPath, 'utf8');
+    const dangerMatch   = resultContent.match(/\|\s*危険度\s*\|\s*([^\|]+)\|/);
+    const dangerLabel   = dangerMatch ? dangerMatch[1].trim() : '';
+    const isLow         = !dangerLabel || dangerLabel.includes('低');
+
+    // 1. 低危険度 → 適用不要
+    if (isLow) {
+      await message.reply(
+        `✅ **適用不要**\n\n` +
+        `危険度: ${dangerLabel || '🟢 低'}\n\n` +
+        `Codex のレビューで問題は検出されませんでした。修正は不要です。`
+      );
+      return;
+    }
+
+    // 2. ループ防止チェック
+    const applyCount = getApplyCount(taskId);
+    if (applyCount >= MAX_AUTO_APPLY) {
+      await message.reply(
+        `🔴 **自動修正の上限到達** (${MAX_AUTO_APPLY}回)\n\n` +
+        `\`${taskId}\` は既に ${applyCount} 回自動修正しました。\n` +
+        `手動で確認・修正してください。\n` +
+        `📄 \`reviews/result_${taskId}.md\``
+      );
+      return;
+    }
+
+    const currentPid  = projectManager.getCurrentProject(message.channelId);
+    const runNo       = applyCount + 1;
+    const dangerEmoji = { '高': '🔴', '中': '🟡' }[dangerLabel.replace(/[🔴🟡🟢]/g,'').trim()] || dangerLabel.slice(0,2);
+
+    // 3. FIX タスクを取得 or 生成
+    const existingFixes = taskManager.findFixTasksFromReview(taskId);
+    let fixTask = existingFixes.find(t => t.state === taskManager.STATES.PENDING)
+               || existingFixes.find(t => t.state === taskManager.STATES.ON_HOLD);
+
+    if (!fixTask) {
+      const fixResult = taskManager.createFixTaskFromReview(resultContent, taskId, message.author.id, currentPid);
+      if (!fixResult) {
+        await message.reply(`⚠️ FIX タスクの生成に失敗しました。危険度: ${dangerLabel}`);
+        return;
+      }
+      fixTask = fixResult.task;
+    }
+
+    // 4. FIX 実行開始通知（スマホ向け短文）
+    const startMsg = await message.reply(
+      `🔧 **自動修正 ${runNo}/${MAX_AUTO_APPLY} 回目**\n\n` +
+      `${dangerEmoji} 危険度: ${dangerLabel}\n` +
+      `FIX: \`${fixTask.id}\`\n\n` +
+      `⏳ Claude が修正中です...`
+    ).catch(() => null);
+
+    // 5. カウント更新 & FIX 実行
+    incrementApplyCount(taskId);
+    // FIX タスクが保留中なら未着手に戻す
+    if (fixTask.state === taskManager.STATES.ON_HOLD) {
+      taskManager.updateState(fixTask.id, taskManager.STATES.PENDING, 'apply-review で再開');
+    }
+
+    const execParams = buildExecuteParamsFromTask(fixTask, message, currentPid);
+    await enqueueAndWait(fixTask.id, () => executeClaudeTask({ ...execParams, source: 'apply-review' }));
+
+    // 6. FIX 完了確認
+    const fixedTask   = taskManager.getTask(fixTask.id);
+    const fixDone     = !fixedTask; // null = DONE・アーカイブ済み
+    const fixStatus   = fixDone ? '✅ 修正完了' : `⚠️ 状態: ${fixedTask?.state}`;
+
+    if (startMsg) await startMsg.edit(`🔧 **自動修正 ${runNo}/${MAX_AUTO_APPLY} 回目 — ${fixStatus}**`).catch(() => {});
+
+    if (!fixDone) {
+      await message.channel.send(
+        `⚠️ **修正が完了しませんでした**\n\nFIX: \`${fixTask.id}\` | 状態: ${fixedTask?.state}\n手動で確認してください。`
+      ).catch(() => {});
+      return;
+    }
+
+    // 7. REVIEW タスクを自動生成 → Codex 再レビュー
+    await message.channel.send(`🔍 **修正完了 → 自動再レビュー開始**`).catch(() => {});
+
+    const reviewTask = taskManager.createTask(
+      `[自動再レビュー] ${taskId} の修正後確認 (${runNo}回目)`,
+      message.author.id, null, '低', currentPid, 'REVIEW'
+    );
+    await executeReviewTask({ message, task: reviewTask, projectId: currentPid });
+
+    // 8. 最終通知（スマホ向け短文）
+    await message.channel.send(
+      `✅ **スマート apply-review 完了**\n\n` +
+      `元レビュー: \`${taskId}\`\n` +
+      `FIX 実行: \`${fixTask.id}\`\n` +
+      `再レビュー: \`${reviewTask.id}\`\n\n` +
+      `📋 \`!review show ${reviewTask.id}\` で結果を確認`
+    ).catch(() => {});
+    return;
+  }
+
+  // ── 既存フロー: result_<id>.md がない場合 ──
   const processingMsg = await message.reply(
     `⏳ **Codex フィードバックを適用中...**\n` +
     `\`reviews/codex_${taskId}.md\` を確認しています。`
