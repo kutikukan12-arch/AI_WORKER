@@ -2275,28 +2275,48 @@ async function executeClaudeTask({
       `次担当:${nextDecision?.assignee || '(RESEARCH)'}  | diff:${validation.diffStat}`
     );
 
-    // ─── Phase B-2: Auto Project Runner 完了フック ───────────────
+    // ─── Phase B-2 / C-2: Auto Project Runner 完了フック ───────────
     // タスク完了後に runPlannerStep を呼ぶ（runner off 時は何もしない）
-    // エラーが出ても元タスク完了処理を壊さないよう try/catch で囲む
+    // Phase C-2: completedTask を context として渡し REVIEW 候補を検出する。
+    // まだ REVIEW タスクは登録しない（副作用なし）。
     try {
-      const runnerResult = autoProjectRunner.runPlannerStep(projectId);
+      // Phase C-2: 完了タスク情報を context に含める
+      const completedTaskContext = {
+        id:            taskId,
+        type:          taskType,
+        prompt:        prompt.slice(0, 200),
+        resultSummary: result.output.slice(0, 150),
+      };
+      const runnerResult = autoProjectRunner.runPlannerStep(projectId, {
+        completedTask: completedTaskContext,
+      });
+
       if (runnerResult.action !== 'skip') {
-        // runner が有効なときだけ Discord に短い通知を出す
-        const loopState = autoProjectRunner.getRunnerState(projectId);
-        const maxLoop   = 10; // project.runner.maxPlannerCalls のデフォルト
+        const plannerAct = runnerResult.plannerResult?.action || 'none';
+        const suggested  = runnerResult.plannerResult?.suggestedTask;
+
+        // REVIEW候補あり → 未登録であることを明示
+        let nextLine;
+        if (plannerAct === 'create_task' && suggested?.type === 'REVIEW') {
+          nextLine =
+            `📋 REVIEW 候補あり（未登録）\n` +
+            `Phase C-3 以降で自動登録予定\n` +
+            `手動: \`!task add REVIEW ${prompt.slice(0,40)}\``;
+        } else if (runnerResult.action === 'stopped') {
+          nextLine = `⛔ 上限到達 → Runner停止\n\`\`\`\n!project runner reset\n!project runner on\n\`\`\``;
+        } else {
+          nextLine = `Planner: ${plannerAct}`;
+        }
+
         const notifyMsg =
           `🤖 **Auto Project Runner**\n` +
           `Project: \`${projectId}\`\n` +
-          `Action: ${runnerResult.action}\n` +
-          `Loop: ${runnerResult.loopCount}/${maxLoop}\n` +
-          (runnerResult.action === 'stopped'
-            ? `⛔ 上限到達 → Runner停止\n\`\`\`\n!project runner reset\n!project runner on\n\`\`\``
-            : `次: まだ自動生成なし (Phase B-3 以降)`);
+          `Loop: ${runnerResult.loopCount}/10\n` +
+          nextLine;
         await message.channel.send(notifyMsg).catch(() => {});
-        logger.info(`[AutoRunner] フック完了: ${projectId} | ${runnerResult.action} | loop:${runnerResult.loopCount}`);
+        logger.info(`[AutoRunner] C-2フック: ${projectId} | planner:${plannerAct} | loop:${runnerResult.loopCount}`);
       }
     } catch (runnerErr) {
-      // Planner フックのエラーは警告のみ（タスク完了は確定済み）
       logger.warn(`[AutoRunner] runPlannerStep エラー: ${runnerErr.message}`);
     }
 

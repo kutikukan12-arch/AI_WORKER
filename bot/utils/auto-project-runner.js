@@ -308,6 +308,13 @@ function runPlannerStep(projectId, context = {}) {
   if (plannerResult.action === 'create_task' && plannerResult.suggestedTask) {
     const suggested = plannerResult.suggestedTask;
 
+    // Phase C-2: REVIEW は候補提示のみ（登録は Phase C-3 以降）
+    // FIX のみ登録を許可する
+    if (suggested.type !== 'FIX') {
+      plannerSummaryLine =
+        `Planner: ${suggested.type} 候補あり（未登録 — Phase C-3 以降で自動登録）\n` +
+        `type: ${suggested.type} | priority: ${suggested.priority}`;
+    } else {
     // 重複ガード: 同プロジェクト内に同じ prompt prefix の FIX タスクが PENDING/作業中 で残っていないか確認
     const isDuplicate = (() => {
       try {
@@ -368,7 +375,8 @@ function runPlannerStep(projectId, context = {}) {
         logger.error(`[AutoRunner] createTask エラー: ${createErr.message}`);
         plannerSummaryLine = `Planner: create_task 試みたが失敗 (${createErr.message.slice(0, 40)})`;
       }
-    }
+    } // end FIX branch
+    } // end suggested.type === 'FIX'
   } else {
     plannerSummaryLine = `Planner: ${plannerResult.action}`;
   }
