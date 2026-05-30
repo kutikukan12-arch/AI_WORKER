@@ -22,7 +22,7 @@
 const fs = require('fs');
 const path = require('path');
 const logger = require('./logger');
-const { formatForCodex, buildCodexFileSection, truncateMarkdown, MAX_MESSAGE } = require('./formatter');
+const { formatForCodex, buildCodexFileSection, truncateMarkdown, MAX_MESSAGE, formatSmartphoneCommand, formatTypeGuard } = require('./formatter');
 
 // reviews フォルダのパス
 const REVIEWS_PATH = path.join(__dirname, '..', '..', 'reviews');
@@ -114,13 +114,15 @@ function buildSuggestions(prompt, output) {
 // Discord 送信用メッセージを生成
 // ─────────────────────────────────────────────────────
 function generateDiscordMessage(taskId, codexRequest) {
-  // Discord通知は最大5行・短文のみ（詳細はreviews/に保存）
   const dangerEmoji = { '高': '🔴', '中': '🟡', '低': '🟢' }[codexRequest.danger] || '⬜';
   return [
     `🤖 **Codex レビュー依頼** | 危険度: ${dangerEmoji} ${codexRequest.danger}`,
     `📋 タスク: \`${taskId}\``,
-    `📄 詳細: \`reviews/codex_${taskId}.md\``,
-    `❓ レビュー後: \`!apply-review ${taskId}\``,
+    `📄 詳細:`,
+    `\`reviews/codex_${taskId}.md\``,
+    ``,
+    formatSmartphoneCommand('次のコマンド:', `!apply-review ${taskId}`),
+    formatTypeGuard(codexRequest.danger),
   ].join('\n');
 }
 

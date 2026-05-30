@@ -650,7 +650,7 @@ async function handleApplyReview(message, taskId) {
         `🔴 **自動修正の上限到達** (${MAX_AUTO_APPLY}回)\n\n` +
         `\`${taskId}\` は既に ${applyCount} 回自動修正しました。\n` +
         `手動で確認・修正してください。\n` +
-        `📄 \`reviews/result_${taskId}.md\``
+        `📄 詳細:\n\`reviews/result_${taskId}.md\``
       );
       return;
     }
@@ -720,7 +720,7 @@ async function handleApplyReview(message, taskId) {
       `元レビュー: \`${taskId}\`\n` +
       `FIX 実行: \`${fixTask.id}\`\n` +
       `再レビュー: \`${reviewTask.id}\`\n\n` +
-      `📋 \`!review show ${reviewTask.id}\` で結果を確認`
+      fmt.formatSmartphoneCommand('結果を確認:', `!review show ${reviewTask.id}`)
     ).catch(() => {});
     return;
   }
@@ -1596,11 +1596,12 @@ async function handleReview(message, sub) {
     const header   = `📋 **Codexレビュー結果: \`${rawId}\`** | ${date}${fixStatus}\n\n`;
     const MAX_BODY = 1800 - header.length;
 
+    const applyCmd = fmt.formatSmartphoneCommand('適用するには:', `!apply-review ${rawId}`);
     if (content.length <= MAX_BODY) {
-      await message.reply(header + content);
+      await message.reply(header + content + `\n\n${applyCmd}`);
     } else {
-      const suffix = `\n\n...[省略] フル内容: \`reviews/result_${rawId}.md\`\n` +
-                     `適用するには: \`!apply-review ${rawId}\``;
+      const suffix = `\n\n...[省略] フル内容:\n\`reviews/result_${rawId}.md\`\n\n` +
+                     fmt.formatSmartphoneCommand('適用するには:', `!apply-review ${rawId}`);
       await message.reply(header + content.slice(0, MAX_BODY) + suffix);
     }
     return;
@@ -1673,7 +1674,8 @@ async function handleReview(message, sub) {
       `**${i + 1}.** \`${taskId}\``,
       `　📅 ${date}  |  危険度: ${dangerLabel}`,
       problem ? `　❗ ${problem}${problem.length >= 80 ? '...' : ''}` : '',
-      `　✅ \`!apply-review ${taskId}\``,
+      fmt.formatSmartphoneCommand('次のコマンド:', `!apply-review ${taskId}`),
+      fmt.formatTypeGuard(dangerLabel),
       ``,
     );
   });
@@ -2129,7 +2131,7 @@ async function executeClaudeTask({
       { name: '📁 変更',    value: `${taskChangedFiles.length}件 (${validation.diffStat})`, inline: true },
       { name: '📝 指示',    value: prompt.slice(0, 150),          inline: false },
       needsCodex
-        ? { name: '🤖 Codex', value: `危険度:${codexInfo?.danger} | \`!apply-review ${taskId}\``, inline: false }
+        ? { name: '🤖 Codex', value: `危険度: ${codexInfo?.danger}\n${fmt.formatSmartphoneCommand('次のコマンド:', `!apply-review ${taskId}`)}`, inline: false }
         : null,
       prResult?.prUrl
         ? { name: '🔗 PR',    value: prResult.prUrl,              inline: false }

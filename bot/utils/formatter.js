@@ -220,6 +220,39 @@ function buildCodexFileSection(prompt) {
 }
 
 // ─────────────────────────────────────────────────────
+// formatSmartphoneCommand
+//
+// スマホ Discord でワンタップコピーできるコマンドブロックを生成。
+//
+// 引数:
+//   label   - "次のコマンド:" などの説明ラベル
+//   command - コマンド文字列
+// ─────────────────────────────────────────────────────
+function formatSmartphoneCommand(label, command) {
+  return `${label}\n\`\`\`txt\n${command}\n\`\`\``;
+}
+
+// ─────────────────────────────────────────────────────
+// formatTypeGuard
+//
+// 危険度に応じたスマホ向けアクション指針を返す。
+// コマンドブロックの直後に `---` セパレータ付きで表示する想定。
+//
+// 引数:
+//   danger - '低' | '中' | '高' (絵文字付き可)
+// ─────────────────────────────────────────────────────
+function formatTypeGuard(danger) {
+  const d = (danger || '').replace(/[🔴🟡🟢⬜]/g, '').trim();
+  if (d.includes('高')) {
+    return `---\n【Type Guard: REJECT】\n・却下推奨 — 人間確認が必要`;
+  }
+  if (d.includes('中')) {
+    return `---\n【Type Guard: IMPLEMENT】\n・実装してよい\n・必要ならテストも追加してよい`;
+  }
+  return `---\n【Type Guard: SKIP】\n・問題なし — 適用不要`;
+}
+
+// ─────────────────────────────────────────────────────
 // embedField - Embed field value を安全にtruncate
 // ─────────────────────────────────────────────────────
 function embedField(text, refPath = '') {
@@ -251,6 +284,9 @@ module.exports = {
   formatForClaude,
   formatForCodex,
   buildCodexFileSection,
+  // スマホ向けヘルパー
+  formatSmartphoneCommand,
+  formatTypeGuard,
   // ショートカット
   embedField,
   embedDesc,
