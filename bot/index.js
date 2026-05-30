@@ -1814,7 +1814,13 @@ async function executeClaudeTask({
     // node_modules 等の広域検索によるタイムアウトを防ぐ
     // ═══════════════════════════════════════
     const explorationRules = taskTypeUtil.buildExplorationRules(taskType, taskSizeResult);
-    const augmentedPrompt  = prompt + explorationRules;
+
+    // DOCS タスク: 出力ファイルを自動指定して「確認します」だけで終わることを防ぐ
+    const docsOutputGuard = (taskType === 'DOCS')
+      ? `\n---\n【DOCSタスク出力要件】\n必ず以下のMarkdownファイルを新規作成または更新すること:\ndocs/${taskId}.md\n\nファイルを作成せずに会話応答だけで終わることは禁止。`
+      : '';
+
+    const augmentedPrompt  = prompt + explorationRules + docsOutputGuard;
 
     // 探索対象をログに記録
     const explorationTargets = taskSizeResult.fileMatches.length > 0

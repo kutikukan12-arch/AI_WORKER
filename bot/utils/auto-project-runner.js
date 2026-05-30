@@ -56,7 +56,12 @@ function loadAllRunnerState() {
 
 function saveAllRunnerState(all) {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(RUNNER_STATE_FILE, JSON.stringify(all, null, 2), 'utf8');
+  try {
+    fs.writeFileSync(RUNNER_STATE_FILE, JSON.stringify(all, null, 2), 'utf8');
+  } catch (e) {
+    logger.error(`[AutoRunner] runner-state.json 書き込み失敗: ${e.message}`);
+    // 書き込み失敗はログのみ。呼び出し元の処理は継続させる。
+  }
 }
 
 // ─────────────────────────────────────────────────────
