@@ -362,7 +362,8 @@ function runPlannerStep(projectId, context = {}) {
         plannerSummaryLine =
           `Planner: FIX タスクを登録しました ✅\n` +
           `ID: \`${createdTask.id}\`\n` +
-          `危険度: ${suggested.sourceReviewDanger || '—'} | priority: ${createdTask.priority}`;
+          `危険度: ${suggested.sourceReviewDanger || '—'} | priority: ${createdTask.priority}\n` +
+          `次に実行:\n\`\`\`\n!auto run 1\n\`\`\``;
       } catch (createErr) {
         logger.error(`[AutoRunner] createTask エラー: ${createErr.message}`);
         plannerSummaryLine = `Planner: create_task 試みたが失敗 (${createErr.message.slice(0, 40)})`;
@@ -372,15 +373,19 @@ function runPlannerStep(projectId, context = {}) {
     plannerSummaryLine = `Planner: ${plannerResult.action}`;
   }
 
+  // nextExecutableTaskId: FIX登録時のみ設定（まだ自動実行はしない）
+  const nextExecutableTaskId = createdTask ? createdTask.id : null;
+
   return {
     action:    'step',
     summary:
       `📋 **[AutoRunner] ステップ ${nextCount}/${maxLoop}** | \`${projectId}\`\n` +
       plannerSummaryLine,
     projectId,
-    loopCount:     nextCount,
+    loopCount:            nextCount,
     plannerResult,
     createdTask,
+    nextExecutableTaskId,
   };
 }
 
