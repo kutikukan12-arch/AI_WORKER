@@ -82,6 +82,32 @@ function planNextTask(projectId, context = {}) {
     }
   }
 
+  // ── Phase D-1: project_done 判定 ──────────────────────────────────
+  // FIX / REVIEW 生成条件がすべて満たされなかった場合に、
+  // プロジェクト内に残作業がないか確認する。
+  // 残作業なし → action:'project_done'（runner停止は呼び出し元に任せる）
+  const tasks = (() => {
+    try { return require('./task-manager').listTasks(); } catch { return []; }
+  })();
+  const activeStates = new Set(['未着手', '作業中', 'レビュー待ち']);
+  const projectActiveTasks = tasks.filter(t =>
+    t.projectId === projectId && activeStates.has(t.state)
+  );
+
+  if (projectActiveTasks.length === 0) {
+    logger.info(`[Planner] project_done 候補: ${projectId} (残作業なし)`);
+    return {
+      action:        'project_done',
+      reason:        `プロジェクト内に未着手・作業中・レビュー待ちのタスクが存在しません`,
+      suggestedTask: null,
+      summary:
+        `🏁 **Planner: プロジェクト完了候補**\n` +
+        `Project: \`${projectId}\`\n` +
+        `残作業: 0件\n` +
+        `\`!project runner off\` で Runner を停止してください。`,
+    };
+  }
+
   // ── Phase C-1: IMPLEMENT完了後 → REVIEW タスク候補生成 ──────────────
   // context.completedTask が存在し type=IMPLEMENT の場合に REVIEW を提案する。
   // FIX 生成（B-4）が優先されるため、ここに到達するのは低危険度か reviewResult なしの場合。
