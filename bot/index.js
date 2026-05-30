@@ -528,8 +528,8 @@ async function handleHelp(message) {
         inline: false,
       },
       {
-        name: '!review list',
-        value: '過去の Codex レビュー結果を新しい順に一覧表示します\n例: `!review list`',
+        name: '!review list / show <ID>',
+        value: 'Codex レビュー結果を一覧表示 / フル表示します\n例: `!review list` / `!review show task_xxx`',
         inline: false,
       },
       {
@@ -1279,15 +1279,55 @@ async function handleResearch(message, sub) {
 // reviews/ フォルダがない場合も安全に処理する。
 // ─────────────────────────────────────────────────────
 async function handleReview(message, sub) {
-  if (sub !== 'list') {
-    await message.reply(
-      '**使い方**\n```\n!review list\n```\n' +
-      '`reviews/` フォルダ内の Codex レビュー結果を新しい順に一覧表示します。'
-    );
+  const reviewsDir = path.join(AI_WORKER_ROOT, 'reviews');
+
+  // ─── !review show <id> — レビュー結果全文を表示 ───
+  if (sub === 'show') {
+    const rawId = message.content.split(/\s+/)[2] || '';
+    if (!rawId) {
+      await message.reply(
+        '**使い方**\n```\n!review show <タスクID>\n```\n' +
+        '例: `!review show task_1780123456789`\n\n' +
+        'タスクIDは `!review list` で確認できます。'
+      );
+      return;
+    }
+
+    const resultPath = path.join(reviewsDir, `result_${rawId}.md`);
+    if (!fs.existsSync(resultPath)) {
+      await message.reply(
+        `❌ **レビュー結果が見つかりません**\n\n` +
+        `ID: \`${rawId}\`\n` +
+        `確認場所: \`reviews/result_${rawId}.md\`\n\n` +
+        `\`!review list\` で利用可能なレビュー結果一覧を確認できます。`
+      );
+      return;
+    }
+
+    const content = fs.readFileSync(resultPath, 'utf8');
+    const date    = new Date(fs.statSync(resultPath).mtimeMs).toLocaleString('ja-JP');
+    const header  = `📋 **Codexレビュー結果: \`${rawId}\`** | ${date}\n\n`;
+    const MAX_BODY = 1800 - header.length;
+
+    if (content.length <= MAX_BODY) {
+      await message.reply(header + content);
+    } else {
+      const suffix = `\n\n...[省略] フル内容: \`reviews/result_${rawId}.md\`\n` +
+                     `適用するには: \`!apply-review ${rawId}\``;
+      await message.reply(header + content.slice(0, MAX_BODY) + suffix);
+    }
     return;
   }
 
-  const reviewsDir = path.join(AI_WORKER_ROOT, 'reviews');
+  // ─── !review list 以外は使い方を表示 ───
+  if (sub !== 'list') {
+    await message.reply(
+      '**使い方**\n```\n!review list\n!review show <タスクID>\n```\n' +
+      '`list` — レビュー結果一覧を表示\n' +
+      '`show <ID>` — 特定のレビュー結果をフル表示'
+    );
+    return;
+  }
 
   // reviews/ フォルダがない場合
   if (!fs.existsSync(reviewsDir)) {
