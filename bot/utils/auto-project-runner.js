@@ -238,6 +238,21 @@ function getPlanner() {
   return require('./project-planner');
 }
 
+// ─────────────────────────────────────────────────────
+// planProjectGoalsQuick — nextCandidates の件数だけ返す軽量版
+//
+// Phase D-4d: runner step の通知に「次候補あり」を追加するために使用。
+// 副作用なし。エラーは 0 として扱う。
+// ─────────────────────────────────────────────────────
+function planProjectGoalsQuick(projectId, description) {
+  try {
+    const plan = require('./project-planner').planProjectGoals(projectId, { description });
+    return plan.nextCandidates.length;
+  } catch {
+    return 0;
+  }
+}
+
 function runPlannerStep(projectId, context = {}) {
   const state   = getRunnerState(projectId);
   const project = (() => {
@@ -434,7 +449,24 @@ function runPlannerStep(projectId, context = {}) {
     } // end FIX branch
     } // end suggested.type === 'FIX'
   } else {
-    plannerSummaryLine = `Planner: ${plannerResult.action}`;
+    // Phase D-4d: plannerResult.action === 'none' のとき、
+    // planProjectGoals() でプロジェクト候補があれば通知に追加する
+    let nextCandidatesHint = '';
+    if (plannerResult.action === 'none') {
+      try {
+        const planner2   = require('./project-planner');
+        const pm2        = require('./project-manager');
+        const proj2      = pm2.getProject(projectId);
+        const description = (proj2?.description || proj2?.name || '');
+        const goalHint   = planProjectGoalsQuick(projectId, description);
+        if (goalHint > 0) {
+          nextCandidatesHint =
+            `\n次候補があります (${goalHint}件):\n` +
+            `\`\`\`\n!project plan\n!project plan apply\n\`\`\``;
+        }
+      } catch { /* ignore */ }
+    }
+    plannerSummaryLine = `Planner: ${plannerResult.action}` + nextCandidatesHint;
   }
 
   // nextExecutableTaskId: FIX登録時のみ設定（まだ自動実行はしない）
