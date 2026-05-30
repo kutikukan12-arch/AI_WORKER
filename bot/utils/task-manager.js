@@ -590,10 +590,16 @@ function splitTask(taskId) {
   const now          = new Date().toISOString();
 
   // 分割タスクを作成
-  const newTasks = proposals.map((p, i) => ({
+  // size は LARGE から分割されたタスクを MEDIUM 上限で再推定する。
+  // 分割プロンプトに元タスクの LARGE キーワードが残っていても LARGE に
+  // ならないよう、splitTask 由来のタスクは MEDIUM 以下に制限する。
+  const newTasks = proposals.map((p, i) => {
+    const rawSize = estimateTaskSize(p);
+    const safeSize = rawSize === TASK_SIZES.LARGE ? TASK_SIZES.MEDIUM : rawSize;
+    return {
     id:           `${taskId}_s${i + 1}`,
     type:         inheritedType,
-    size:         estimateTaskSize(p),
+    size:         safeSize,
     projectId:    original.projectId || 'default',
     prompt:       p.slice(0, 500),
     state:        STATES.PENDING,
@@ -609,7 +615,8 @@ function splitTask(taskId) {
     codexResult:  null,
     prUrl:        null,
     notes:        `元タスク: ${taskId}`,
-  }));
+  };
+  });
 
   // 元タスクを DONE → アーカイブ
   original.state     = STATES.DONE;
