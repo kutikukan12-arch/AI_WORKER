@@ -780,6 +780,87 @@ function buildTypeGuard(taskType) {
   return '\n---\n' + lines.join('\n');
 }
 
+// ─────────────────────────────────────────────────────
+// createFixTaskFromReview — Codexレビュー結果から FIX タスクを自動生成
+//
+// reviews/result_<id>.md のテキストを解析し、
+// 危険度が「高」または「中」の場合に FIX タスクを生成する。
+// 「低」または評価不能の場合は null を返す（何もしない）。
+//
+// 引数:
+//   resultContent  - result_*.md の全文テキスト
+//   originalTaskId - レビュー対象タスクID
+//   discordUserId  - 依頼者ユーザーID
+//   projectId      - プロジェクトID
+//
+// 戻り値:
+//   { task, dangerLabel } — 生成成功
+//   null                  — 低危険度のため生成なし
+// ─────────────────────────────────────────────────────
+function createFixTaskFromReview(resultContent, originalTaskId, discordUserId = '', projectId = 'default') {
+  // 危険度を抽出: `| 危険度 | 🔴 高 |` 形式
+  const dangerMatch = resultContent.match(/\|\s*危険度\s*\|\s*([^\|]+)\|/);
+  const dangerLabel = dangerMatch ? dangerMatch[1].trim() : '';
+
+  // 低危険度（🟢 低）または不明の場合は FIX タスク生成なし
+  const isHigh = dangerLabel.includes('高');
+  const isMid  = dangerLabel.includes('中');
+  if (!isHigh && !isMid) {
+    logger.info(`[REVIEW] 危険度「${dangerLabel}」のため FIX タスク生成をスキップ`);
+    return null;
+  }
+
+  // 問題点を抽出（先頭150文字）
+  const problemMatch = resultContent.match(/## 問題点\n+([^\n#].{0,200})/);
+  const problem = problemMatch
+    ? problemMatch[1].trim().slice(0, 150)
+    : 'Codex指摘事項あり';
+
+  // FIX プロンプトを生成
+  const fixPrompt = [
+    `[Codex指摘対応] ${problem}`,
+    ``,
+    `元レビュー: reviews/result_${originalTaskId}.md`,
+    `危険度: ${dangerLabel}`,
+    `対応方法: Codexの改善案を参照して修正してください。`,
+  ].join('\n');
+
+  // FIX タスクを作成（dangerLevel 高 → priority.js が高優先度を割り当てる）
+  const task = createTask(
+    fixPrompt,
+    discordUserId,
+    null,
+    isHigh ? '高' : '中',
+    projectId,
+    TASK_TYPES.FIX
+  );
+
+  // 危険度に関わらず FIX タスクは常に priority = 高 に設定
+  const updatedTask = updateTask(task.id, {
+    priority:       '高',
+    priorityReason: `Codex指摘（危険度: ${dangerLabel}）`,
+  }) || task;
+
+  logger.info(
+    `[REVIEW] FIXタスク自動生成: ${updatedTask.id} | 危険度: ${dangerLabel} | priority: ${updatedTask.priority} | 元: ${originalTaskId}`
+  );
+  return { task: updatedTask, dangerLabel };
+}
+
+// ─────────────────────────────────────────────────────
+// findFixTasksFromReview — 元レビューIDで紐づく FIX タスクを検索
+//
+// !review show での「修正タスク生成」状態表示に使用。
+// ─────────────────────────────────────────────────────
+function findFixTasksFromReview(originalTaskId) {
+  const tasks = loadTasks();
+  return tasks.filter(t =>
+    t.type === TASK_TYPES.FIX &&
+    t.prompt &&
+    t.prompt.includes(`result_${originalTaskId}.md`)
+  );
+}
+
 module.exports = {
   STATES,
   STATE_EMOJI,
@@ -795,6 +876,8 @@ module.exports = {
   updateTask,
   updateTaskType,
   buildTypeGuard,
+  createFixTaskFromReview,
+  findFixTasksFromReview,
   generateSplitProposals,
   splitTask,
   mergeTasks,

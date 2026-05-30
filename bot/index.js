@@ -1306,7 +1306,15 @@ async function handleReview(message, sub) {
 
     const content = fs.readFileSync(resultPath, 'utf8');
     const date    = new Date(fs.statSync(resultPath).mtimeMs).toLocaleString('ja-JP');
-    const header  = `📋 **Codexレビュー結果: \`${rawId}\`** | ${date}\n\n`;
+
+    // FIX タスクが生成されていれば状態を表示
+    const fixTasks = taskManager.findFixTasksFromReview(rawId);
+    const fixStatus = fixTasks.length > 0
+      ? `\n🔧 **修正タスク生成済み (${fixTasks.length}件):**\n` +
+        fixTasks.map(t => `  \`${t.id}\` [${t.type}/${t.size}] ${t.state}`).join('\n')
+      : '';
+
+    const header   = `📋 **Codexレビュー結果: \`${rawId}\`** | ${date}${fixStatus}\n\n`;
     const MAX_BODY = 1800 - header.length;
 
     if (content.length <= MAX_BODY) {
@@ -2100,17 +2108,35 @@ async function executeReviewTask({ message, task, projectId }) {
     logger.info(`[AUTO] REVIEW 結果保存: reviews/result_${taskId}.md | 危険度: ${parsed.danger}`);
   }
 
+  // ─ 危険度が高/中の場合: FIX タスクを自動生成（Claude↔Codex相互レビュー）─
+  let fixTaskResult = null;
+  if (parsed) {
+    const resultContent = [
+      `| 危険度 | ${parsed.danger} |`,
+      `## 問題点`, parsed.problem || '',
+    ].join('\n');
+    fixTaskResult = taskManager.createFixTaskFromReview(
+      resultContent, taskId, task.requestedBy || '', projectId
+    );
+    if (fixTaskResult) {
+      logger.info(`[REVIEW] FIXタスク生成済み: ${fixTaskResult.task.id}`);
+    }
+  }
+
   // タスクを DONE にする（アーカイブ）
   taskManager.updateState(taskId, taskManager.STATES.DONE, 'REVIEWタスク: Codex転送完了');
 
   // ─ #codex-review へ通知 ─
   const dangerLabel = parsed?.danger || '未評価';
   const dangerEmoji2 = { '高': '🔴', '中': '🟡', '低': '🟢' }[dangerLabel] || '⬜';
+  const fixNotice = fixTaskResult
+    ? `\n🔧 FIX タスク自動生成: \`${fixTaskResult.task.id}\``
+    : '';
   const reviewNotice = apiResult && parsed
     ? `👀 **REVIEW → Codex 結果あり** | \`${taskId}\`\n` +
       `${dangerEmoji2} 危険度: ${dangerLabel}\n` +
       `📄 \`reviews/result_${taskId}.md\`\n` +
-      `✅ \`!apply-review ${taskId}\` でフィードバック適用`
+      `✅ \`!apply-review ${taskId}\` でフィードバック適用` + fixNotice
     : `👀 **REVIEW タスク → Codex 転送** | \`${taskId}\`\n` +
       `📄 \`reviews/codex_${taskId}.md\` を確認してください。\n` +
       `⭕ API 未設定 — 手動レビューをお願いします`;
@@ -2126,7 +2152,10 @@ async function executeReviewTask({ message, task, projectId }) {
       `**【問題点】**\n${(parsed.problem  || 'なし').slice(0, 150)}\n\n` +
       `**【改善案】**\n${(parsed.suggestion || 'なし').slice(0, 150)}\n\n` +
       `📄 \`reviews/result_${taskId}.md\`\n` +
-      `✅ フィードバック適用: \`!apply-review ${taskId}\``;
+      `✅ フィードバック適用: \`!apply-review ${taskId}\`` +
+      (fixTaskResult
+        ? `\n\n🔧 **FIX タスク自動生成済み**\nID: \`${fixTaskResult.task.id}\`\ntype: FIX / priority: 高\n\`!next\` で確認できます。`
+        : '');
   } else {
     channelMsg =
       `👀 **REVIEWタスク完了**\n\n` +
