@@ -2570,6 +2570,47 @@ async function executeReviewTask({ message, task, projectId }) {
       `レビュー後: \`!apply-review ${taskId}\``;
   }
   await message.channel.send(channelMsg).catch(() => {});
+
+  // ─── Phase B-7b: Auto Project Runner — REVIEW完了フック ──────────
+  // Codex 結果を context として runPlannerStep() に渡し、
+  // FIX タスクが作成された場合のみキュー投入する。
+  // runner off / FIX 以外 / ループ上限超過 / キュー混雑 の場合は投入しない。
+  if (parsed) {
+    try {
+      const runnerState0 = autoProjectRunner.getRunnerState(projectId);
+      if (runnerState0.enabled) {
+        const runnerResult = autoProjectRunner.runPlannerStep(projectId, { reviewResult: parsed });
+
+        if (runnerResult.nextExecutableTaskId) {
+          const nextTask     = taskManager.getTask(runnerResult.nextExecutableTaskId);
+          const runnerState2 = autoProjectRunner.getRunnerState(projectId);
+          const queueStatus  = taskQueue.getStatus();
+          const alreadyQueued = queueStatus.pendingIds.includes(runnerResult.nextExecutableTaskId);
+
+          if (nextTask &&
+              nextTask.type === taskManager.TASK_TYPES.FIX &&
+              nextTask.state === taskManager.STATES.PENDING &&
+              runnerState2.enabled &&
+              !alreadyQueued) {
+
+            const execParams = buildExecuteParamsFromTask(nextTask, message, projectId);
+            taskQueue.enqueue(nextTask.id, () => executeClaudeTask({ ...execParams, source: 'auto-runner' }));
+
+            await message.channel.send(
+              `🤖 **Auto Project Runner**\n` +
+              `FIXタスクを自動キュー投入しました。\n` +
+              `Task:\n\`\`\`\n${nextTask.id}\n\`\`\``
+            ).catch(() => {});
+
+            logger.info(`[AutoRunner] B-7b: FIX 自動キュー投入 | ${nextTask.id} | ${projectId}`);
+          }
+        }
+      }
+    } catch (runnerErr) {
+      // フックのエラーはREVIEW完了処理を壊さない
+      logger.warn(`[AutoRunner] B-7b フック エラー: ${runnerErr.message}`);
+    }
+  }
 }
 
 // ─────────────────────────────────────────────────────
