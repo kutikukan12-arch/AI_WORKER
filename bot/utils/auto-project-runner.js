@@ -294,4 +294,5 @@ module.exports = {
   disableRunner,
   resetRunner,
   formatRunnerStatus,
+  runPlannerStep,
 };
