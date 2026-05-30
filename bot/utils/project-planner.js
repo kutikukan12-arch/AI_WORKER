@@ -156,6 +156,71 @@ function planNextTask(projectId, context = {}) {
   };
 }
 
+// ─────────────────────────────────────────────────────
+// planProjectGoals(projectId, input) — Phase D-3
+//
+// プロジェクト目標から不足機能（gaps）を推定し、
+// 次タスク候補を返す。Phase D-3 は骨格のみ。
+//
+// 引数:
+//   projectId - プロジェクトID
+//   input     - {
+//                 description: string,  // project の説明・目標
+//                 docs:        string,  // docs/*.md の内容（任意）
+//                 doneTasks:   string[], // 完了済みタスクのサマリー（任意）
+//               }
+//
+// 戻り値:
+//   {
+//     goals:          string[],  // 目標リスト（入力から抽出）
+//     implemented:    string[],  // 実装済みと推定されるもの
+//     gaps:           string[],  // 不足していると推定されるもの
+//     nextCandidates: object[],  // 次タスク候補（suggestedTask 形式）
+//     summary:        string,    // Discord 通知用の短文
+//   }
+//
+// Phase D-3 では実際の AI 推論はしない（骨格のみ）。
+// Phase D-4 以降で Claude Code / Codex と接続する。
+// ─────────────────────────────────────────────────────
+function planProjectGoals(projectId, input = {}) {
+  logger.debug(`[Planner] planProjectGoals called: ${projectId}`);
+
+  const description  = (input.description || '').trim();
+  const docs         = (input.docs        || '').trim();
+  const doneTasks    = input.doneTasks    || [];
+
+  // Phase D-3: 骨格のみ。AI 推論は Phase D-4 以降。
+  // description から目標を簡易抽出（改行・箇条書き区切り）
+  const goals = description
+    .split(/[\n\r・\-\*]/)
+    .map(l => l.trim())
+    .filter(l => l.length > 5)
+    .slice(0, 10);
+
+  // Phase D-3: implemented / gaps は空配列（AI 推論が必要）
+  const implemented = doneTasks.slice(0, 10);
+  const gaps        = [];         // Phase D-4 で Claude/Codex が推定する
+  const nextCandidates = [];      // Phase D-4 で生成する
+
+  logger.info(
+    `[Planner] planProjectGoals: ${projectId} | goals:${goals.length} | done:${implemented.length}`
+  );
+
+  return {
+    goals,
+    implemented,
+    gaps,
+    nextCandidates,
+    summary:
+      `📊 **Project Goals 分析** (Phase D-3: 骨格)\n` +
+      `Project: \`${projectId}\`\n` +
+      `目標: ${goals.length}件\n` +
+      `実装済み: ${implemented.length}件\n` +
+      `不足推定: ${gaps.length}件（Phase D-4 以降で AI 推論）`,
+  };
+}
+
 module.exports = {
   planNextTask,
+  planProjectGoals,
 };
