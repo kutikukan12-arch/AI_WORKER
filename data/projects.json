@@ -10,7 +10,11 @@
       "id": "youtube予測ai",
       "name": "YouTube予測AI",
       "description": "",
-      "createdAt": "2026-05-30T18:25:44.559Z"
+      "createdAt": "2026-05-30T18:25:44.559Z",
+      "runner": {
+        "enabled": false,
+        "startedAt": "2026-05-30T21:14:03.820Z"
+      }
     }
   ]
 }

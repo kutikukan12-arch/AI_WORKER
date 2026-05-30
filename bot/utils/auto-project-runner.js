@@ -202,6 +202,91 @@ function formatRunnerStatus(projectId) {
   return lines.join('\n');
 }
 
+// ─────────────────────────────────────────────────────
+// runPlannerStep(projectId) — Phase B-1
+//
+// Auto Project Runner の1ステップを実行する。
+// Phase B-1 では状態管理のみ。タスク生成・Claude実行はまだしない。
+//
+// 動作:
+//   1. runner 状態を読み込む
+//   2. enabled=false なら何もせず { action: 'skip' } を返す
+//   3. loopCount を確認し上限超えなら停止状態にする
+//   4. loopCount / updatedAt を更新して保存
+//   5. 結果オブジェクトと Discord 通知用 summary を返す
+//
+// 戻り値:
+//   {
+//     action:  'skip' | 'stopped' | 'step',
+//     summary: string,         // Discord 通知用の短文
+//     projectId: string,
+//     loopCount: number,
+//   }
+// ─────────────────────────────────────────────────────
+const MAX_LOOP_COUNT_DEFAULT = 10;
+
+function runPlannerStep(projectId) {
+  const state   = getRunnerState(projectId);
+  const project = (() => {
+    try {
+      const fs2    = require('fs');
+      const path2  = require('path');
+      const pfile  = path2.join(DATA_DIR, 'projects.json');
+      if (!fs2.existsSync(pfile)) return null;
+      const data   = JSON.parse(fs2.readFileSync(pfile, 'utf8'));
+      return (data.projects || []).find(p => p.id === projectId) || null;
+    } catch { return null; }
+  })();
+  const maxLoop = project?.runner?.maxPlannerCalls ?? MAX_LOOP_COUNT_DEFAULT;
+
+  // ① enabled=false → スキップ
+  if (!state.enabled) {
+    logger.debug(`[AutoRunner] runPlannerStep skip: ${projectId} (disabled)`);
+    return {
+      action:    'skip',
+      summary:   `⛔ Runner は無効です (\`${projectId}\`)`,
+      projectId,
+      loopCount: state.loopCount,
+    };
+  }
+
+  // ② loopCount 上限チェック
+  if (state.loopCount >= maxLoop) {
+    logger.warn(`[AutoRunner] loopCount 上限到達: ${projectId} (${state.loopCount}/${maxLoop})`);
+    saveRunnerState(projectId, {
+      enabled:     false,
+      pauseReason: `loopCount 上限到達 (${state.loopCount}/${maxLoop})`,
+      pausedAt:    new Date().toISOString(),
+    });
+    // projects.json も同期
+    syncProjectsEnabled(projectId, false);
+    return {
+      action:    'stopped',
+      summary:   `🛑 **Auto Runner 停止** | \`${projectId}\`\nloopCount 上限 (${state.loopCount}/${maxLoop}) に達しました。\n\`!project runner reset\` でリセット後に再開できます。`,
+      projectId,
+      loopCount: state.loopCount,
+    };
+  }
+
+  // ③ loopCount / updatedAt を更新
+  const nextCount = state.loopCount + 1;
+  saveRunnerState(projectId, {
+    loopCount:    nextCount,
+    lastPlannerAt: new Date().toISOString(),
+  });
+
+  logger.info(`[AutoRunner] runPlannerStep: ${projectId} | loop ${nextCount}/${maxLoop}`);
+
+  // Phase B-1: タスク生成・Claude実行はまだしない
+  // Phase B-2 以降でここに planNextTask() 呼び出しを追加する
+  return {
+    action:    'step',
+    summary:   `📋 **[AutoRunner] ステップ ${nextCount}/${maxLoop}** | \`${projectId}\`\n(Phase B-1: 状態管理のみ。タスク生成は Phase B-2 以降)`,
+    projectId,
+    loopCount: nextCount,
+  };
+}
+
 module.exports = {
   getRunnerState,
   saveRunnerState,
