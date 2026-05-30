@@ -1499,9 +1499,85 @@ async function handleProject(message, args) {
     return;
   }
 
+  // !project plan — プロジェクト計画を表示（ルールベース）
+  if (sub === 'plan') {
+    const planSub = args[1] || '';
+    const pid     = projectManager.getCurrentProject(message.channelId);
+    const project = projectManager.getProject(pid);
+
+    if (!project) {
+      await message.reply(`❌ プロジェクトが見つかりません: \`${pid}\``);
+      return;
+    }
+
+    // description / docs を収集
+    const description = project.description || project.name || '';
+    const docsDir     = path.join(AI_WORKER_ROOT, 'docs');
+    let docsSummary   = '';
+    try {
+      if (fs.existsSync(docsDir)) {
+        const docFiles = fs.readdirSync(docsDir)
+          .filter(f => f.endsWith('.md') && !f.startsWith('auto-runner'))
+          .slice(0, 3);
+        docsSummary = docFiles
+          .map(f => fs.readFileSync(path.join(docsDir, f), 'utf8').slice(0, 200))
+          .join('\n');
+      }
+    } catch { /* ignore */ }
+
+    // doneTasks: 完了済みタスクのサマリーを収集
+    const allTasks = taskManager.listTasks();
+    const projectTasks = projectManager.filterTasksByProject(allTasks, pid);
+    const doneSummaries = projectTasks
+      .filter(t => t.state === taskManager.STATES.ON_HOLD || /* archived=DONE is gone */false)
+      .map(t => `${t.type}: ${(t.prompt || '').slice(0, 40)}`)
+      .slice(0, 10);
+    // history から完了タスクのサマリーを追加
+    const historyDir = path.join(AI_WORKER_ROOT, 'data', 'history');
+    try {
+      if (fs.existsSync(historyDir)) {
+        const histFiles = fs.readdirSync(historyDir).filter(f => f.endsWith('.json'));
+        for (const hf of histFiles.slice(-2)) {
+          const hist = JSON.parse(fs.readFileSync(path.join(historyDir, hf), 'utf8'));
+          (hist.tasks || [])
+            .filter(t => (t.projectId || 'default') === pid)
+            .forEach(t => doneSummaries.push(`${t.type}: ${(t.prompt || '').slice(0, 40)}`));
+        }
+      }
+    } catch { /* ignore */ }
+
+    const processingMsg = await message.reply(`🔍 **Project Plan を分析中...**\n\`${pid}\``);
+
+    const planner = require('./utils/project-planner.js');
+    const plan    = planner.planProjectGoals(pid, {
+      description: description + '\n' + project.goal || '',
+      docs:        docsSummary,
+      doneTasks:   doneSummaries,
+    });
+
+    // スマホ向け表示を構築
+    const gapLines = plan.gaps.slice(0, 5)
+      .map((g, i) => `${i + 1}. ${g}`).join('\n') || '（なし）';
+
+    const candidateLines = plan.nextCandidates.slice(0, 5)
+      .map((c, i) => `${i + 1}. [${c.type}/${c.priority}] ${c.title}\n   理由: ${c.reason}`)
+      .join('\n') || '（なし）';
+
+    const reply =
+      `📋 **Project Plan**\n` +
+      `Project: **${project.name}** (\`${pid}\`)\n\n` +
+      `**不足と推定:**\n${gapLines}\n\n` +
+      `**次タスク候補:**\n${candidateLines}\n\n` +
+      `登録する場合:\n` +
+      `\`\`\`\n!project plan apply\n\`\`\``;
+
+    await processingMsg.edit(reply.slice(0, 1900));
+    return;
+  }
+
   // 不明なサブコマンド
   await message.reply(
-    '**使い方**\n```\n!project current\n!project list\n!project create <名前>\n!project switch <名前>\n```'
+    '**使い方**\n```\n!project current\n!project list\n!project create <名前>\n!project switch <名前>\n!project plan\n!project runner status|on|off|reset\n```'
   );
 }
 
