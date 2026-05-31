@@ -31,6 +31,7 @@
 //   !task list/stats/done/hold/resume  タスク管理
 //   !meeting <議題>         AI チーム会議
 //   !batch                  ナイトバッチ手動実行
+//   !train                  AI予測モデルの手動トレーニング
 //   !apply-review <taskId>  Codex回答を Claude にフィードバック
 //   !create-pr <taskId>     指定タスクの PR を手動作成
 //   !history [taskId]       レビュー履歴を表示
@@ -76,6 +77,10 @@ const fmt = require('./utils/formatter');
 // ─── Phase5 ユーティリティ ───
 const taskQueue      = require('./utils/task-queue');
 const restartManager = require('./utils/restart-manager');
+
+// ─── AI 予測モデル ───
+const aiTrainer   = require('./utils/ai-predictor-trainer');
+const aiPredictor = require('./utils/ai-predictor');
 
 // ─── Approval（承認管理）───
 const approvalManager = require('./utils/approval-manager');
@@ -508,6 +513,11 @@ async function handleHelp(message) {
       {
         name: '!batch',
         value: 'ナイトバッチを今すぐ手動実行します',
+        inline: false,
+      },
+      {
+        name: '!train',
+        value: 'AI 予測モデルを手動でトレーニングします\n`data/history/` のアーカイブデータを分析してウェイトを更新します',
         inline: false,
       },
       {
@@ -3058,6 +3068,76 @@ function enqueueAndWait(taskId, execute) {
 }
 
 // ─────────────────────────────────────────────────────
+// handleAutoTimeoutSplit — Auto Split 共通ロジック (Phase E-3)
+//
+// handleAutoOn() と handleAutoRun() の両方で使用する。
+// IN_PROGRESS のまま残ったタスクを判定し、必要なら autoSplitOnTimeout() を呼ぶ。
+//
+// 対象条件:
+//   - task.state === IN_PROGRESS
+//   - type: IMPLEMENT / FIX / REFACTOR / TEST
+//   - policy: AUTO_SAFE または AI_REVIEW_REQUIRED
+//   - BLOCKED / HUMAN_APPROVAL_REQUIRED はsplitしない
+//
+// 引数:
+//   message      - Discord message オブジェクト
+//   task         - 完了後に確認するタスクオブジェクト
+//   contextLabel - ログ識別用ラベル（'AUTO-ON' / 'AUTO-RUN' 等）
+//
+// 戻り値:
+//   'split_ok'      - 分割成功（handleAutoOn では continue）
+//   'timeout_limit' - 2回目タイムアウト（handleAutoOn では break）
+//   'no_split'      - 対象外 or 分割不可（通常停止へフォールスルー）
+// ─────────────────────────────────────────────────────
+const AUTO_SPLIT_TASK_TYPES = new Set(['IMPLEMENT', 'FIX', 'REFACTOR', 'TEST']);
+
+async function handleAutoTimeoutSplit({ message, task, contextLabel = 'AUTO' }) {
+  if (!task || task.state !== taskManager.STATES.IN_PROGRESS) {
+    return 'no_split';
+  }
+
+  const splitPolicy = autoPolicy.classifyTask(task, {});
+  const canAttemptSplit =
+    AUTO_SPLIT_TASK_TYPES.has(String(task.type || '').toUpperCase()) &&
+    (splitPolicy === autoPolicy.AUTO_POLICY.AUTO_SAFE ||
+     splitPolicy === autoPolicy.AUTO_POLICY.AI_REVIEW_REQUIRED);
+
+  if (!canAttemptSplit) {
+    logger.info(`[${contextLabel}] Auto Split スキップ: policy=${splitPolicy} type=${task.type}`);
+    return 'no_split';
+  }
+
+  const splitResult = taskManager.autoSplitOnTimeout(task.id);
+
+  if (splitResult.ok) {
+    logger.info(`[${contextLabel}] Auto Split: ${task.id} → ${splitResult.newTasks.length}件`);
+    await message.channel.send(
+      `⏱️ **タイムアウト → Auto Split**\n` +
+      `タスク: \`${task.id}\` [${task.type}]\n` +
+      `→ ${splitResult.newTasks.length}件の小タスクに分割して続行します。\n` +
+      splitResult.newTasks.map(t =>
+        `\`${t.id}\`: ${(t.prompt || '').slice(0, 45)}`
+      ).join('\n')
+    ).catch(() => {});
+    return 'split_ok';
+  }
+
+  if (splitResult.reason === 'timeout_limit') {
+    logger.warn(`[${contextLabel}] timeout_limit: ${task.id}`);
+    await message.channel.send(
+      `🛑 **タイムアウト2回目 → 人間確認が必要**\n` +
+      `タスク: \`${task.id}\` [${task.type}]\n` +
+      `同一タスク系統で2回タイムアウトしました。内容を確認してください。`
+    ).catch(() => {});
+    return 'timeout_limit';
+  }
+
+  // unsplittable / unsplittable_type 等 → 通常停止へ
+  logger.info(`[${contextLabel}] Auto Split 不可: ${splitResult.reason} | ${task.id}`);
+  return 'no_split';
+}
+
+// ─────────────────────────────────────────────────────
 // !auto on — Auto Task Runner Phase E-1（最大 AUTO_MAX_TASKS 件を順次自動実行）
 //
 // prepareNextTask() / executeClaudeTask() / enqueueAndWait を再利用。
@@ -3280,6 +3360,21 @@ async function handleAutoOn(message) {
       break;
     } else {
       // エラー or 予期しない状態（IN_PROGRESS のままなど）
+      // Phase E-3: handleAutoTimeoutSplit() で Auto Split 判定（共通ロジック）
+      const splitAction = await handleAutoTimeoutSplit({
+        message, task: finalTask, contextLabel: 'AUTO-ON',
+      });
+
+      if (splitAction === 'split_ok') {
+        continue; // ループ先頭へ戻り分割タスクを実行
+      }
+      if (splitAction === 'timeout_limit') {
+        failed++;
+        stopReason = 'タイムアウト2回 → 人間確認が必要';
+        break;
+      }
+      // 'no_split' → 通常停止へフォールスルー
+
       failed++;
       stopReason = `実行エラー（状態: ${finalTask.state}）`;
       logger.warn(`[AUTO-ON] 予期しない状態で停止: ${next.id} → ${finalTask.state}`);
@@ -3429,13 +3524,26 @@ async function handleAutoRun(message, args) {
     taskWorkspace, refTaskId: null, source: 'auto',
   });
 
-  const queuePos = taskQueue.enqueue(next.id, autoExecuteTask);
-  if (queuePos > 0) {
+  // キュー位置を先に確認してメッセージ（enqueueAndWait に切り替える前に表示）
+  const pendingBefore = taskQueue.pendingCount;
+  if (pendingBefore > 0) {
     await message.reply(
-      `📋 **キューに追加しました（待機 ${queuePos} 番目）**\n` +
-      `\`${next.id}\` は ${taskQueue.activeCount} 件の処理完了後に自動実行されます。\n` +
+      `📋 **キューに追加しました（待機 ${pendingBefore + 1} 番目）**\n` +
+      `\`${next.id}\` は処理完了後に自動実行されます。\n` +
       `\`!queue\` でキュー状況を確認できます。`
     ).catch(() => {});
+  }
+
+  // Phase E-3修正: fire-and-forget から完了待ちに変更
+  // enqueueAndWait() で完了を待ち、タイムアウト検出 → autoSplitOnTimeout() を呼べるようにする
+  await enqueueAndWait(next.id, autoExecuteTask);
+
+  // Phase E-3: 完了後 finalTask.state 確認 → Auto Split（共通ロジック）
+  const finalTaskAR = taskManager.getTask(next.id);
+  if (finalTaskAR) {
+    await handleAutoTimeoutSplit({
+      message, task: finalTaskAR, contextLabel: 'AUTO-RUN',
+    });
   }
 }
 
@@ -3466,6 +3574,63 @@ async function handleBatch(message) {
   } catch (error) {
     logger.error(`!batch エラー: ${error.message}`);
     await processingMsg.edit(`❌ **バッチ実行に失敗しました**\n${error.message.slice(0, 500)}`);
+  }
+}
+
+// ─────────────────────────────────────────────────────
+// !train コマンド — AI 予測モデルを手動でトレーニング
+// ─────────────────────────────────────────────────────
+async function handleTrain(message) {
+  const processingMsg = await message.reply('🤖 **AI 予測モデル トレーニング中...**');
+
+  try {
+    const result = aiTrainer.train();
+
+    if (result.skipped) {
+      const reasonLabel = result.reason === 'no_data'
+        ? 'アーカイブデータなし（`data/history/` が空）'
+        : result.reason;
+      await processingMsg.edit(
+        `⭕ **トレーニングをスキップしました**\n\n理由: ${reasonLabel}\n\n` +
+        `タスクが完了するとアーカイブが蓄積されます。`
+      );
+      return;
+    }
+
+    aiPredictor.reloadWeights();
+
+    const stats   = aiTrainer.getStats();
+    const accLine = stats?.accuracy?.avgTimeAccuracy !== null && stats?.accuracy?.avgTimeAccuracy !== undefined
+      ? `⏱️ 時間推定精度: **${(stats.accuracy.avgTimeAccuracy * 100).toFixed(1)}%**`
+      : '⏱️ 時間推定精度: N/A（データ不足）';
+    const succAccLine = stats?.accuracy?.avgSuccessAccuracy !== null && stats?.accuracy?.avgSuccessAccuracy !== undefined
+      ? `🎯 成功率予測精度: **${(stats.accuracy.avgSuccessAccuracy * 100).toFixed(1)}%**`
+      : '🎯 成功率予測精度: N/A（データ不足）';
+
+    const typeLines = Object.entries(result.typeReport || {}).map(([type, r]) => {
+      const adjSign = r.successAdj >= 0 ? '+' : '';
+      return `> **${type}** — n=${r.samples} | 成功確率補正: ${adjSign}${r.successAdj}% | 時間乗数: ×${r.timeMult}`;
+    });
+
+    const lines = [
+      `✅ **AI 予測モデル トレーニング完了**`,
+      ``,
+      `📊 サンプル数: **${result.sampleCount}件**`,
+      accLine,
+      succAccLine,
+      ``,
+      typeLines.length > 0 ? `**タイプ別結果:**\n${typeLines.join('\n')}` : '（タイプ別データなし）',
+      ``,
+      `ウェイトは \`data/predictor-weights.json\` に保存されました。`,
+      `次回の予測から新しいウェイトが反映されます。`,
+    ];
+
+    await processingMsg.edit(lines.join('\n'));
+    logger.info(`[Train] 手動トレーニング完了 | samples:${result.sampleCount}`);
+
+  } catch (error) {
+    logger.error(`!train エラー: ${error.message}`);
+    await processingMsg.edit(`❌ **トレーニングに失敗しました**\n${error.message.slice(0, 300)}`);
   }
 }
 
@@ -3969,6 +4134,11 @@ client.on('messageCreate', async (message) => {
 
   if (content === '!batch') {
     await handleBatch(message);
+    return;
+  }
+
+  if (content === '!train') {
+    await handleTrain(message);
     return;
   }
 

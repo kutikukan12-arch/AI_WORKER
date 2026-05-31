@@ -1045,6 +1045,9 @@ function getResumeCandidates(projectId, options = {}) {
         if (t.projectId !== projectId)      return false;
         if (t.state !== tm.STATES.ON_HOLD)  return false;
         if ((t.size || '').toUpperCase() === 'LARGE') return false;
+        // Phase E-3: split由来タスク（rootTaskId あり）は Auto Resume 対象外
+        // 分割タスクは prepareNextTask() が PENDING から自動的に拾う
+        if (t.rootTaskId) return false;
 
         // policy チェック（BLOCKED / HUMAN_APPROVAL_REQUIRED は除外）
         const policy = classifyTask(t, {});

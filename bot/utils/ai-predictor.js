@@ -16,7 +16,35 @@
 // 依存: logger.js のみ（外部 API 不使用）
 // =====================================================
 
+const fs   = require('fs');
+const path = require('path');
 const logger = require('./logger');
+
+// ─────────────────────────────────────────────────────
+// 学習済みウェイトのキャッシュロード
+// ai-predictor-trainer.js が data/predictor-weights.json を更新した後、
+// reloadWeights() を呼ぶことでキャッシュを破棄して再ロードできる。
+// ─────────────────────────────────────────────────────
+const WEIGHTS_FILE = path.join(__dirname, '..', '..', 'data', 'predictor-weights.json');
+let _cachedWeights = null;
+
+function _loadWeights() {
+  if (_cachedWeights !== null) return _cachedWeights;
+  try {
+    if (fs.existsSync(WEIGHTS_FILE)) {
+      _cachedWeights = JSON.parse(fs.readFileSync(WEIGHTS_FILE, 'utf8'));
+      logger.debug(`[Predictor] 学習済みウェイト読み込み (samples:${_cachedWeights.sampleCount})`);
+    }
+  } catch (e) {
+    logger.warn(`[Predictor] ウェイト読み込み失敗: ${e.message}`);
+  }
+  return _cachedWeights || {};
+}
+
+function reloadWeights() {
+  _cachedWeights = null;
+  return _loadWeights();
+}
 
 // ─────────────────────────────────────────────────────
 // 担当 AI の重み付きシグナルテーブル
@@ -158,6 +186,12 @@ function predictAIRouting(prompt, taskType = 'IMPLEMENT', output = '') {
     scores['Claude Code'] = (scores['Claude Code'] || 0) + 1;
   }
 
+  // 学習済みルーティング補正を適用
+  const routingAdj = _loadWeights().routingAdjustments || {};
+  for (const ai of Object.keys(scores)) {
+    scores[ai] = Math.round(scores[ai] * (routingAdj[ai] || 1.0) * 10) / 10;
+  }
+
   // 推奨 AI を決定（スコア最大）
   const sorted     = Object.entries(scores).sort((a, b) => b[1] - a[1]);
   const [best, bestScore]   = sorted[0];
@@ -202,7 +236,9 @@ function predictTaskOutcome(prompt, taskType = 'IMPLEMENT', taskSize = 'MEDIUM')
   const base = (TYPE_BASE[taskType] || DEFAULT_TYPE_BASE).successBase;
   const text = (prompt || '').slice(0, 1500);
 
-  let score = base;
+  // 学習済み成功確率補正を適用
+  const successAdj = (_loadWeights().typeSuccessAdjustments || {})[taskType] || 0;
+  let score = base + successAdj;
   const risks   = [];
   const bonuses = [];
 
@@ -260,8 +296,10 @@ function predictCompletionTime(taskType = 'IMPLEMENT', taskSize = 'MEDIUM') {
   const base = TYPE_BASE[taskType] || DEFAULT_TYPE_BASE;
   const mult = SIZE_TIME_MULTIPLIER[taskSize] || 1.0;
 
-  const estimateMin = Math.round(base.timeMin * mult);
-  const estimateMax = Math.round(base.timeMax * mult);
+  // 学習済み時間乗数を適用
+  const trainedMult = (_loadWeights().typeTimeMultipliers || {})[taskType] || 1.0;
+  const estimateMin = Math.round(base.timeMin * mult * trainedMult);
+  const estimateMax = Math.round(base.timeMax * mult * trainedMult);
 
   logger.info(
     `[Predictor] CompletionTime: ${estimateMin}〜${estimateMax}min | ` +
@@ -345,4 +383,5 @@ module.exports = {
   predictTaskOutcome,
   predictCompletionTime,
   buildPredictionSummary,
+  reloadWeights,
 };

@@ -206,6 +206,11 @@ function createTask(prompt, discordUserId, taskId = null, dangerLevel = '低', p
     codexResult:   null,
     prUrl:         null,
     notes:         '',
+    // ─── Phase E-3: Timeout Auto Split 管理フィールド ───
+    rootTaskId:   null,   // split由来タスクの場合、root taskのID。rootなら null
+    childTasks:   [],     // auto-split で生成した子タスクID一覧（rootのみ有効）
+    timeoutCount: 0,      // タイムアウト発生回数（rootTaskId===null のタスクのみ実体）
+    splitCount:   0,      // auto-split 実行回数（rootのみ）
   };
 
   tasks.push(task);
@@ -241,6 +246,10 @@ function updateState(taskId, newState, note = '') {
     const remaining = tasks.filter(t => t.id !== taskId);
     saveTasks(remaining);
     logger.info(`タスク完了・アーカイブ: ${taskId}`);
+    // Phase E-3: 子タスクが完了した場合、親（root）の自動DONE を確認
+    if (task.rootTaskId) {
+      checkAndAutoCompleteRoot(task.rootTaskId);
+    }
     return task;
   }
 
@@ -566,6 +575,194 @@ function generateSplitProposals(prompt) {
 }
 
 // ─────────────────────────────────────────────────────
+// Phase E-3: isTaskDoneOrArchived(taskId)
+//
+// タスクがDONE済みかどうかを安全に判定する。
+// 「findTask(childId) === null」だけではDONE扱いしない。
+// active tasks.json と history（アーカイブ）の両方を確認する。
+// ─────────────────────────────────────────────────────
+function historyContainsDone(taskId) {
+  if (!fs.existsSync(HISTORY_DIR)) return false;
+  try {
+    const files = fs.readdirSync(HISTORY_DIR).filter(f => f.endsWith('.json'));
+    for (const f of files) {
+      try {
+        const h = JSON.parse(fs.readFileSync(path.join(HISTORY_DIR, f), 'utf8'));
+        if ((h.tasks || []).some(t => t.id === taskId)) return true;
+      } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
+  return false;
+}
+
+function isTaskDoneOrArchived(taskId) {
+  const active = getTask(taskId);
+  if (active) return active.state === STATES.DONE;
+  // active に存在しない → DONE でアーカイブされているか確認
+  return historyContainsDone(taskId);
+}
+
+// ─────────────────────────────────────────────────────
+// Phase E-3: checkAndAutoCompleteRoot(rootTaskId)
+//
+// root タスクの全 childTasks が DONE/archived になったとき、
+// root 自体を自動 DONE にする。
+// ─────────────────────────────────────────────────────
+function checkAndAutoCompleteRoot(rootTaskId) {
+  try {
+    const root = getTask(rootTaskId);
+    if (!root) return; // root が既にアーカイブ済みなら不要
+    if (root.state === STATES.DONE) return;
+
+    const children = root.childTasks || [];
+    if (children.length === 0) return;
+
+    const allDone = children.every(childId => isTaskDoneOrArchived(childId));
+    if (allDone) {
+      logger.info(`[TaskManager] root 自動DONE: ${rootTaskId} (child全完了)`);
+      updateState(rootTaskId, STATES.DONE, 'child tasks 全完了 → 自動DONE');
+    }
+  } catch (e) {
+    logger.warn(`[TaskManager] checkAndAutoCompleteRoot エラー: ${e.message}`);
+  }
+}
+
+// ─────────────────────────────────────────────────────
+// Phase E-3: incrementRootTimeoutCount(taskId)
+//
+// タスク自身またはその root の timeoutCount をインクリメントして返す。
+// split由来タスク(rootTaskId あり)は root を辿って更新する。
+// ─────────────────────────────────────────────────────
+function incrementRootTimeoutCount(taskId) {
+  try {
+    const tasks  = loadTasks();
+    const task   = tasks.find(t => t.id === taskId);
+    if (!task) return 0;
+
+    const rootId = task.rootTaskId || task.id;
+    const root   = tasks.find(t => t.id === rootId);
+    if (!root) return 0;
+
+    root.timeoutCount = (root.timeoutCount || 0) + 1;
+    root.updatedAt    = new Date().toISOString();
+    saveTasks(tasks);
+    return root.timeoutCount;
+  } catch (e) {
+    logger.warn(`[TaskManager] incrementRootTimeoutCount エラー: ${e.message}`);
+    return 0;
+  }
+}
+
+// ─────────────────────────────────────────────────────
+// Phase E-3: autoSplitOnTimeout(taskId)
+//
+// タイムアウト発生タスクを自動分割する。元タスクは ON_HOLD（DONE にしない）。
+// 既存 splitTask() とは異なり:
+//   - 元タスクを ON_HOLD にとどめる（復帰可能）
+//   - childTasks / rootTaskId を設定する
+//   - root 系統の timeoutCount を管理する
+//
+// 対象: IMPLEMENT / FIX / REFACTOR / TEST
+// 禁止: LARGE / timeoutCount>=2 / 分割不可 (proposals<2)
+//
+// 戻り値:
+//   { ok: true, original, newTasks }  — 分割成功
+//   { ok: false, reason }             — 'timeout_limit'|'unsplittable'|'not_found'
+// ─────────────────────────────────────────────────────
+const SPLIT_TARGET_TYPES = new Set(['IMPLEMENT', 'FIX', 'REFACTOR', 'TEST']);
+
+function autoSplitOnTimeout(taskId) {
+  // H2修正: タイプ・proposals チェックを先に行い、split確定後に timeoutCount をインクリメント
+  const tasks    = loadTasks();
+  const original = tasks.find(t => t.id === taskId);
+  if (!original) return { ok: false, reason: 'not_found' };
+
+  // タイプチェック（count 消費前に確認）
+  const taskType = String(original.type || '').toUpperCase();
+  if (!SPLIT_TARGET_TYPES.has(taskType)) {
+    return { ok: false, reason: `unsplittable_type: ${taskType}` };
+  }
+
+  // 分割案を生成（count 消費前に確認）
+  const proposals = generateSplitProposals(original.prompt);
+  if (proposals.length < 2) {
+    return { ok: false, reason: 'unsplittable' };
+  }
+
+  // 上記チェックをパスした場合のみ timeoutCount をインクリメント
+  const newCount = incrementRootTimeoutCount(taskId);
+  if (newCount >= 2) {
+    logger.warn(`[TaskManager] autoSplitOnTimeout: timeoutCount=${newCount} >= 2, 停止 | ${taskId}`);
+    return { ok: false, reason: 'timeout_limit' };
+  }
+
+  // incrementRootTimeoutCount が saveTasks() したため、再ロードして最新状態を取得
+  const tasks2    = loadTasks();
+  const original2 = tasks2.find(t => t.id === taskId);
+  if (!original2) return { ok: false, reason: 'not_found' };
+
+  // root ID を確定（自分がrootか、split由来かで異なる）— 再ロード後の tasks2 を使う
+  const rootId = original2.rootTaskId || original2.id;
+  const root   = tasks2.find(t => t.id === rootId);
+
+  const now = new Date().toISOString();
+
+  // 分割タスクを生成（MEDIUM 上限）
+  const newTasks = proposals.map((p, i) => {
+    const rawSize  = estimateTaskSize(p);
+    const safeSize = rawSize === TASK_SIZES.LARGE ? TASK_SIZES.MEDIUM : rawSize;
+    return {
+      id:             `${rootId}_s${(root ? (root.childTasks || []).length : 0) + i + 1}`,
+      type:           original2.type || TASK_TYPES.IMPLEMENT,
+      size:           safeSize,
+      projectId:      original2.projectId || 'default',
+      prompt:         p.slice(0, 500),
+      state:          STATES.PENDING,
+      priority:       original2.priority     || '中',
+      priorityReason: `auto-split (${rootId} タイムアウト)`,
+      dangerLevel:    original2.dangerLevel  || '低',
+      assignee:       original2.assignee     || 'Claude Code',
+      requestedBy:    original2.requestedBy  || '',
+      createdAt:      now,
+      updatedAt:      now,
+      stateHistory:   [{ state: STATES.PENDING, at: now, note: `auto-split from ${rootId}` }],
+      reviewResult:   null,
+      codexResult:    null,
+      prUrl:          null,
+      notes:          `auto-split 由来 (root: ${rootId})`,
+      rootTaskId:     rootId,   // root を指す
+      childTasks:     [],
+      timeoutCount:   0,        // 子は持たない（rootが管理）
+      splitCount:     0,
+    };
+  });
+
+  // 元タスク → ON_HOLD（DONE にしない）
+  original2.state     = STATES.ON_HOLD;
+  original2.updatedAt = now;
+  original2.stateHistory.push({ state: STATES.ON_HOLD, at: now, note: 'auto-split: タイムアウト' });
+  original2.splitCount = (original2.splitCount || 0) + 1;
+
+  // H1修正: root の childTasks を更新。
+  //   root === original2（自身がroot）の場合は childTasks のみ更新し、
+  //   splitCount は original2 で既にインクリメント済みのため二重加算しない。
+  if (root) {
+    root.childTasks = [...(root.childTasks || []), ...newTasks.map(t => t.id)];
+    root.updatedAt  = now;
+    if (root !== original2) {
+      // split由来タスクがタイムアウトした場合: root は別タスクなので splitCount++ する
+      root.splitCount = (root.splitCount || 0) + 1;
+    }
+  }
+
+  // tasks.json 保存（元タスクの更新 + 新タスクの追加）
+  saveTasks([...tasks2, ...newTasks]);
+
+  logger.info(`[TaskManager] autoSplitOnTimeout: ${taskId} → ${newTasks.map(t => t.id).join(', ')}`);
+  return { ok: true, original, newTasks };
+}
+
+// ─────────────────────────────────────────────────────
 // タスクを複数の小さいタスクに分割する（!task split 用）
 //
 // 動作:
@@ -888,4 +1085,10 @@ module.exports = {
   getStats,
   cleanupStaleTasks,
   archiveStaleTasks,
+  // Phase E-3
+  isTaskDoneOrArchived,
+  historyContainsDone,
+  checkAndAutoCompleteRoot,
+  incrementRootTimeoutCount,
+  autoSplitOnTimeout,
 };
