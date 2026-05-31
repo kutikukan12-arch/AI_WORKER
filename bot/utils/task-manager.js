@@ -348,7 +348,15 @@ const LEASE_DURATION_MS = 10 * 60 * 1000; // 10分（タスク実行最大時間
 function claimNextTask(projectId, ownerId) {
   const tasks   = loadTasks();
   const now     = Date.now();
-  const target  = tasks.find(t =>
+
+  // listTasksByPriority() と同じ優先度順でソートしてから claim 候補を探す。
+  // [...tasks] は同一オブジェクト参照の浅いコピーなので、
+  // target を変更すると tasks 配列内の同じオブジェクトも変更される。
+  const sorted  = [...tasks].sort((a, b) =>
+    priority.toNumber(b.priority) - priority.toNumber(a.priority)
+  );
+
+  const target  = sorted.find(t =>
     t.projectId === projectId &&
     t.state     === STATES.PENDING &&
     // 後方互換: leaseOwner がない既存タスクも候補にする

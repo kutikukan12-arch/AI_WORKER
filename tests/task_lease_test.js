@@ -213,6 +213,80 @@ test('6d. LARGE blocked で releaseLease が呼ばれる', () => {
 });
 
 // ─────────────────────────────────────────────────────
+// 7. 優先度順 claim
+// ─────────────────────────────────────────────────────
+console.log('\n[7. 優先度順 claim]');
+
+// cleanup して専用プロジェクトを空にしてからテスト
+cleanup();
+
+// 明示的に priority を設定したタスクを作成
+const tHighBase = tm.createTask('[E5a-test] high-priority', 'e5a-test', null, '低', pid, 'IMPLEMENT');
+CLEANUP_IDS.push(tHighBase.id);
+tm.updateTask(tHighBase.id, { priority: '高' }); // priority を強制設定
+
+const tLowBase = tm.createTask('[E5a-test] low-priority', 'e5a-test', null, '低', pid, 'IMPLEMENT');
+CLEANUP_IDS.push(tLowBase.id);
+// tLowBase は 低 のまま
+
+test('7a. high > low: 高優先度タスクが先に claim される', () => {
+  const claimed = tm.claimNextTask(pid, 'priority-test');
+  assert.ok(claimed, 'claimed is null');
+  assert.strictEqual(claimed.id, tHighBase.id,
+    `高優先度 (${tHighBase.id}) が先のはず。実際: ${claimed.id}`);
+  info('7a: claimed=' + claimed.id + ' priority=' + claimed.priority);
+  tm.releaseLease(claimed.id);
+});
+
+const tSameA = tm.createTask('[E5a-test] same-priority-A', 'e5a-test', null, '低', pid, 'IMPLEMENT');
+const tSameB = tm.createTask('[E5a-test] same-priority-B', 'e5a-test', null, '低', pid, 'IMPLEMENT');
+CLEANUP_IDS.push(tSameA.id, tSameB.id);
+tm.updateTask(tSameA.id, { priority: '中' });
+tm.updateTask(tSameB.id, { priority: '中' });
+
+test('7b. 同優先度: どちらか一方が claim される（クラッシュしない）', () => {
+  // 7a で tHighBase をリリース済み。tHighBase(高) / tSameA(中) / tSameB(中) / tLowBase(低) がある
+  const claimed = tm.claimNextTask(pid, 'same-priority-test');
+  assert.ok(claimed, 'claimed is null');
+  // tHighBase(高) が返るはず
+  assert.strictEqual(claimed.id, tHighBase.id);
+  info('7b: claimed=' + claimed.id + ' priority=' + claimed.priority);
+  tm.releaseLease(claimed.id);
+});
+
+// ─────────────────────────────────────────────────────
+// 8. leaseOwner あり（有効期限内）はスキップ
+// ─────────────────────────────────────────────────────
+console.log('\n[8. leaseOwner ありタスクのスキップ]');
+
+// 残タスクを全部解放してクリーンにする
+cleanup();
+CLEANUP_IDS.length = 0; // CLEANUP_IDS をリセット
+
+const tLeased = tm.createTask('[E5a-test] leased-first', 'e5a-test', null, '低', pid, 'IMPLEMENT');
+const tFree   = tm.createTask('[E5a-test] free-second',  'e5a-test', null, '低', pid, 'IMPLEMENT');
+CLEANUP_IDS.push(tLeased.id, tFree.id);
+// tLeased を高優先度にして claim 順を確定
+tm.updateTask(tLeased.id, { priority: '高' });
+
+test('8a. lease 済みタスクは別オーナーに claim されない（有効期限内）', () => {
+  // owner-first が tLeased を claim
+  const first = tm.claimNextTask(pid, 'owner-first');
+  assert.ok(first, 'first claim failed');
+  assert.strictEqual(first.id, tLeased.id, `高優先度 tLeased が先のはず。実際: ${first.id}`);
+
+  // tLeased は IN_PROGRESS（有効期限内）→ second claim では tFree が返る
+  const second = tm.claimNextTask(pid, 'owner-second');
+  assert.ok(second, 'second claim failed (tFree should be available)');
+  assert.strictEqual(second.id, tFree.id, `tFree が返るはず。実際: ${second.id}`);
+  assert.notStrictEqual(second.id, tLeased.id, 'lease済みタスクが二重 claim されている');
+  info('8a: first=' + first.id + ' second=' + second.id);
+
+  tm.releaseLease(first.id);
+  tm.releaseLease(second.id);
+});
+
+// ─────────────────────────────────────────────────────
 // クリーンアップ
 // ─────────────────────────────────────────────────────
 cleanup();
