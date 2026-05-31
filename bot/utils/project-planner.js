@@ -497,32 +497,67 @@ async function planProjectGoalsLLM(projectId, input = {}) {
 }
 
 // ─────────────────────────────────────────────────────
-// planProjectGoalsBest(projectId, input) — Phase D-6
+// Phase D-8: planProjectGoalsBest の結果キャッシュ
+//
+// キー: projectId + description の先頭80文字 + docs の先頭40文字
+// TTL:  CACHE_TTL_MS (デフォルト30分)
+// スコープ: プロセス内メモリ（再起動でクリア）
+// ─────────────────────────────────────────────────────
+const plannerCache  = new Map(); // key → { result, expireAt }
+const CACHE_TTL_MS  = 30 * 60 * 1000; // 30分
+
+function _cacheKey(projectId, description, docs) {
+  const d = (description || '').slice(0, 80).replace(/\s+/g, ' ').trim();
+  const k = (docs        || '').slice(0, 40).replace(/\s+/g, ' ').trim();
+  return `${projectId}|${d}|${k}`;
+}
+
+// clearPlannerCache(projectId) — テスト・リセット用
+function clearPlannerCache(projectId) {
+  if (!projectId) { plannerCache.clear(); return; }
+  for (const key of plannerCache.keys()) {
+    if (key.startsWith(`${projectId}|`)) plannerCache.delete(key);
+  }
+}
+
+// ─────────────────────────────────────────────────────
+// planProjectGoalsBest(projectId, input) — Phase D-6/D-8
 //
 // LLM を優先し、失敗した場合はルールベースへフォールバックする。
-// planProjectGoals() の async 版上位互換。
+// Phase D-8: 結果を30分キャッシュし、同じ入力には再 API 呼び出しをしない。
 //
 // 戻り値:
-//   planProjectGoals() と同じ形式 + source:'llm'|'rule-based'
+//   planProjectGoals() と同じ形式 + source:'llm'|'rule-based' [+ fromCache:true]
 // ─────────────────────────────────────────────────────
 async function planProjectGoalsBest(projectId, input = {}) {
+  const description = (input.description || '').trim();
+  const docs        = (input.docs        || '').trim();
+  const cacheKey    = _cacheKey(projectId, description, docs);
+
+  // キャッシュヒット確認
+  const cached = plannerCache.get(cacheKey);
+  if (cached && Date.now() < cached.expireAt) {
+    logger.debug(`[Planner] D-8 cache hit: ${projectId} (残 ${Math.round((cached.expireAt - Date.now()) / 60000)}分)`);
+    return { ...cached.result, fromCache: true };
+  }
+
   // LLM 試行
   const llmResult = await planProjectGoalsLLM(projectId, input);
 
+  let result;
   if (llmResult) {
-    const description = (input.description || '').trim();
-    const doneTasks   = input.doneTasks || [];
+    const doneTasks = input.doneTasks || [];
     const goals = description
       .split(/[\n\r・\-\*]/).map(l => l.trim()).filter(l => l.length > 5).slice(0, 10);
 
-    return {
+    result = {
       goals,
       implemented:    doneTasks.slice(0, 10),
       gaps:           llmResult.gaps,
       nextCandidates: llmResult.nextCandidates,
       source:         'llm',
       summary:
-        `📊 **Project Goals 分析** (D-6: 🤖 LLM Planner)\n` +
+        `📊 **Project Goals 分析** (D-8: 🤖 LLM Planner)\n` +
         `Project: \`${projectId}\`\n` +
         `目標: ${goals.length}件 | 不足推定: ${llmResult.gaps.length}件\n` +
         (llmResult.nextCandidates.length > 0
@@ -531,20 +566,25 @@ async function planProjectGoalsBest(projectId, input = {}) {
             ).join('\n')
           : ''),
     };
+    // LLM 成功結果をキャッシュ
+    plannerCache.set(cacheKey, { result, expireAt: Date.now() + CACHE_TTL_MS });
+  } else {
+    // ルールベースフォールバック（キャッシュしない — API キーなし環境で stale にならないよう）
+    logger.info(`[Planner] planProjectGoalsBest fallback rule-based: ${projectId}`);
+    const ruleResult = planProjectGoals(projectId, input);
+    result = {
+      ...ruleResult,
+      source:  'rule-based',
+      summary: ruleResult.summary.replace('D-4a: ルールベース', 'D-8: fallback rule-based'),
+    };
   }
 
-  // ルールベースフォールバック
-  logger.info(`[Planner] planProjectGoalsBest fallback rule-based: ${projectId}`);
-  const ruleResult = planProjectGoals(projectId, input);
-  return {
-    ...ruleResult,
-    source:  'rule-based',
-    summary: ruleResult.summary.replace('D-4a: ルールベース', 'D-6: fallback rule-based'),
-  };
+  return result;
 }
 
 module.exports = {
   planNextTask,
+  clearPlannerCache,
   planProjectGoals,
   planProjectGoalsLLM,
   planProjectGoalsBest,

@@ -39,7 +39,51 @@ function defaultState(projectId) {
     pausedAt:           null,
     pauseReason:        null,
     autoApplyPlanning:  false, // Phase D-4e: 自動プラン適用（初期値 false）
+    plannerStats: {            // Phase D-8: LLM 呼び出し統計
+      llmCallCount:       0,  // LLM 呼び出し成功回数
+      fallbackCount:      0,  // rule-based fallback 回数
+      lastPlannerSource:  null, // 'llm' | 'rule-based' | null
+      lastPlannerError:   null, // 最後のエラーメッセージ（あれば）
+      totalEstimatedCost: 0,  // 推定コスト（USD, ~$0.005/LLM呼び出し）
+    },
   };
+}
+
+// ─────────────────────────────────────────────────────
+// Phase D-8: LLM 呼び出し頻度制御
+// デフォルト: LLM_INTERVAL_STEPS ステップに1回のみ LLM を使用
+// ─────────────────────────────────────────────────────
+const LLM_INTERVAL_STEPS = 3; // 3ステップに1回
+
+// ─────────────────────────────────────────────────────
+// updatePlannerStats(projectId, source, errorMsg)
+//
+// LLM/fallback 呼び出し後に plannerStats を更新する。
+// source: 'llm' | 'rule-based'
+// ─────────────────────────────────────────────────────
+function updatePlannerStats(projectId, source, errorMsg) {
+  try {
+    const state  = getRunnerState(projectId);
+    const stats  = { ...(state.plannerStats || {}) };
+    // 欠落フィールドを補完
+    if (!stats.llmCallCount)       stats.llmCallCount       = 0;
+    if (!stats.fallbackCount)      stats.fallbackCount      = 0;
+    if (!stats.totalEstimatedCost) stats.totalEstimatedCost = 0;
+
+    if (source === 'llm') {
+      stats.llmCallCount++;
+      // GPT-4o ~$0.005/call (300 input + 200 output tokens 想定)
+      stats.totalEstimatedCost = Math.round((stats.totalEstimatedCost + 0.005) * 1000) / 1000;
+    } else {
+      stats.fallbackCount++;
+    }
+    stats.lastPlannerSource = source;
+    stats.lastPlannerError  = errorMsg || null;
+
+    saveRunnerState(projectId, { plannerStats: stats });
+  } catch (e) {
+    logger.warn(`[AutoRunner] updatePlannerStats エラー: ${e.message}`);
+  }
 }
 
 // ─────────────────────────────────────────────────────
@@ -193,6 +237,12 @@ function formatRunnerStatus(projectId) {
 
   const autoApplyStr = state.autoApplyPlanning ? '✅ ON' : '⛔ OFF';
 
+  // Phase D-8: plannerStats
+  const stats        = state.plannerStats || {};
+  const srcLabel     = stats.lastPlannerSource === 'llm' ? '🤖 LLM' : stats.lastPlannerSource === 'rule-based' ? '📋 rule-based' : '—';
+  const costLabel    = stats.totalEstimatedCost ? `$${stats.totalEstimatedCost.toFixed(3)}` : '$0.000';
+  const errLabel     = stats.lastPlannerError ? stats.lastPlannerError.slice(0, 40) + '…' : 'なし';
+
   const lines = [
     '📊 **Auto Runner Status**',
     '──────────────────────────────',
@@ -204,6 +254,12 @@ function formatRunnerStatus(projectId) {
     `最終タスク:     ${lastTaskInfo}`,
     `Plannerコール:  ${loopInfo}`,
     `生成タスク数:   ${state.totalTasksCreated}件`,
+    ``,
+    `LLM呼出:       ${stats.llmCallCount || 0}回`,
+    `Fallback:      ${stats.fallbackCount || 0}回`,
+    `最終Planner:   ${srcLabel}`,
+    `推定コスト:     ${costLabel}`,
+    `最終エラー:     ${errLabel}`,
     ``,
     `開始時刻:     ${startedStr}`,
     `最終更新:     ${updatedStr}`,
@@ -758,7 +814,7 @@ async function runPlannerStepAsync(projectId, context = {}) {
     }
 
   } else {
-    // ── Phase D-7c: action=none のとき LLM Planner で候補取得 ──────
+    // ── Phase D-7c/D-8: action=none のとき LLM Planner で候補取得 ──
     let nextCandidatesHint = '';
 
     if (plannerResult.action === 'none') {
@@ -769,12 +825,36 @@ async function runPlannerStepAsync(projectId, context = {}) {
         const currentState2 = getRunnerState(projectId);
         const SAFE_TYPES    = new Set(['DOCS', 'RESEARCH', 'TEST']);
 
-        // planProjectGoalsBest: LLM 優先 → rule-based fallback
-        const fullPlan = await require('./project-planner').planProjectGoalsBest(
-          projectId, { description }
-        );
+        // Phase D-8: 頻度制御 — LLM_INTERVAL_STEPS ステップに1回のみ LLM を使用
+        // それ以外のステップは rule-based（コスト削減・高速化）
+        const shouldUseLLM = (nextCount % LLM_INTERVAL_STEPS === 1);
+        let fullPlan;
+        let plannerErr = null;
+        try {
+          if (shouldUseLLM) {
+            fullPlan = await require('./project-planner').planProjectGoalsBest(
+              projectId, { description }
+            );
+          } else {
+            // 頻度制御: rule-based を直接使用（LLM 呼び出しなし）
+            const ruleResult = require('./project-planner').planProjectGoals(projectId, { description });
+            fullPlan = { ...ruleResult, source: 'rule-based' };
+            logger.debug(`[AutoRunner] D-8 頻度制御: step ${nextCount} → rule-based (LLM は ${LLM_INTERVAL_STEPS}ステップに1回)`);
+          }
+        } catch (plannerApiErr) {
+          // LLM/rule-based どちらが失敗しても runner を止めない
+          plannerErr = plannerApiErr.message.slice(0, 80);
+          logger.warn(`[AutoRunner] D-8 planner エラー → rule-based fallback: ${plannerErr}`);
+          const ruleResult = require('./project-planner').planProjectGoals(projectId, { description });
+          fullPlan = { ...ruleResult, source: 'rule-based' };
+        }
+
+        // Phase D-8: 統計更新
+        updatePlannerStats(projectId, fullPlan.source, plannerErr);
+
         const plannerLabel = fullPlan.source === 'llm' ? '🤖 LLM Planner' : '📋 rule-based';
-        logger.info(`[AutoRunner] D-7c plan source: ${plannerLabel} | candidates:${fullPlan.nextCandidates.length} | ${projectId}`);
+        const cacheLabel   = fullPlan.fromCache ? ' (cached)' : '';
+        logger.info(`[AutoRunner] D-8 plan source: ${plannerLabel}${cacheLabel} | candidates:${fullPlan.nextCandidates.length} | ${projectId}`);
 
         if (currentState2.autoApplyPlanning && fullPlan.nextCandidates.length > 0) {
           try {
