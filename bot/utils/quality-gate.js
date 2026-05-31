@@ -78,10 +78,82 @@ function _loadCodexResults(projectId) {
 }
 
 // ─────────────────────────────────────────────────────
+// _isValidationFailure(task)
+//
+// H2: REVIEWING 状態のうち、completion-validator 失敗によるものを識別。
+// stateHistory の最後のエントリが「未完了」を含む場合が validator 失敗。
+// レビュー待ち（AIレビュー等）は正常状態のため RED にしない。
+// ─────────────────────────────────────────────────────
+function _isValidationFailure(task) {
+  const hist = task.stateHistory || [];
+  const last  = hist[hist.length - 1] || {};
+  return (last.note || '').includes('未完了');
+}
+
+// ─────────────────────────────────────────────────────
+// _resolveTaskProject(taskId)
+//
+// M2: taskId から projectId を引く。
+// アクティブ tasks.json → history の順で探す。
+// ─────────────────────────────────────────────────────
+function _resolveTaskProject(taskId) {
+  try {
+    const taskManager = require('./task-manager');
+    const active = taskManager.getTask(taskId);
+    if (active) return active.projectId || 'default';
+    // history から探す
+    if (!fs.existsSync(HISTORY_DIR)) return null;
+    const files = fs.readdirSync(HISTORY_DIR).filter(f => f.endsWith('.json')).slice(-3);
+    for (const f of files) {
+      try {
+        const h = JSON.parse(fs.readFileSync(path.join(HISTORY_DIR, f), 'utf8'));
+        const t = (h.tasks || []).find(x => x.id === taskId);
+        if (t) return t.projectId || 'default';
+      } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────
+// _loadCodexResults(projectId) — M2 修正: projectId でフィルタ
+//
+// result_<taskId>.md のファイル名から taskId を取り出し、
+// そのタスクの projectId を照合して絞り込む。
+// projectId が null の場合は全件返す（後方互換）。
+// ─────────────────────────────────────────────────────
+function _loadCodexResultsByProject(projectId) {
+  const results = [];
+  if (!fs.existsSync(REVIEWS_DIR)) return results;
+  try {
+    const files = fs.readdirSync(REVIEWS_DIR).filter(f => f.startsWith('result_') && f.endsWith('.md'));
+    for (const f of files) {
+      try {
+        // result_<taskId>.md → taskId 抽出
+        const taskId = f.replace(/^result_/, '').replace(/\.md$/, '');
+        if (projectId) {
+          const taskPid = _resolveTaskProject(taskId);
+          if (taskPid && taskPid !== projectId) continue; // 別プロジェクトはスキップ
+        }
+        const content = fs.readFileSync(path.join(REVIEWS_DIR, f), 'utf8');
+        const danger  = _parseResultDanger(content);
+        if (danger) results.push({ file: f, taskId, danger });
+      } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
+  return results;
+}
+
+// ─────────────────────────────────────────────────────
 // gatherIndicators(projectId)
 //
 // プロジェクトの現状指標を収集する。
 // 秘密情報は redact でマスクして返す。
+//
+// H2: REVIEWING は正常なレビュー待ちのため RED トリガ対象外。
+//     completion-validator 失敗（stateNote に「未完了」）のみ RED。
+// M1: 完了済み（history）のエラーは RED に使わない（スコアのみ）。
+// M2: Codex 結果を projectId 単位に絞り込む。
 //
 // 戻り値: indicators オブジェクト
 // ─────────────────────────────────────────────────────
@@ -97,12 +169,15 @@ function gatherIndicators(projectId) {
   const pending       = projTasks.filter(t => t.state === taskManager.STATES.PENDING);
   const inProgress    = projTasks.filter(t => t.state === taskManager.STATES.IN_PROGRESS);
 
-  // ai-review 却下推奨
+  // H2: completion-validator 失敗（REVIEWING かつ stateNote=未完了）のみ RED 対象
+  const validationFailed = reviewing.filter(_isValidationFailure);
+
+  // ai-review 却下推奨（アクティブタスクのみ — M1: history は除外）
   const rejectedReview = projTasks.filter(t =>
     t.reviewResult?.verdict === '却下推奨'
   );
 
-  // errorType AUTH / PERMISSION
+  // errorType AUTH / PERMISSION（アクティブタスクのみ — M1: history は除外）
   const authErrors = projTasks.filter(t =>
     t.errorType === 'AUTH' || t.errorType === 'PERMISSION'
   );
@@ -110,23 +185,17 @@ function gatherIndicators(projectId) {
   // securityBlocked フラグ
   const secBlocked = projTasks.filter(t => t.securityBlocked === true);
 
-  // ─── 履歴タスク集計（直近20件）──────────────────────
+  // ─── 履歴タスク集計（スコア用のみ — M1: history は RED に使わない）─
   const history = _loadRecentHistory(projectId, 20);
   const doneCount    = history.length;
   const failedInHist = history.filter(t =>
     t.errorType || t.state === 'FAILED'
   ).length;
-  const rejectInHist = history.filter(t =>
-    t.reviewResult?.verdict === '却下推奨'
-  ).length;
-  const authInHist   = history.filter(t =>
-    t.errorType === 'AUTH' || t.errorType === 'PERMISSION'
-  ).length;
   const timeoutInHist = history.filter(t => t.errorType === 'TIMEOUT').length;
   const errorRate     = doneCount > 0 ? (failedInHist / doneCount) : 0;
 
-  // ─── Codex 危険度集計（reviews/result_*.md）──────────
-  const codexResults  = _loadCodexResults(projectId);
+  // ─── Codex 危険度集計（M2: projectId 単位）───────────
+  const codexResults  = _loadCodexResultsByProject(projectId);
   const codexHighList = codexResults.filter(r => r.danger === '高');
   const codexMidList  = codexResults.filter(r => r.danger === '中');
 
@@ -138,29 +207,31 @@ function gatherIndicators(projectId) {
 
   logger.debug(
     `[QualityGate] indicators: ${projectId || 'all'} | ` +
-    `reviewing:${reviewing.length} authErr:${authErrors.length + authInHist} ` +
-    `codexHigh:${codexHighList.length} errorRate:${Math.round(errorRate * 100)}%`
+    `reviewing:${reviewing.length} validFail:${validationFailed.length} ` +
+    `authErr:${authErrors.length} codexHigh:${codexHighList.length} ` +
+    `errorRate:${Math.round(errorRate * 100)}%`
   );
 
   return {
-    projectId:          projectId || null,
-    // RED トリガ関連
-    rejectedReviewCount: rejectedReview.length + rejectInHist,
-    authErrorCount:      authErrors.length + authInHist,
-    securityBlockCount:  secBlocked.length,
-    reviewingCount:      reviewing.length,       // REVIEWING = 未完了（completion-validator 不通過）
-    codexHighCount:      codexHighList.length,
+    projectId:              projectId || null,
+    // RED トリガ関連（アクティブタスクのみ / history は含めない）
+    rejectedReviewCount:    rejectedReview.length,    // M1: history 除外
+    authErrorCount:         authErrors.length,         // M1: history 除外
+    securityBlockCount:     secBlocked.length,
+    validationFailedCount:  validationFailed.length,  // H2: validator 失敗のみ
+    reviewingCount:         reviewing.length,          // H2: スコア用（RED ではない）
+    codexHighCount:         codexHighList.length,      // M2: project 単位
     // スコア計算用
     doneCount,
-    failedCount:         failedInHist,
-    timeoutCount:        timeoutInHist,
-    pendingCount:        pending.length,
-    inProgressCount:     inProgress.length,
-    codexMidCount:       codexMidList.length,
+    failedCount:            failedInHist,
+    timeoutCount:           timeoutInHist,
+    pendingCount:           pending.length,
+    inProgressCount:        inProgress.length,
+    codexMidCount:          codexMidList.length,
     errorRate,
     // 表示用
     recentErrors,
-    codexHighFiles:      codexHighList.map(r => r.file),
+    codexHighFiles:         codexHighList.map(r => r.file),
   };
 }
 
@@ -247,7 +318,7 @@ function assessQuality(projectId) {
   }
   if (indicators.authErrorCount > 0) {
     redTriggers.push(
-      `🔴 AUTH/PERMISSION エラーが ${indicators.authErrorCount}件あります`
+      `🔴 AUTH/PERMISSION エラーが ${indicators.authErrorCount}件あります（アクティブ）`
     );
   }
   if (indicators.securityBlockCount > 0) {
@@ -255,9 +326,11 @@ function assessQuality(projectId) {
       `🔴 セキュリティブロックが ${indicators.securityBlockCount}件発生しています`
     );
   }
-  if (indicators.reviewingCount > 0) {
+  // H2: REVIEWING（レビュー待ち）は正常状態のため RED 対象外。
+  //     completion-validator 失敗（stateNote に「未完了」）のみ RED。
+  if (indicators.validationFailedCount > 0) {
     redTriggers.push(
-      `🔴 完了バリデーション未通過（REVIEWING）が ${indicators.reviewingCount}件あります`
+      `🔴 完了バリデーション失敗が ${indicators.validationFailedCount}件あります`
     );
   }
   if (indicators.codexHighCount > 0) {

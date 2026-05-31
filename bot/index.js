@@ -911,6 +911,32 @@ async function handleProjectRun(message, projectId) {
     return;
   }
 
+  // ─── H1: PRE-RUN Quality Gate チェック ────────────────
+  try {
+    const qa = qualityGate.assessQuality(projectId);
+    if (qa.level === 'RED') {
+      await message.reply(
+        `🔴 **Quality Gate: RED — 実行を停止しました**\n\n` +
+        `Project: \`${projectId}\`\n\n` +
+        qa.redTriggers.map(t => `  ${t}`).join('\n') + '\n\n' +
+        `問題を解消してから \`!project run\` を再実行してください。\n` +
+        `詳細: \`!quality status ${projectId}\``
+      ).catch(() => {});
+      return;
+    }
+    if (qa.level === 'YELLOW') {
+      await message.channel.send(
+        `🟡 **Quality Gate: YELLOW — 警告して続行**\n\n` +
+        `Project: \`${projectId}\`\n` +
+        `スコア: ${qa.score}/100\n` +
+        (qa.deductions.length > 0 ? qa.deductions.map(d => `  • ${d}`).join('\n') + '\n' : '') +
+        `\`!quality status ${projectId}\` で詳細を確認できます。`
+      ).catch(() => {});
+    }
+  } catch (qaErr) {
+    logger.warn(`[ProjectRun] Quality Gate チェックエラー（無視して続行）: ${qaErr.message}`);
+  }
+
   // チャンネルの現在プロジェクトを設定（handleAutoOn が getCurrentProject を使うため）
   const prevPid = projectManager.getCurrentProject(message.channelId);
   projectManager.setCurrentProject(message.channelId, projectId);

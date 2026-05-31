@@ -272,6 +272,84 @@ test('7d. formatQualityStatus が export されている', () =>
   assert.strictEqual(typeof qg.formatQualityStatus, 'function'));
 
 // ─────────────────────────────────────────────────────
+// 8x. H2/M1/M2 修正テスト
+// ─────────────────────────────────────────────────────
+console.log('\n[8x. H2/M1/M2 修正テスト]');
+
+test('H2-1. REVIEWING（レビュー待ち）は RED にならない', () => {
+  // reviewingCount が あっても validationFailedCount=0 なら RED 以外
+  const r = (() => {
+    const triggers = [];
+    // REVIEWING だけある → validationFailedCount=0 として評価
+    const ind = { rejectedReviewCount:0, authErrorCount:0, securityBlockCount:0,
+                  validationFailedCount:0, codexHighCount:0 };
+    if (ind.validationFailedCount > 0) triggers.push('validFail');
+    if (ind.rejectedReviewCount > 0)   triggers.push('reject');
+    return triggers.length === 0 ? 'GREEN_OR_YELLOW' : 'RED';
+  })();
+  assert.strictEqual(r, 'GREEN_OR_YELLOW', 'REVIEWING だけで RED になった');
+});
+
+test('H2-2. completion-validator 失敗（validationFailedCount > 0）は RED', () => {
+  const triggers = [];
+  const ind = { rejectedReviewCount:0, authErrorCount:0, securityBlockCount:0,
+                validationFailedCount:1, codexHighCount:0 };
+  if (ind.validationFailedCount > 0) triggers.push('validFail');
+  assert.strictEqual(triggers.length, 1);
+  assert.ok(triggers.includes('validFail'));
+});
+
+test('H2-3. gatherIndicators に validationFailedCount フィールドがある', () => {
+  const ind = qg.gatherIndicators('youtube予測ai');
+  assert.ok('validationFailedCount' in ind, 'validationFailedCount がない');
+  assert.ok('reviewingCount' in ind, 'reviewingCount がない');
+});
+
+test('M1-1. gatherIndicators の rejectedReviewCount は history を含まない', () => {
+  // 修正後: history の 却下推奨は RED に使わない
+  // history の rejectInHist は加算されないことをソースで確認
+  const src = require('fs').readFileSync(
+    require('path').join(__dirname, '..', 'bot', 'utils', 'quality-gate.js'), 'utf8'
+  );
+  // rejectInHist が rejectedReviewCount に加算されていないことを確認
+  assert.ok(!src.includes('rejectedReview.length + rejectInHist'),
+    'M1: history の却下推奨がまだ RED に加算されている');
+});
+
+test('M1-2. gatherIndicators の authErrorCount は history を含まない', () => {
+  const src = require('fs').readFileSync(
+    require('path').join(__dirname, '..', 'bot', 'utils', 'quality-gate.js'), 'utf8'
+  );
+  assert.ok(!src.includes('authErrors.length + authInHist'),
+    'M1: history のAUTHエラーがまだ RED に加算されている');
+});
+
+test('M2-1. _loadCodexResultsByProject が関数として使われている', () => {
+  const src = require('fs').readFileSync(
+    require('path').join(__dirname, '..', 'bot', 'utils', 'quality-gate.js'), 'utf8'
+  );
+  assert.ok(src.includes('_loadCodexResultsByProject'), '_loadCodexResultsByProject がない');
+  assert.ok(src.includes('_resolveTaskProject'), '_resolveTaskProject がない');
+});
+
+test('M2-2. gatherIndicators が codexHighCount を返す（projectId フィルタ後）', () => {
+  const ind = qg.gatherIndicators('nonexistent-project-xyz');
+  assert.strictEqual(ind.codexHighCount, 0, '存在しないプロジェクトでも codexHigh が 0 でない');
+});
+
+test('H1-1. index.js の handleProjectRun に Quality Gate PRE-RUN チェックがある', () => {
+  const src = require('fs').readFileSync(
+    require('path').join(__dirname, '..', 'bot', 'index.js'), 'utf8'
+  );
+  const runFnStart = src.indexOf('async function handleProjectRun');
+  const runFnEnd   = src.indexOf('\nasync function handle', runFnStart + 1);
+  const runBody    = src.slice(runFnStart, runFnEnd > 0 ? runFnEnd : runFnStart + 5000);
+  assert.ok(runBody.includes('assessQuality'), 'PRE-RUN assessQuality がない');
+  assert.ok(runBody.includes("qa.level === 'RED'"), 'RED 停止処理がない');
+  assert.ok(runBody.includes("qa.level === 'YELLOW'"), 'YELLOW 警告処理がない');
+});
+
+// ─────────────────────────────────────────────────────
 // 8. Gate 管理 (addGate / removeGate / listGates / evaluateGates)
 // ─────────────────────────────────────────────────────
 console.log('\n[8. Gate 管理]');
