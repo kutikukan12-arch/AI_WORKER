@@ -2120,6 +2120,7 @@ async function executeClaudeTask({
       null,
       taskStartMs,
       taskType,
+      prompt,
     );
 
     if (!validation.ok) {

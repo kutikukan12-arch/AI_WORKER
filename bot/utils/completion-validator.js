@@ -109,6 +109,45 @@ const IMPLEMENTATION_SIGNALS = [
 ];
 
 // ─────────────────────────────────────────────────────
+// Git診断結果を示すパターン
+// OPS タスクでコード変更0件でも完了とみなすための証拠
+// ─────────────────────────────────────────────────────
+const GIT_DIAGNOSTIC_PATTERNS = [
+  /On branch\s+\S+/,
+  /HEAD detached at/i,
+  /nothing to commit/i,
+  /Changes not staged for commit/i,
+  /Changes to be committed/i,
+  /Your branch is (?:up to date|ahead|behind)/i,
+  /Everything up-to-date/i,
+  /remote:\s+\S/,
+  /fatal:.*(?:not a git|repository)/i,
+  /error:.*failed to push/i,
+  /\[(?:master|main|develop|HEAD)[^\]]*\]/,
+  /push.*(?:success|reject|denied|error)/i,
+];
+
+// ─────────────────────────────────────────────────────
+// reports/research_*.md または reviews/result_*.md の
+// タスク開始後の生成を確認する
+// ─────────────────────────────────────────────────────
+function findRecentlyCreatedReport(repoPath, sinceMs) {
+  const checks = [
+    { dir: path.join(repoPath, 'reports'), re: /^research_.*\.(md|txt|json)$/ },
+    { dir: path.join(repoPath, 'reviews'), re: /^result_.*\.(md|txt|json)$/ },
+  ];
+  for (const { dir, re } of checks) {
+    try {
+      for (const f of fs.readdirSync(dir)) {
+        if (!re.test(f)) continue;
+        if (fs.statSync(path.join(dir, f)).mtimeMs >= sinceMs) return f;
+      }
+    } catch { /* dir が存在しない場合はスキップ */ }
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────
 // git diff --name-only で変更ファイルを取得
 // ─────────────────────────────────────────────────────
 function getChangedFilesFromGit(repoPath) {
@@ -333,6 +372,22 @@ function buildValidationSummary(result) {
 //   - 質問文で終わる
 // ─────────────────────────────────────────────────────
 const NON_IMPLEMENT_MIN_LENGTH = 200; // 調査/設計/レビュー結果の最低文字数
+const NON_CODE_CHANGE_TYPES = new Set(['RESEARCH', 'DESIGN', 'REVIEW', 'DOCS', 'OPS']);
+const CODE_CHANGE_REQUIRED_TYPES = new Set(['IMPLEMENT', 'FIX', 'REFACTOR']);
+const OPS_PROMPT_PATTERNS = [
+  /\bpush\b/i,
+  /\bstatus\b/i,
+  /\u8a3a\u65ad/, // 診断
+  /\u78ba\u8a8d/, // 確認
+  /\u8abf\u67fb/, // 調査
+];
+
+function allowsNoCodeChange(taskType, prompt = '') {
+  const normalizedType = String(taskType || 'IMPLEMENT').toUpperCase();
+  if (NON_CODE_CHANGE_TYPES.has(normalizedType)) return true;
+  if (CODE_CHANGE_REQUIRED_TYPES.has(normalizedType)) return false;
+  return OPS_PROMPT_PATTERNS.some(re => re.test(prompt || ''));
+}
 
 function validateNonImplement(output, taskType) {
   const outputLength = (output || '').trim().length;
@@ -374,15 +429,16 @@ function validateNonImplement(output, taskType) {
 //   taskId      - タスクID（サジェスト用）
 //   passedFiles - 既に取得済みの changedFiles（省略可）
 //   beforeMs    - タスク開始時刻（ミリ秒）。mtime比較用
-//   taskType    - 'IMPLEMENT'|'RESEARCH'|'DESIGN'|'REVIEW'（省略時 IMPLEMENT）
+//   taskType    - 'IMPLEMENT'|'RESEARCH'|'DESIGN'|'REVIEW'|'OPS'（省略時 IMPLEMENT）
 // ─────────────────────────────────────────────────────
-function validate(output, repoPath, taskId = '', passedFiles = null, beforeMs = null, taskType = 'IMPLEMENT') {
+function validate(output, repoPath, taskId = '', passedFiles = null, beforeMs = null, taskType = 'IMPLEMENT', prompt = '') {
+  const normalizedTaskType = String(taskType || 'IMPLEMENT').toUpperCase();
   logger.info(`完了バリデーション開始: ${taskId} [${taskType}]`);
 
   // ── 1. 変更検出（IMPLEMENT以外でも参考情報として取得）──
   // DOCS タイプは .md / .txt も変更対象に含める
   const DOCS_SCAN_EXTENSIONS = ['.js', '.md', '.txt', '.json'];
-  const scanExtensions = (taskType === 'DOCS') ? DOCS_SCAN_EXTENSIONS : ['.js'];
+  const scanExtensions = (normalizedTaskType === 'DOCS') ? DOCS_SCAN_EXTENSIONS : ['.js'];
 
   const changedFiles   = passedFiles ?? getChangedFilesFromGit(repoPath);
   const { diffStat, addedLines, removedLines, raw: diffRaw } = getDiffStat(repoPath);
@@ -404,12 +460,19 @@ function validate(output, repoPath, taskId = '', passedFiles = null, beforeMs = 
   let isShortResponse  = false;
   let isQuestionEnding = false;
 
-  if (taskType === 'RESEARCH' || taskType === 'DESIGN' || taskType === 'REVIEW' || taskType === 'DOCS') {
+  if (allowsNoCodeChange(normalizedTaskType, prompt)) {
     // ── 非IMPLEMENTタイプ: コード変更なしでOK、出力内容で判定 ──
     // DOCS: .md ファイルの作成・更新でも完了OK。出力内容チェックで判定。
-    const nonImplResult = validateNonImplement(output, taskType);
-    ok     = nonImplResult.ok;
-    reason = nonImplResult.reason;
+    // OPS キーワード（診断/確認/push/status/調査）を含む場合: 会話応答ログがあれば完了
+    const hasOpsKeyword = OPS_PROMPT_PATTERNS.some(re => re.test(prompt || ''));
+    if (hasOpsKeyword && outputLength >= 10) {
+      ok     = true;
+      reason = `OPSタスク完了（会話応答ログ${outputLength}文字）`;
+    } else {
+      const nonImplResult = validateNonImplement(output, normalizedTaskType);
+      ok     = nonImplResult.ok;
+      reason = nonImplResult.reason;
+    }
 
     // 詳細フラグも設定（Embed表示用）
     const conv = detectConversational(output);
@@ -455,7 +518,7 @@ function validate(output, repoPath, taskId = '', passedFiles = null, beforeMs = 
   const result = {
     ok,
     reason,
-    taskType,
+    taskType: normalizedTaskType,
     changedFiles,
     modifiedFiles,
     diffStat,
@@ -488,6 +551,7 @@ function validate(output, repoPath, taskId = '', passedFiles = null, beforeMs = 
 
 module.exports = {
   validate,
+  allowsNoCodeChange,
   getChangedFilesFromGit,
   getDiffStat,
   checkSyntaxOfChangedFiles,

@@ -32,6 +32,7 @@ const TASK_TYPES = {
   RESEARCH:  'RESEARCH',  // 調査・確認（変更不要）
   DESIGN:    'DESIGN',    // 設計・方針（変更不要）
   REVIEW:    'REVIEW',    // レビュー（変更不要）
+  OPS:       'OPS',       // 運用・診断・Git操作（変更不要）
 };
 
 // ─── TaskSize 定数 ───
@@ -47,6 +48,7 @@ const TYPE_EMOJI = {
   RESEARCH:  '🔍',
   DESIGN:    '📐',
   REVIEW:    '🧐',
+  OPS:       '⚙️',
 };
 
 // ─── TaskSize絵文字 ───
@@ -93,6 +95,17 @@ const REVIEW_KEYWORDS = [
 ];
 
 // ─────────────────────────────────────────────────────
+// OPS 強シグナル（運用・診断・Git操作）
+// ─────────────────────────────────────────────────────
+const OPS_KEYWORDS = [
+  'push', 'status', 'diagnose', 'diagnostic',
+  '\u8a3a\u65ad', '\u78ba\u8a8d', '\u8abf\u67fb',
+  '診断', 'git push', 'git status', 'git log', 'git diff',
+  'push診断', 'push確認', 'status確認', 'status確認',
+  'デプロイ確認', '疎通確認', '動作確認', '起動確認',
+];
+
+// ─────────────────────────────────────────────────────
 // TaskType 判定
 //
 // 優先順位:
@@ -103,7 +116,7 @@ const REVIEW_KEYWORDS = [
 // ─────────────────────────────────────────────────────
 function detectTaskType(prompt) {
   // 1. 明示的プレフィックス [TYPE] または [type]
-  const prefixMatch = prompt.match(/^\[(IMPLEMENT|RESEARCH|DESIGN|REVIEW)\]\s*/i);
+  const prefixMatch = prompt.match(/^\[(IMPLEMENT|RESEARCH|DESIGN|REVIEW|OPS)\]\s*/i);
   if (prefixMatch) {
     const t = prefixMatch[1].toUpperCase();
     logger.info(`TaskType 明示指定: ${t}`);
@@ -132,7 +145,12 @@ function detectTaskType(prompt) {
     return TASK_TYPES.REVIEW;
   }
 
-  // 6. デフォルト
+  // 6. OPS（診断・Git操作・運用確認）
+  if (OPS_KEYWORDS.some(kw => text.includes(kw.toLowerCase()))) {
+    return TASK_TYPES.OPS;
+  }
+
+  // 7. デフォルト
   return TASK_TYPES.IMPLEMENT;
 }
 
@@ -332,6 +350,7 @@ function getCompletionCriteria(taskType) {
     case TASK_TYPES.RESEARCH:  return '調査結果の出力があれば完了';
     case TASK_TYPES.DESIGN:    return '設計案・方針書の出力があれば完了';
     case TASK_TYPES.REVIEW:    return 'レビュー結果の出力があれば完了';
+    case TASK_TYPES.OPS:       return '実行ログ・診断結果の出力があれば完了';
     default:                   return 'コード変更あり必須';
   }
 }
