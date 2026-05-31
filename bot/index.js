@@ -849,22 +849,47 @@ async function handleApplyReview(message, taskId) {
 //   add <role> [workerId] [project]  Worker を登録
 //   list                              一覧表示
 // ─────────────────────────────────────────────────────
-// !company staff [projectId] — Phase E-5c
-//
-// 現在プロジェクト（または指定 projectId）の推奨人員を表示する。
-// companyManager.getStaffingReport() を呼び .text を Discord に返す。
+// !company staff [projectId]  — 推奨人員を表示
+// !company assign [projectId] [--preview] — 人員を実際に調整
 // ─────────────────────────────────────────────────────
-async function handleCompanyStaff(message, args) {
-  const rawPid     = args[0] || '';
-  const currentPid = projectManager.getCurrentProject(message.channelId);
-  const pid        = rawPid || currentPid || 'default';
+function _companyResolvePid(args, channelId) {
+  // args から --preview フラグを除いたトークンで projectId を探す
+  const tokens = args.filter(a => a !== '--preview');
+  const rawPid = tokens[0] || '';
+  const current = projectManager.getCurrentProject(channelId);
+  return rawPid || current || 'default';
+}
 
+async function handleCompanyStaff(message, args) {
+  const pid = _companyResolvePid(args, message.channelId);
   try {
     const report = companyManager.getStaffingReport(pid);
     await message.reply(report.text).catch(() => {});
   } catch (e) {
-    logger.warn(`[Company] getStaffingReport エラー: ${e.message}`);
+    logger.warn(`[Company] staff エラー: ${e.message}`);
     await message.reply(`❌ 人員分析に失敗しました: ${e.message.slice(0, 100)}`).catch(() => {});
+  }
+}
+
+async function handleCompanyAssign(message, args) {
+  const dryRun = args.includes('--preview');
+  const pid    = _companyResolvePid(args, message.channelId);
+
+  const processingText = dryRun
+    ? `🔍 **人員変更プレビュー中...**\nProject: \`${pid}\``
+    : `⚙️ **人員を調整中...**\nProject: \`${pid}\``;
+  const processing = await message.reply(processingText).catch(() => null);
+
+  try {
+    const result = companyManager.applyStaffingPlan(pid, { dryRun });
+    const text   = companyManager.formatAssignResult(result);
+    if (processing) await processing.edit(text).catch(() => {});
+    else await message.channel.send(text).catch(() => {});
+  } catch (e) {
+    logger.warn(`[Company] assign エラー: ${e.message}`);
+    const errText = `❌ 人員調整に失敗しました: ${e.message.slice(0, 100)}`;
+    if (processing) await processing.edit(errText).catch(() => {});
+    else await message.reply(errText).catch(() => {});
   }
 }
 
@@ -4345,16 +4370,24 @@ client.on('messageCreate', async (message) => {
   }
 
   if (content.startsWith('!company')) {
-    const compArgs = content.slice('!company'.length).trim().split(/\s+/);
+    const compArgs = content.slice('!company'.length).trim().split(/\s+/).filter(Boolean);
     const compSub  = compArgs[0] || '';
     if (compSub === 'staff') {
       await handleCompanyStaff(message, compArgs.slice(1));
       return;
     }
+    if (compSub === 'assign') {
+      await handleCompanyAssign(message, compArgs.slice(1));
+      return;
+    }
     await message.reply(
       '**!company の使い方**\n```\n' +
-      '!company staff           → 現在プロジェクトの推奨人員を表示\n' +
-      '!company staff <project> → 指定プロジェクトの推奨人員を表示\n' +
+      '!company staff                        → 現在プロジェクトの推奨人員を表示\n' +
+      '!company staff <project>              → 指定プロジェクトの推奨人員を表示\n' +
+      '!company assign                       → 推奨人員を現在プロジェクトに適用\n' +
+      '!company assign --preview             → 変更のプレビュー（実変更なし）\n' +
+      '!company assign <project>             → 指定プロジェクトに適用\n' +
+      '!company assign <project> --preview   → 指定プロジェクトをプレビュー\n' +
       '```'
     );
     return;
