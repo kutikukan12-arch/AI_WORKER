@@ -56,6 +56,35 @@ function defaultState(projectId) {
 const LLM_INTERVAL_STEPS = 3; // 3ステップに1回
 
 // ─────────────────────────────────────────────────────
+// getProjectDoneTasks(projectId)
+//
+// data/history/*.json からプロジェクトの完了タスクを収集し
+// "TYPE: prompt_snippet" 形式の文字列配列を返す。
+// planProjectGoals の doneTasks 引数に渡して重複 RESEARCH を抑制する。
+// ─────────────────────────────────────────────────────
+function getProjectDoneTasks(projectId) {
+  const doneTasks = [];
+  try {
+    const histDir = path.join(DATA_DIR, 'history');
+    if (!fs.existsSync(histDir)) return doneTasks;
+    const files = fs.readdirSync(histDir)
+      .filter(f => f.endsWith('.json'))
+      .slice(-3); // 直近3ヶ月分
+    for (const f of files) {
+      try {
+        const hist = JSON.parse(fs.readFileSync(path.join(histDir, f), 'utf8'));
+        (hist.tasks || [])
+          .filter(t => (t.projectId || 'default') === projectId)
+          .forEach(t => {
+            doneTasks.push(`${t.type || 'UNKNOWN'}: ${(t.prompt || '').slice(0, 60)}`);
+          });
+      } catch { /* ファイル読み込み失敗は無視 */ }
+    }
+  } catch { /* ignore */ }
+  return doneTasks;
+}
+
+// ─────────────────────────────────────────────────────
 // updatePlannerStats(projectId, source, errorMsg)
 //
 // LLM/fallback 呼び出し後に plannerStats を更新する。
@@ -529,6 +558,8 @@ function runPlannerStep(projectId, context = {}) {
         const pm2           = require('./project-manager');
         const proj2         = pm2.getProject(projectId);
         const description   = (proj2?.description || proj2?.name || '');
+        // 完了済みタスクを収集（RESEARCH 重複防止に使用）
+        const doneTasks     = getProjectDoneTasks(projectId);
         const goalHint      = planProjectGoalsQuick(projectId, description);
         const currentState2 = getRunnerState(projectId);
 
@@ -536,13 +567,17 @@ function runPlannerStep(projectId, context = {}) {
 
         if (currentState2.autoApplyPlanning && goalHint > 0) {
           try {
-            const fullPlan = require('./project-planner').planProjectGoals(projectId, { description });
+            const fullPlan = require('./project-planner').planProjectGoals(projectId, { description, doneTasks });
             const tm       = require('./task-manager');
             const allT     = tm.listTasks();
             const ACTIVE   = new Set([tm.STATES.PENDING, tm.STATES.IN_PROGRESS]);
 
             // ── Phase D-4e: DOCS/RESEARCH/TEST を優先登録 ─────────
-            const safeCand = fullPlan.nextCandidates.find(c => SAFE_TYPES.has(c.type));
+            // 完了済み RESEARCH がある場合は DOCS/TEST を優先（RESEARCH 連続生成防止）
+            const hasCompletedResearch = doneTasks.some(d => d.toUpperCase().startsWith('RESEARCH:'));
+            const safeCand = hasCompletedResearch
+              ? fullPlan.nextCandidates.find(c => SAFE_TYPES.has(c.type) && c.type !== 'RESEARCH')
+              : fullPlan.nextCandidates.find(c => SAFE_TYPES.has(c.type));
             if (safeCand) {
               const isDup = allT.some(t =>
                 t.projectId === projectId &&
@@ -822,6 +857,8 @@ async function runPlannerStepAsync(projectId, context = {}) {
         const pm2           = require('./project-manager');
         const proj2         = pm2.getProject(projectId);
         const description   = (proj2?.description || proj2?.name || '');
+        // 完了済みタスクを収集（RESEARCH 重複防止・LLM プロンプトに渡す）
+        const doneTasks     = getProjectDoneTasks(projectId);
         const currentState2 = getRunnerState(projectId);
         const SAFE_TYPES    = new Set(['DOCS', 'RESEARCH', 'TEST']);
 
@@ -832,12 +869,13 @@ async function runPlannerStepAsync(projectId, context = {}) {
         let plannerErr = null;
         try {
           if (shouldUseLLM) {
+            // doneTasks を渡すことで LLM/rule-based 両方が完了済み RESEARCH を考慮する
             fullPlan = await require('./project-planner').planProjectGoalsBest(
-              projectId, { description }
+              projectId, { description, doneTasks }
             );
           } else {
             // 頻度制御: rule-based を直接使用（LLM 呼び出しなし）
-            const ruleResult = require('./project-planner').planProjectGoals(projectId, { description });
+            const ruleResult = require('./project-planner').planProjectGoals(projectId, { description, doneTasks });
             fullPlan = { ...ruleResult, source: 'rule-based' };
             logger.debug(`[AutoRunner] D-8 頻度制御: step ${nextCount} → rule-based (LLM は ${LLM_INTERVAL_STEPS}ステップに1回)`);
           }
@@ -845,7 +883,7 @@ async function runPlannerStepAsync(projectId, context = {}) {
           // LLM/rule-based どちらが失敗しても runner を止めない
           plannerErr = plannerApiErr.message.slice(0, 80);
           logger.warn(`[AutoRunner] D-8 planner エラー → rule-based fallback: ${plannerErr}`);
-          const ruleResult = require('./project-planner').planProjectGoals(projectId, { description });
+          const ruleResult = require('./project-planner').planProjectGoals(projectId, { description, doneTasks });
           fullPlan = { ...ruleResult, source: 'rule-based' };
         }
 
@@ -863,7 +901,11 @@ async function runPlannerStepAsync(projectId, context = {}) {
             const ACTIVE = new Set([tm.STATES.PENDING, tm.STATES.IN_PROGRESS]);
 
             // D-4e: DOCS/RESEARCH/TEST を優先登録
-            const safeCand = fullPlan.nextCandidates.find(c => SAFE_TYPES.has(c.type));
+            // 完了済み RESEARCH がある場合は DOCS/TEST を優先（RESEARCH 連続生成防止）
+            const hasCompletedResearch = doneTasks.some(d => d.toUpperCase().startsWith('RESEARCH:'));
+            const safeCand = hasCompletedResearch
+              ? fullPlan.nextCandidates.find(c => SAFE_TYPES.has(c.type) && c.type !== 'RESEARCH')
+              : fullPlan.nextCandidates.find(c => SAFE_TYPES.has(c.type));
             if (safeCand) {
               const isDup = allT.some(t =>
                 t.projectId === projectId && t.type === safeCand.type && ACTIVE.has(t.state) &&
