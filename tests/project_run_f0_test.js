@@ -402,11 +402,15 @@ test('9g. _runProjectLoop で softRedHandled チェックがある', () => {
   assert.ok(loopBody.includes('ctx.softRedHandled'), 'softRedHandled 参照がない');
 });
 
-test('9h. 2回目soft REDで stopReason=soft_red_unresolved になる', () => {
+test('9h. 2回目soft REDで HUMAN_CHECK（awaiting_human）になる', () => {
+  // F-4修正: soft_red_unresolved → _handleHumanCheck(awaiting_human) に変更済み
   const loopStart = src.indexOf('async function _runProjectLoop(');
   const loopEnd   = src.indexOf('\n// ─', loopStart + 1);
-  const loopBody  = src.slice(loopStart, loopEnd > 0 ? loopEnd : loopStart + 8000);
-  assert.ok(loopBody.includes("'soft_red_unresolved'"), 'soft_red_unresolved がない');
+  const loopBody  = src.slice(loopStart, loopEnd > 0 ? loopEnd : loopStart + 10000);
+  // softRedHandled が true のブランチで _handleHumanCheck を呼ぶ
+  const elseIdx  = loopBody.indexOf('ctx.softRedHandled = true');
+  const elseArea = loopBody.slice(elseIdx, elseIdx + 400);
+  assert.ok(elseArea.includes('_handleHumanCheck'), '2回目soft REDが HUMAN_CHECK になっていない');
 });
 
 // ─ 実際のタスク操作テスト ─
@@ -553,6 +557,105 @@ test('M-1c. completion-validator 失敗時のみ tasksFailed / consecutiveErrors
 });
 
 cleanup2();
+
+// ─────────────────────────────────────────────────────
+// 11. Phase F-4: HUMAN_CHECK
+// ─────────────────────────────────────────────────────
+console.log('\n[11. HUMAN_CHECK]');
+
+test('11a. _handleHumanCheck が定義されている', () =>
+  assert.ok(src.includes('async function _handleHumanCheck('), '_handleHumanCheck がない'));
+
+const hcFnStart = src.indexOf('async function _handleHumanCheck(');
+const hcFnEnd   = src.indexOf('\n// ─', hcFnStart + 1);
+const hcBody    = src.slice(hcFnStart, hcFnEnd > 0 ? hcFnEnd : hcFnStart + 2000);
+
+test('11b. ctx.pendingApproval = task.id を設定する', () =>
+  assert.ok(hcBody.includes('ctx.pendingApproval'), 'pendingApproval がない'));
+
+test('11c. ctx.stopReason = "awaiting_human" を設定する', () =>
+  assert.ok(hcBody.includes("'awaiting_human'"), 'awaiting_human がない'));
+
+test('11d. !approve / !deny を案内するメッセージを送信する', () => {
+  assert.ok(hcBody.includes('!approve'), '!approve がない');
+  assert.ok(hcBody.includes('!deny'),    '!deny がない');
+  assert.ok(hcBody.includes('!task show'), '!task show がない');
+});
+
+test('11e. AWAITING 状態で HUMAN_CHECK を呼ぶ', () => {
+  const loopFn = src.indexOf('async function _runProjectLoop(');
+  const loopFe = src.indexOf('\n// ─', loopFn + 1);
+  const loopFb = src.slice(loopFn, loopFe > 0 ? loopFe : loopFn + 10000);
+  const awaitIdx = loopFb.indexOf('taskManager.STATES.AWAITING');
+  const awaitArea = loopFb.slice(awaitIdx, awaitIdx + 300);
+  assert.ok(awaitArea.includes('_handleHumanCheck'), 'AWAITING で _handleHumanCheck が呼ばれない');
+});
+
+test('11f. catch ブロックで AUTH/PERMISSION エラー時に HUMAN_CHECK を呼ぶ', () => {
+  const loopFn = src.indexOf('async function _runProjectLoop(');
+  const loopFe = src.indexOf('\n// ─', loopFn + 1);
+  const loopFb = src.slice(loopFn, loopFe > 0 ? loopFe : loopFn + 10000);
+  assert.ok(loopFb.includes("errType === 'AUTH' || errType === 'PERMISSION'"), 'AUTH/PERMISSION チェックがない');
+  assert.ok(loopFb.includes('classifyErrorType'), 'classifyErrorType 呼び出しがない');
+});
+
+test('11g. _teardown が awaiting_human の場合にスキップする', () => {
+  const tdFn = src.indexOf('async function _teardown(');
+  const tdFe  = src.indexOf('\nasync function ', tdFn + 1);
+  const tdFb  = src.slice(tdFn, tdFe > 0 ? tdFe : tdFn + 3000);
+  assert.ok(tdFb.includes("'awaiting_human'"), '待機中の teardown スキップがない');
+  assert.ok(tdFb.includes('return'), 'return がない');
+});
+
+test('11h. handleApprove に HUMAN_CHECK 再開ロジックがある', () => {
+  const appFn = src.indexOf('async function handleApprove(');
+  const appFe = src.indexOf('\n// ─', appFn + 1);
+  const appFb = src.slice(appFn, appFe > 0 ? appFe : appFn + 5000);
+  assert.ok(appFb.includes('ctx.pendingApproval === taskId'), 'pendingApproval 確認がない');
+  assert.ok(appFb.includes('_runProjectLoop(ctx)'), '再開の _runProjectLoop がない');
+});
+
+test('11i. handleDeny に HUMAN_CHECK 停止ロジックがある', () => {
+  const dnyFn = src.indexOf('async function handleDeny(');
+  const dnyFe = src.indexOf('\n// ─', dnyFn + 1);
+  const dnyFb = src.slice(dnyFn, dnyFe > 0 ? dnyFe : dnyFn + 3000);
+  assert.ok(dnyFb.includes('ctx.pendingApproval === taskId'), 'pendingApproval 確認がない');
+  assert.ok(dnyFb.includes("'denied_by_human'"), 'denied_by_human がない');
+  assert.ok(dnyFb.includes('_teardown(ctx'), 'teardown 呼び出しがない');
+});
+
+test('11j. soft_red_unresolved が HUMAN_CHECK になっている', () => {
+  const loopFn = src.indexOf('async function _runProjectLoop(');
+  const loopFe = src.indexOf('\n// ─', loopFn + 1);
+  const loopFb = src.slice(loopFn, loopFe > 0 ? loopFe : loopFn + 10000);
+  // soft_red_unresolved は stopReason から HUMAN_CHECK に変わった
+  const srIdx  = loopFb.indexOf('softRedHandled');
+  const srArea = loopFb.slice(srIdx, srIdx + 600);
+  assert.ok(srArea.includes('_handleHumanCheck'), 'soft_red_unresolved が HUMAN_CHECK でない');
+});
+
+test('11k. 二重approve防止: stopReason が null でない場合は再開しない', () => {
+  // approve ロジックで ctx.stopReason !== "awaiting_human" なら break
+  const appFn = src.indexOf('async function handleApprove(');
+  const appFe = src.indexOf('\n// ─', appFn + 1);
+  const appFb = src.slice(appFn, appFe > 0 ? appFe : appFn + 5000);
+  assert.ok(appFb.includes("ctx.stopReason !== 'awaiting_human'") ||
+            appFb.includes("stopReason !== 'awaiting_human'"),
+    '二重 approve 防止がない');
+});
+
+test('11l. 初回 validator失敗は HUMAN_CHECKではなく soft RED', () => {
+  // 初回 soft RED: softRedHandled===false → _handleSoftRed を呼ぶ
+  const loopFn = src.indexOf('async function _runProjectLoop(');
+  const loopFe = src.indexOf('\n// ─', loopFn + 1);
+  const loopFb = src.slice(loopFn, loopFe > 0 ? loopFe : loopFn + 10000);
+  // !ctx.softRedHandled の分岐に _handleSoftRed があること
+  const firstRedIdx  = loopFb.indexOf('!ctx.softRedHandled');
+  const firstRedArea = loopFb.slice(firstRedIdx, firstRedIdx + 300);
+  assert.ok(firstRedArea.includes('_handleSoftRed'), '初回 soft RED が _handleSoftRed でない');
+  assert.ok(!firstRedArea.includes('_handleHumanCheck'),
+    '初回 soft RED が誤って HUMAN_CHECK になっている');
+});
 
 console.log(`\n結果: ${pass} passed / ${fail} failed\n`);
 if (fail > 0) process.exit(1);

@@ -1031,6 +1031,51 @@ async function handleProjectRun(message, projectId) {
 }
 
 // ─────────────────────────────────────────────────────
+// _handleHumanCheck(ctx, task, reason, details) — Phase F-4
+//
+// AIが安全に自己修復できない場合だけ呼ぶ。
+//
+// 対象:
+//   - AUTH / PERMISSION 系エラー（APIキー・権限不足）
+//   - BILLING / QUOTA 系（課金停止・rate limit継続）
+//   - AI自己修復2回以上失敗（soft_red_unresolved）
+//   - 仕様判断が必要（destructive / 外部送信 等）
+//
+// 動作:
+//   - ctx.pendingApproval = task.id（または task-level ID）
+//   - ctx.stopReason = 'awaiting_human'
+//   - Discord 通知（理由・次の操作案内）
+//   - activeRuns は削除しない（approve で再開可能）
+//   - _teardown は呼ばない
+//   - ループは break → 呼び出し元が break する
+//
+// 戻り値: なし（呼び出し元が break すること）
+// ─────────────────────────────────────────────────────
+async function _handleHumanCheck(ctx, task, reason, details) {
+  const { projectId, message } = ctx;
+  const taskId = task?.id || '(不明)';
+
+  ctx.pendingApproval = taskId;
+  ctx.stopReason      = 'awaiting_human';
+
+  logger.warn(`[HumanCheck] 人間確認が必要: ${projectId} | task:${taskId} | reason:${reason}`);
+
+  await message.channel.send(
+    `⚠️ **人間確認が必要です — 一時停止**\n\n` +
+    `Project: \`${projectId}\`\n` +
+    `タスク: \`${taskId}\`\n` +
+    `理由: **${reason}**\n` +
+    (details ? `詳細: ${String(details).slice(0, 200)}\n` : '') +
+    `\n次の操作:\n` +
+    `\`\`\`\n` +
+    `!approve ${taskId}   → 承認して実行を再開\n` +
+    `!deny   ${taskId}   → 却下して停止\n` +
+    `!task show ${taskId} → タスク詳細を確認\n` +
+    `\`\`\``
+  ).catch(() => {});
+}
+
+// ─────────────────────────────────────────────────────
 // _isValidationFailureNote(task)
 //
 // completion-validator 失敗を stateHistory から検出する。
@@ -1337,8 +1382,13 @@ async function _runProjectLoop(ctx) {
         ctx.tasksDone++;
         ctx.consecutiveErrors = 0;
       } else if (finalTask.state === taskManager.STATES.AWAITING) {
-        ctx.tasksDone++;  // 人間確認待ちも「実行済み」としてカウント
-        ctx.consecutiveErrors = 0;
+        // AWAITING: AIレビュー却下推奨 or PR作成済みなど人間確認が必要
+        // Phase F-4: HUMAN_CHECK として一時停止
+        await _handleHumanCheck(ctx, finalTask,
+          'AIレビュー却下推奨またはPR確認待ち',
+          `タスク \`${finalTask.id}\` が人間確認待ち状態です。`
+        );
+        break;
       } else if (finalTask.state === taskManager.STATES.REVIEWING) {
         // REVIEWING: completion-validator 失敗 か 正常なレビュー待ちかを判定
         const validFailNote = _isValidationFailureNote(finalTask);
@@ -1355,14 +1405,11 @@ async function _runProjectLoop(ctx) {
             ctx.softRedHandled = true;
             // continue しないでループ末尾の MID-RUN チェックも通す
           } else {
-            // 2回目以降: auto-FIX 後も未解決 → 停止
-            ctx.stopReason = 'soft_red_unresolved';
-            await message.channel.send(
-              `🛑 **soft RED 未解決 — 停止します**\n\n` +
-              `タスク: \`${finalTask.id}\`\n` +
-              `auto-FIX 後も completion-validator が未完了でした。\n\n` +
+            // 2回目以降: auto-FIX 後も未解決 → HUMAN_CHECK
+            await _handleHumanCheck(ctx, finalTask,
+              'soft RED 未解決（auto-FIX 後も completion-validator 失敗）',
               `\`!quality gate\` / \`!task list\` で状況を確認してください。`
-            ).catch(() => {});
+            );
             break;
           }
         }
@@ -1393,6 +1440,16 @@ async function _runProjectLoop(ctx) {
       logger.error(`[ProjectLoop] タスクエラー: ${next.id} | ${taskErr.message}`);
       ctx.tasksFailed++;
       ctx.consecutiveErrors++;
+
+      // Phase F-4: AUTH / PERMISSION エラーは HUMAN_CHECK
+      const errType = taskManager.classifyErrorType(taskErr.message);
+      if (errType === 'AUTH' || errType === 'PERMISSION') {
+        await _handleHumanCheck(ctx, next,
+          `${errType} エラー — 認証・権限の確認が必要`,
+          taskErr.message.slice(0, 150)
+        );
+        break;
+      }
     }
 
     // ─ Phase F-2 修正: MID-RUN Quality Gate（共通ヘルパー経由）──
@@ -1418,6 +1475,13 @@ async function _runProjectLoop(ctx) {
 //   6. logger 出力
 // ─────────────────────────────────────────────────────
 async function _teardown(ctx, prevPid) {
+  // Phase F-4: awaiting_human の場合は teardown をスキップ
+  // activeRuns を削除しない（approve で再開できるようにする）
+  if (ctx.stopReason === 'awaiting_human') {
+    logger.info(`[Teardown] スキップ（awaiting_human）: ${ctx.projectId}`);
+    return;
+  }
+
   const { projectId, message, runId, tasksDone, tasksFailed, stopReason, yellowCount } = ctx;
 
   // 1. タイマー cleanup
@@ -4805,6 +4869,27 @@ async function handleApprove(message, taskId) {
   // ── type='post': 実行後確認 → 確認済み記録のみ ──────
   approvalManager.approve(taskId, message.author.tag);
   await message.reply(`✅ **承認（確認済み）: \`${taskId}\`**`);
+
+  // ── Phase F-4: HUMAN_CHECK からの approve → _runProjectLoop 再開 ──
+  // activeRuns 全体から ctx.pendingApproval === taskId の RunContext を探す
+  for (const [pid, ctx] of activeRuns.entries()) {
+    if (ctx && ctx.pendingApproval === taskId) {
+      if (ctx.stopReason !== 'awaiting_human') break; // 既に再開済み or 別停止理由
+      ctx.pendingApproval = null;
+      ctx.stopReason      = null;
+      logger.info(`[HumanCheck] approve → run 再開: ${pid} task:${taskId}`);
+      await message.channel.send(
+        `▶️ **承認を受け付けました — 実行を再開します**\n\nProject: \`${pid}\``
+      ).catch(() => {});
+      const prevPid = projectManager.getCurrentProject(message.channelId);
+      projectManager.setCurrentProject(message.channelId, pid);
+      // 二重起動防止: stopReason を null にした直後のみ再開
+      _runProjectLoop(ctx)
+        .catch(err => logger.error(`[HumanCheck] 再開 _runProjectLoop エラー: ${err.message}`))
+        .finally(() => { _teardown(ctx, prevPid); });
+      break;
+    }
+  }
 }
 
 // ─────────────────────────────────────────────────────
@@ -4846,6 +4931,22 @@ async function handleDeny(message, taskId) {
   await message.reply(
     `❌ **却下しました: \`${taskId}\`**\n\nタスクは実行されません。`
   );
+
+  // ── Phase F-4: HUMAN_CHECK からの deny → 停止・teardown ──
+  for (const [pid, ctx] of activeRuns.entries()) {
+    if (ctx && ctx.pendingApproval === taskId) {
+      ctx.stopRequested = true;
+      ctx.stopReason    = 'denied_by_human';
+      ctx.pendingApproval = null;
+      logger.info(`[HumanCheck] deny → 停止 teardown: ${pid} task:${taskId}`);
+      await message.channel.send(
+        `🛑 **却下を受け付けました — 実行を停止します**\n\nProject: \`${pid}\``
+      ).catch(() => {});
+      const prevPid = projectManager.getCurrentProject(message.channelId);
+      await _teardown(ctx, prevPid);
+      break;
+    }
+  }
 }
 
 // ─────────────────────────────────────────────────────
