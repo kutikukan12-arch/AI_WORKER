@@ -39,6 +39,41 @@ const REVIEWS_PATH  = path.join(__dirname, '..', '..', 'reviews');
 const WORKSPACE_PATH = path.join(__dirname, '..', '..', 'workspace');
 
 // ─────────────────────────────────────────────────────
+// resolveTaskWorkspace(taskId, projectId)
+//
+// project-scoped workspace 対応のワークスペース解決。
+// 優先順位:
+//   1. workspace/<projectId>/<taskId>/   ← projectId 指定時
+//   2. workspace/<taskId>/               ← 旧形式（後方互換）
+//   3. workspace/*/<taskId>/             ← 全サブディレクトリをスキャン
+//
+// 見つからなければ null を返す。
+// ─────────────────────────────────────────────────────
+function resolveTaskWorkspace(taskId, projectId) {
+  // 1. projectId 指定 → workspace/<projectId>/<taskId>/
+  if (projectId) {
+    const scoped = path.join(WORKSPACE_PATH, projectId, taskId);
+    if (fs.existsSync(scoped)) return scoped;
+  }
+
+  // 2. 旧形式 → workspace/<taskId>/
+  const legacy = path.join(WORKSPACE_PATH, taskId);
+  if (fs.existsSync(legacy)) return legacy;
+
+  // 3. workspace/*/<taskId>/ をスキャン
+  try {
+    const entries = fs.readdirSync(WORKSPACE_PATH, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const candidate = path.join(WORKSPACE_PATH, entry.name, taskId);
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  } catch { /* workspace がない場合は無視 */ }
+
+  return null;
+}
+
+// ─────────────────────────────────────────────────────
 // Codex レビューファイルから回答テキストを抽出する
 // ─────────────────────────────────────────────────────
 function parseCodexResponse(content) {
@@ -123,18 +158,20 @@ function buildFeedbackPrompt(originalPrompt, codexResponse, taskId) {
 
 // ─────────────────────────────────────────────────────
 // 元のプロンプトをレビューファイルまたは workspace から取得
+// taskWorkspace: resolveTaskWorkspace() で解決済みのパス（任意）
 // ─────────────────────────────────────────────────────
-function getOriginalPrompt(taskId, reviewContent) {
+function getOriginalPrompt(taskId, reviewContent, taskWorkspace) {
   // reviews/codex_task_ID.md の「依頼内容」セクションから取得を試みる
   const reviewMatch = reviewContent.match(/## 依頼内容[\s\S]*?```[\s\S]*?\n([\s\S]*?)```/);
   if (reviewMatch) return reviewMatch[1].trim();
 
-  // workspace/task_ID/prompt.md から取得を試みる
-  const promptFile = path.join(WORKSPACE_PATH, taskId, 'prompt.md');
+  // 解決済みワークスペースの prompt.md を優先。
+  // 指定がなければ旧形式 workspace/<taskId>/prompt.md にフォールバック。
+  const wsDir      = taskWorkspace || path.join(WORKSPACE_PATH, taskId);
+  const promptFile = path.join(wsDir, 'prompt.md');
   if (fs.existsSync(promptFile)) {
     const content = fs.readFileSync(promptFile, 'utf8');
-    // ヘッダー行を除去して本文だけ取得
-    const match = content.match(/## 指示内容\n([\s\S]*)/);
+    const match   = content.match(/## 指示内容\n([\s\S]*)/);
     if (match) return match[1].trim();
     return content.replace(/^#.*\n/gm, '').trim();
   }
@@ -144,11 +181,12 @@ function getOriginalPrompt(taskId, reviewContent) {
 
 // ─────────────────────────────────────────────────────
 // フィードバック結果をレビューファイルに追記保存
+// taskWorkspace: resolveTaskWorkspace() で解決済みのパス（任意）
 // ─────────────────────────────────────────────────────
-function saveFeedbackRecord(taskId, verdict, codexResponse, claudeOutput) {
+function saveFeedbackRecord(taskId, verdict, codexResponse, claudeOutput, taskWorkspace) {
   // reviews/codex_task_ID.md に追記
   const reviewFile = path.join(REVIEWS_PATH, `codex_${taskId}.md`);
-  const timestamp = new Date().toLocaleString('ja-JP');
+  const timestamp  = new Date().toLocaleString('ja-JP');
 
   const appendContent = [
     ``,
@@ -171,11 +209,11 @@ function saveFeedbackRecord(taskId, verdict, codexResponse, claudeOutput) {
     fs.appendFileSync(reviewFile, appendContent, 'utf8');
   }
 
-  // workspace にも保存
-  const taskWorkspace = path.join(WORKSPACE_PATH, taskId);
-  if (fs.existsSync(taskWorkspace)) {
+  // workspace にも保存（解決済みパスを優先、なければ旧形式）
+  const wsDir = taskWorkspace || path.join(WORKSPACE_PATH, taskId);
+  if (fs.existsSync(wsDir)) {
     fs.writeFileSync(
-      path.join(taskWorkspace, 'codex_feedback.md'),
+      path.join(wsDir, 'codex_feedback.md'),
       [
         `# Codex フィードバック記録`,
         ``,
@@ -204,9 +242,22 @@ function saveFeedbackRecord(taskId, verdict, codexResponse, claudeOutput) {
 //   { skipped: false, verdict,
 //     codexResponse, claudeResult }     実行した場合
 // ─────────────────────────────────────────────────────
-async function applyFeedback(taskId) {
-  const reviewFile     = path.join(REVIEWS_PATH, `codex_${taskId}.md`);
-  const taskWorkspace  = path.join(WORKSPACE_PATH, taskId);
+// ─────────────────────────────────────────────────────
+// メイン: Codex フィードバックを Claude Code に適用
+//
+// 引数:
+//   taskId    - タスクID（例: task_1748344800000）
+//   projectId - プロジェクトID（省略可。指定すると workspace/<projectId>/<taskId>/ を優先）
+//
+// 戻り値:
+//   { skipped: true, reason }           回答なし・問題なしの場合
+//   { skipped: false, verdict,
+//     codexResponse, claudeResult }     実行した場合
+// ─────────────────────────────────────────────────────
+async function applyFeedback(taskId, projectId) {
+  const reviewFile    = path.join(REVIEWS_PATH, `codex_${taskId}.md`);
+  // project-scoped workspace を解決（旧形式 workspace/<taskId>/ にもフォールバック）
+  const taskWorkspace = resolveTaskWorkspace(taskId, projectId);
 
   // ── ファイル存在チェック ──
   if (!fs.existsSync(reviewFile)) {
@@ -216,9 +267,13 @@ async function applyFeedback(taskId) {
     );
   }
 
-  if (!fs.existsSync(taskWorkspace)) {
+  if (!taskWorkspace) {
     throw new Error(
-      `タスクフォルダが見つかりません: workspace/${taskId}/\n\n` +
+      `タスクフォルダが見つかりません: ${taskId}\n\n` +
+      `探索先:\n` +
+      (projectId ? `  workspace/${projectId}/${taskId}/\n` : '') +
+      `  workspace/${taskId}/\n` +
+      `  workspace/*/${taskId}/\n\n` +
       `タスクIDが正しいか確認してください。`
     );
   }
@@ -246,7 +301,7 @@ async function applyFeedback(taskId) {
   logger.info(`Codex フィードバック | タスク: ${taskId} | 判定: ${verdict}`);
 
   // ── 元のプロンプトを取得 ──
-  const originalPrompt = getOriginalPrompt(taskId, reviewContent);
+  const originalPrompt = getOriginalPrompt(taskId, reviewContent, taskWorkspace);
 
   // ── 判定に応じた処理 ──
   let claudeResult = null;
@@ -269,7 +324,7 @@ async function applyFeedback(taskId) {
   }
 
   // ── 結果を保存 ──
-  saveFeedbackRecord(taskId, verdict, codexResponse, claudeResult?.output);
+  saveFeedbackRecord(taskId, verdict, codexResponse, claudeResult?.output, taskWorkspace);
 
   return {
     skipped: false,
