@@ -84,6 +84,7 @@ const approvalManager = require('./utils/approval-manager');
 const projectDetector    = require('./utils/project-detector');
 const projectManager     = require('./utils/project-manager');
 const autoProjectRunner  = require('./utils/auto-project-runner');
+const autoPolicy         = require('./utils/auto-policy');
 
 // 承認待ちの実行待機Map: taskId → () => void
 // ※ Bot 再起動で消える設計（意図的割り切り）
@@ -3057,20 +3058,25 @@ function enqueueAndWait(taskId, execute) {
 }
 
 // ─────────────────────────────────────────────────────
-// !auto on — Auto Task Runner Phase4（最大3件を順次自動実行）
+// !auto on — Auto Task Runner Phase E-1（最大 AUTO_MAX_TASKS 件を順次自動実行）
 //
 // prepareNextTask() / executeClaudeTask() / enqueueAndWait を再利用。
-// 各タスク完了後に状態を確認し、停止条件を満たしたら終了する。
+// auto-policy.js で判定し、BLOCKED/HUMAN_APPROVAL_REQUIRED のみ停止。
+// AUTO_SAFE / AI_REVIEW_REQUIRED は自動継続する。
 //
-// 停止条件:
+// 停止条件 (Phase E-1):
 //   ・未着手タスクなし
-//   ・安全チェック拒否（高危険度・サイズ超過等）
-//   ・実行エラー（エラー状態 / IN_PROGRESS のまま）
-//   ・人間確認待ち（AIレビュー却下推奨）
-//   ・バリデーション未通過（変更なし / handoff 検出等）
-//   ・最大3件到達
+//   ・policy=BLOCKED（LARGE / force push / rm -rf 等）
+//   ・policy=HUMAN_APPROVAL_REQUIRED（danger高 / 却下推奨 / .env変更 等）
+//   ・実行後に AWAITING（人間確認待ち）または REVIEWING（バリデーション未通過）
+//   ・実行エラー（予期しない状態）
+//   ・最大 AUTO_MAX_TASKS 件到達（暴走防止）
+//
+// 自動継続条件:
+//   ・policy=AUTO_SAFE（DOCS / RESEARCH / TEST / REVIEW / codex低 等）
+//   ・policy=AI_REVIEW_REQUIRED（IMPLEMENT / FIX / REFACTOR / codex中 等）
 // ─────────────────────────────────────────────────────
-const AUTO_MAX_TASKS = 3;
+const AUTO_MAX_TASKS = 50; // Phase E-1: 暴走防止の上限（BLOCKED/HUMAN 判定で実際に停止）
 
 async function handleAutoOn(message) {
   // キューが使用中なら拒否
@@ -3085,9 +3091,10 @@ async function handleAutoOn(message) {
   logger.info(`[AUTO-ON] 開始 | ch:${message.channelId} | max:${AUTO_MAX_TASKS}`);
 
   await message.reply(
-    `▶ **Auto Task Runner 開始**\n\n` +
+    `▶ **Auto Task Runner 開始 (Phase E-1)**\n\n` +
     `最大 **${AUTO_MAX_TASKS}件** を順番に自動実行します。\n` +
-    `停止条件: タスクなし / 安全NG / バリデーション失敗 / 人間確認待ち / 上限到達`
+    `✅ AUTO_SAFE / AI_REVIEW_REQUIRED → 自動継続\n` +
+    `🚫 BLOCKED / HUMAN_APPROVAL_REQUIRED → 停止`
   ).catch(() => {});
 
   let succeeded  = 0;
@@ -3116,18 +3123,44 @@ async function handleAutoOn(message) {
     const typeEmoji   = taskManager.TYPE_EMOJI[storedType]  || '📋';
     const sizeEmoji   = taskManager.SIZE_EMOJI[storedSize]  || '🟡';
 
-    // ─ LARGE タスクは自動実行しない ─
-    if (storedSize === taskManager.TASK_SIZES.LARGE) {
-      logger.warn(`[AUTO-ON] LARGEタスクをスキップ: ${next.id} | type:${storedType}`);
+    // ─ Phase E-1: Auto Policy 判定（実行前・事前チェック）─
+    // コンテキスト: この時点では Codex/AIレビュー結果はまだないため
+    // タスク属性（type / size / prompt）のみで判定する。
+    const prePolicy = autoPolicy.classifyTask(next, {
+      // prepareNextTask() が security.js / danger チェック済みなので securityBlocked は渡さない
+    });
+    logger.info(`[AUTO] Policy: ${prePolicy} | ${next.id} [${storedType}/${storedSize}]`);
+
+    if (prePolicy === autoPolicy.AUTO_POLICY.BLOCKED) {
+      const isLarge = storedSize === taskManager.TASK_SIZES.LARGE;
+      logger.warn(`[AUTO-ON] BLOCKED: ${next.id} | type:${storedType} size:${storedSize}`);
       await message.channel.send(
-        `⚠️ **[${i + 1}/${AUTO_MAX_TASKS}] LARGEタスクのため自動実行をスキップしました**\n\n` +
+        `🚫 **[${i + 1}/${AUTO_MAX_TASKS}] 自動実行ブロック (BLOCKED)**\n\n` +
         `タスク: \`${next.id}\`\n` +
         `[${storedType}/${storedSize}] ${typeEmoji}${sizeEmoji}\n\n` +
-        `分割してから再実行してください。`
+        (isLarge
+          ? `LARGEタスクのため自動実行できません。\`!task split ${next.id}\` で分割してください。`
+          : `プロンプトに危険操作（force push / rm -rf 等）が含まれています。手動で確認してください。`)
       ).catch(() => {});
-      stopReason = 'LARGEタスクのためスキップ';
+      stopReason = `BLOCKED (${storedType}/${storedSize})`;
       break;
     }
+
+    if (prePolicy === autoPolicy.AUTO_POLICY.HUMAN_APPROVAL_REQUIRED) {
+      logger.warn(`[AUTO-ON] HUMAN_APPROVAL_REQUIRED: ${next.id} | type:${storedType}`);
+      await message.channel.send(
+        `⚠️ **[${i + 1}/${AUTO_MAX_TASKS}] 人間確認が必要 (HUMAN_APPROVAL_REQUIRED)**\n\n` +
+        `タスク: \`${next.id}\`\n` +
+        `[${storedType}/${storedSize}] ${typeEmoji}${sizeEmoji}\n\n` +
+        `危険度が高いか、機密情報に関わる変更の可能性があります。\n` +
+        `内容を確認してから \`!approve ${next.id}\` または \`!deny ${next.id}\` してください。`
+      ).catch(() => {});
+      stopReason = 'HUMAN_APPROVAL_REQUIRED';
+      break;
+    }
+
+    // AUTO_SAFE / AI_REVIEW_REQUIRED → 自動継続
+    logger.info(`[AUTO] Continuing... policy=${prePolicy} | ${next.id}`);
 
     // ─ REVIEW タスクは Codex へ転送（Claude Code は実行しない）─
     if (storedType === taskManager.TASK_TYPES.REVIEW) {
