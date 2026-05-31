@@ -81,13 +81,19 @@ function _loadCodexResults(projectId) {
 // _isValidationFailure(task)
 //
 // H2: REVIEWING 状態のうち、completion-validator 失敗によるものを識別。
-// stateHistory の最後のエントリが「未完了」を含む場合が validator 失敗。
+// M4: 最後のエントリだけでなく stateHistory 全体をスキャンし、
+//     REVIEWING に遷移した際に「未完了」を含む note が記録されていれば
+//     validator 失敗と判定する（末尾依存の脆さを解消）。
+//
 // レビュー待ち（AIレビュー等）は正常状態のため RED にしない。
 // ─────────────────────────────────────────────────────
 function _isValidationFailure(task) {
   const hist = task.stateHistory || [];
-  const last  = hist[hist.length - 1] || {};
-  return (last.note || '').includes('未完了');
+  // stateHistory 全体から「REVIEWING かつ 未完了」の記録を探す
+  return hist.some(h =>
+    (h.state === 'レビュー待ち' || h.state === 'REVIEWING') &&
+    (h.note || '').includes('未完了')
+  );
 }
 
 // ─────────────────────────────────────────────────────
@@ -133,7 +139,9 @@ function _loadCodexResultsByProject(projectId) {
         const taskId = f.replace(/^result_/, '').replace(/\.md$/, '');
         if (projectId) {
           const taskPid = _resolveTaskProject(taskId);
-          if (taskPid && taskPid !== projectId) continue; // 別プロジェクトはスキップ
+          // M3: projectId が解決できない場合は安全のため除外（UNKNOWN 扱い）
+          // taskPid === null → 混入防止のためスキップ
+          if (!taskPid || taskPid !== projectId) continue;
         }
         const content = fs.readFileSync(path.join(REVIEWS_DIR, f), 'utf8');
         const danger  = _parseResultDanger(content);
@@ -182,8 +190,12 @@ function gatherIndicators(projectId) {
     t.errorType === 'AUTH' || t.errorType === 'PERMISSION'
   );
 
-  // securityBlocked フラグ
-  const secBlocked = projTasks.filter(t => t.securityBlocked === true);
+  // M1（B案）: securityBlocked フィールドは task に永続化されないため
+  // RED トリガから除外する。security.js による blocking は prepareNextTask()
+  // 側で実行時に防御されており、quality-gate での重複チェックは不要。
+  // const secBlocked = projTasks.filter(t => t.securityBlocked === true);
+  // → securityBlockCount を常に 0 とする
+  const secBlockCount = 0;
 
   // ─── 履歴タスク集計（スコア用のみ — M1: history は RED に使わない）─
   const history = _loadRecentHistory(projectId, 20);
@@ -217,7 +229,7 @@ function gatherIndicators(projectId) {
     // RED トリガ関連（アクティブタスクのみ / history は含めない）
     rejectedReviewCount:    rejectedReview.length,    // M1: history 除外
     authErrorCount:         authErrors.length,         // M1: history 除外
-    securityBlockCount:     secBlocked.length,
+    securityBlockCount:     secBlockCount,  // M1(B案): 常に 0（フィールド未永続化のため）
     validationFailedCount:  validationFailed.length,  // H2: validator 失敗のみ
     reviewingCount:         reviewing.length,          // H2: スコア用（RED ではない）
     codexHighCount:         codexHighList.length,      // M2: project 単位

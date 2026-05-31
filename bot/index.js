@@ -934,7 +934,15 @@ async function handleProjectRun(message, projectId) {
       ).catch(() => {});
     }
   } catch (qaErr) {
-    logger.warn(`[ProjectRun] Quality Gate チェックエラー（無視して続行）: ${qaErr.message}`);
+    // M2: フェイルクローズ — 評価失敗時は安全のため実行を停止する
+    logger.error(`[ProjectRun] Quality Gate 評価エラー: ${qaErr.message}`);
+    await message.reply(
+      `🛑 **品質ゲート評価に失敗したため安全のため停止しました**\n\n` +
+      `Project: \`${projectId}\`\n` +
+      `エラー: ${qaErr.message.slice(0, 100)}\n\n` +
+      `\`!quality status ${projectId}\` で状態を確認するか、管理者に連絡してください。`
+    ).catch(() => {});
+    return;
   }
 
   // チャンネルの現在プロジェクトを設定（handleAutoOn が getCurrentProject を使うため）
