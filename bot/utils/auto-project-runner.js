@@ -579,6 +579,23 @@ function runPlannerStep(projectId, context = {}) {
   };
 }
 
+// ─────────────────────────────────────────────────────
+// runPlannerStepAsync(projectId, context = {}) — Phase D-7a
+//
+// runPlannerStep() の async ラッパー。
+// 現時点では内部で既存の同期版を呼ぶだけで、戻り値・挙動は同一。
+// 将来 Phase D-7b 以降で LLM Planner（planProjectGoalsBest）を
+// ここから await 呼び出しに差し替える際の差し込み口として設ける。
+//
+// 制約:
+//   - LLM API を呼ばない（D-7a 時点）
+//   - tasks.json を直接変更しない
+//   - 既存 runPlannerStep() は変更しない
+// ─────────────────────────────────────────────────────
+async function runPlannerStepAsync(projectId, context = {}) {
+  return runPlannerStep(projectId, context);
+}
+
 module.exports = {
   getRunnerState,
   saveRunnerState,
@@ -587,5 +604,6 @@ module.exports = {
   resetRunner,
   formatRunnerStatus,
   runPlannerStep,
+  runPlannerStepAsync,
   setAutoApplyPlanning,
 };
