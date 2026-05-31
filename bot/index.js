@@ -1613,8 +1613,9 @@ async function handleProject(message, args) {
         }
       } catch {}
 
+      // Phase D-6: LLM Planner 優先（apply コマンドも LLM 候補を使用）
       const proj2 = projectManager.getProject(pid);
-      const plan2 = planner2.planProjectGoals(pid, {
+      const plan2 = await planner2.planProjectGoalsBest(pid, {
         description: (proj2?.description || proj2?.name || '') + (proj2?.goal || ''),
         doneTasks:   doneSums2,
       });
@@ -1666,14 +1667,16 @@ async function handleProject(message, args) {
 
     const processingMsg = await message.reply(`🔍 **Project Plan を分析中...**\n\`${pid}\``);
 
+    // Phase D-6: LLM Planner 優先、API キーなし/失敗時はルールベースへフォールバック
     const planner = require('./utils/project-planner.js');
-    const plan    = planner.planProjectGoals(pid, {
+    const plan    = await planner.planProjectGoalsBest(pid, {
       description: description + '\n' + project.goal || '',
       docs:        docsSummary,
       doneTasks:   doneSummaries,
     });
 
     // スマホ向け表示を構築
+    const sourceLabel  = plan.source === 'llm' ? '🤖 LLM Planner' : '📋 rule-based';
     const gapLines = plan.gaps.slice(0, 5)
       .map((g, i) => `${i + 1}. ${g}`).join('\n') || '（なし）';
 
@@ -1682,7 +1685,7 @@ async function handleProject(message, args) {
       .join('\n') || '（なし）';
 
     const reply =
-      `📋 **Project Plan**\n` +
+      `📋 **Project Plan** (${sourceLabel})\n` +
       `Project: **${project.name}** (\`${pid}\`)\n\n` +
       `**不足と推定:**\n${gapLines}\n\n` +
       `**次タスク候補:**\n${candidateLines}\n\n` +
