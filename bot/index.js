@@ -2666,9 +2666,11 @@ async function executeClaudeTask({
 // ─────────────────────────────────────────────────────
 async function prepareNextTask(message, source = 'run-next') {
   const currentPid = projectManager.getCurrentProject(message.channelId);
-  const tasks      = taskManager.listTasksByPriority();
-  const filtered   = projectManager.filterTasksByProject(tasks, currentPid);
-  const next       = filtered.find(t => t.state === taskManager.STATES.PENDING);
+
+  // Phase E-5a: claimNextTask で原子的に PENDING → IN_PROGRESS へ移行する。
+  // 既存の find() + 個別 updateState() の代わりにこれを使う。
+  // 後方互換: leaseOwner のない既存タスクも正常に処理される。
+  const next = taskManager.claimNextTask(currentPid, source);
   if (!next) return null;
 
   const prompt = next.prompt || '';
@@ -2677,6 +2679,7 @@ async function prepareNextTask(message, source = 'run-next') {
   const sec = security.checkPrompt(prompt);
   if (!sec.safe) {
     logger.warn(`${source} セキュリティブロック: ${next.id} | ${sec.reason}`);
+    taskManager.releaseLease(next.id); // claim を解除して PENDING に戻す
     await message.reply(
       `🚫 **セキュリティチェックで拒否**\n\n` +
       `タスク \`${next.id}\` をスキップします。\n理由: ${sec.reason}`
@@ -2684,9 +2687,16 @@ async function prepareNextTask(message, source = 'run-next') {
     return { blocked: true };
   }
 
-  // ─── 高危険度は自動実行しない ───
+  // ─── TaskType / TaskSize 判定 ───
+  // task.type が保存されていれば優先して使う（DOCS/REVIEW/RESEARCH等を上書きしない）
+  // ※ assessDanger より先に taskType を確定させる（非変更系タイプの誤ブロック防止）
+  const taskType       = next.type || taskTypeUtil.detectTaskType(prompt);
+
+  // ─── 高危険度は自動実行しない（非変更系タイプは除外）───
+  const NON_CHANGING_TYPES = new Set(['REVIEW', 'RESEARCH', 'DOCS']);
   const preDanger = codex.assessDanger(prompt, '', []);
-  if (preDanger === '高') {
+  if (preDanger === '高' && !NON_CHANGING_TYPES.has(String(taskType).toUpperCase())) {
+    taskManager.releaseLease(next.id); // claim を解除
     await message.reply(
       `🔴 **高危険度タスクは自動実行できません**\n\n` +
       `タスク: \`${next.id}\`\n\n` +
@@ -2694,13 +2704,10 @@ async function prepareNextTask(message, source = 'run-next') {
     ).catch(() => {});
     return { blocked: true };
   }
-
-  // ─── TaskType / TaskSize 判定 ───
-  // task.type が保存されていれば優先して使う（DOCS/REVIEW/RESEARCH等を上書きしない）
-  const taskType       = next.type || taskTypeUtil.detectTaskType(prompt);
   const taskSizeResult = taskTypeUtil.estimateTaskSize(prompt);
 
   if (taskSizeResult.size === taskTypeUtil.TASK_SIZES.LARGE) {
+    taskManager.releaseLease(next.id); // claim を解除
     const splitMsg = taskTypeUtil.buildSplitSuggestion(prompt, taskSizeResult);
     await message.reply(
       `⚠️ **タスクが大きすぎます**\n\nタスク: \`${next.id}\`\n\n` + splitMsg

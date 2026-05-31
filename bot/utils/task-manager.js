@@ -214,6 +214,9 @@ function createTask(prompt, discordUserId, taskId = null, dangerLevel = '低', p
     // ─── Phase E-4: Failure Recovery ───
     lastError:    null,   // 最後のエラーメッセージ（スライス済み）
     errorType:    null,   // エラー分類: TIMEOUT|AUTH|PERMISSION|SYNTAX|UNKNOWN
+    // ─── Phase E-5a: Task Lease ───
+    leaseOwner:     null, // claim した実行元識別子（後方互換: 未設定は null 扱い）
+    leaseExpiresAt: null, // lease 有効期限 ISO 文字列
   };
 
   tasks.push(task);
@@ -242,6 +245,12 @@ function updateState(taskId, newState, note = '') {
   task.state     = newState;
   task.updatedAt = now;
   task.stateHistory.push({ state: newState, at: now, note });
+
+  // Phase E-5a: DONE / ON_HOLD 遷移時は lease を解除
+  if (newState === STATES.DONE || newState === STATES.ON_HOLD) {
+    task.leaseOwner     = null;
+    task.leaseExpiresAt = null;
+  }
 
   // 完了タスクはアーカイブへ
   if (newState === STATES.DONE) {
@@ -315,6 +324,81 @@ function setTaskError(taskId, errorMessage) {
   const errorType = classifyErrorType(masked); // 分類はマスク後のメッセージで行う
   const lastError = masked.slice(0, 300);
   return updateTask(taskId, { lastError, errorType });
+}
+
+// ─────────────────────────────────────────────────────
+// Phase E-5a: Task Lease
+//
+// 単一Botプロセス前提でのソフトロック機構。
+// tasks.lock ファイルは使わず tasks.json のフィールドで管理する。
+//
+// leaseOwner     : claim した実行元識別子（'bot-auto' / 'bot-run1' 等）
+// leaseExpiresAt : lease 有効期限 ISO 文字列（LEASE_DURATION_MS 後）
+// ─────────────────────────────────────────────────────
+const LEASE_DURATION_MS = 10 * 60 * 1000; // 10分（タスク実行最大時間 5 分 + バッファ）
+
+// claimNextTask(projectId, ownerId)
+//
+// 指定プロジェクトの次の PENDING タスクを原子的にクレームして IN_PROGRESS にする。
+// 同期関数内で load → 判定 → save を一括実行し二重クレームを防ぐ。
+//
+// 後方互換: leaseOwner が未設定の既存タスクも正常に処理する。
+//
+// 戻り値: クレームしたタスクオブジェクト | null（候補なし）
+function claimNextTask(projectId, ownerId) {
+  const tasks   = loadTasks();
+  const now     = Date.now();
+  const target  = tasks.find(t =>
+    t.projectId === projectId &&
+    t.state     === STATES.PENDING &&
+    // 後方互換: leaseOwner がない既存タスクも候補にする
+    (!t.leaseOwner || !t.leaseExpiresAt || new Date(t.leaseExpiresAt).getTime() < now)
+  );
+  if (!target) return null;
+
+  const expires  = new Date(now + LEASE_DURATION_MS).toISOString();
+  target.state         = STATES.IN_PROGRESS;
+  target.leaseOwner    = ownerId;
+  target.leaseExpiresAt = expires;
+  target.updatedAt     = new Date().toISOString();
+  target.stateHistory  = target.stateHistory || [];
+  target.stateHistory.push({ state: STATES.IN_PROGRESS, at: target.updatedAt, note: `claim: ${ownerId}` });
+
+  saveTasks(tasks);
+  logger.info(`[Lease] claimed: ${target.id} | owner:${ownerId} | expires:${expires}`);
+  return target;
+}
+
+// releaseLease(taskId)
+//
+// クレームを解除して PENDING に戻す。
+// blocked / security / LARGE でタスクを実行しないと判断した場合に必ず呼ぶ。
+//
+// 後方互換: leaseOwner が未設定のタスクに対して呼んでも安全。
+//
+// 戻り値: 更新後のタスクオブジェクト | null（タスクが見つからない）
+function releaseLease(taskId) {
+  const tasks  = loadTasks();
+  const task   = tasks.find(t => t.id === taskId);
+  if (!task) return null;  // アーカイブ済みの場合も null で正常
+
+  if (task.state === STATES.IN_PROGRESS) {
+    task.state          = STATES.PENDING;
+    task.leaseOwner     = null;
+    task.leaseExpiresAt = null;
+    task.updatedAt      = new Date().toISOString();
+    task.stateHistory   = task.stateHistory || [];
+    task.stateHistory.push({ state: STATES.PENDING, at: task.updatedAt, note: 'lease released' });
+    saveTasks(tasks);
+    logger.info(`[Lease] released: ${taskId}`);
+  } else {
+    // PENDING / ON_HOLD 等: lease フィールドだけクリアする
+    task.leaseOwner     = null;
+    task.leaseExpiresAt = null;
+    task.updatedAt      = new Date().toISOString();
+    saveTasks(tasks);
+  }
+  return task;
 }
 
 // ─────────────────────────────────────────────────────
@@ -1141,6 +1225,8 @@ module.exports = {
   updateTaskType,
   classifyErrorType,
   setTaskError,
+  claimNextTask,
+  releaseLease,
   buildTypeGuard,
   createFixTaskFromReview,
   findFixTasksFromReview,
