@@ -178,16 +178,34 @@ function addWorker(role, workerId = null, projectId = '*') {
 //   { ok: true, worker, wasBusy }
 //   { ok: false, reason }
 // ─────────────────────────────────────────────────────
-function removeWorker(workerId) {
+// ─────────────────────────────────────────────────────
+// removeWorker(workerId, options?)
+//
+// デフォルトでは busy Worker の削除を拒否する（H1 修正）。
+// `{ force: true }` を指定した場合のみ busy でも削除可。
+//
+// 戻り値:
+//   { ok: true,  worker, wasBusy }
+//   { ok: false, reason: 'BUSY',      worker }  — busy ガード（force なし）
+//   { ok: false, reason: '...not found...' }      — 未登録
+// ─────────────────────────────────────────────────────
+function removeWorker(workerId, options = {}) {
+  const { force = false } = options;
   const workers = loadWorkers();
   const idx     = workers.findIndex(w => w.workerId === workerId);
   if (idx === -1) {
     return { ok: false, reason: `\`${workerId}\` が見つかりません。` };
   }
-  const [worker] = workers.splice(idx, 1);
+  const worker  = workers[idx];
+  // busy ガード: デフォルトでは busy Worker を削除しない
+  if (!force && worker.status === WORKER_STATUS.BUSY) {
+    logger.warn(`[WorkerRegistry] removeWorker: ${workerId} は BUSY のため削除不可（force:false）`);
+    return { ok: false, reason: 'BUSY', worker };
+  }
+  workers.splice(idx, 1);
   saveWorkers(workers);
   const wasBusy = worker.status === WORKER_STATUS.BUSY;
-  logger.info(`[WorkerRegistry] 削除: ${workerId} | wasBusy:${wasBusy}`);
+  logger.info(`[WorkerRegistry] 削除: ${workerId} | wasBusy:${wasBusy} | force:${force}`);
   return { ok: true, worker, wasBusy };
 }
 

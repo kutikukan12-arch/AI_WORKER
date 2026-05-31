@@ -130,6 +130,28 @@ test('2f. removeWorker: 未登録は { ok:false } を返す', () => {
   assert.strictEqual(res.ok, false);
 });
 
+test('2f2. removeWorker: busy Worker は { ok:false, reason:"BUSY" } を返す（H1）', () => {
+  wr.addWorker('IMPLEMENTER', 'w-busy-guard', pid);
+  wr.updateWorkerStatus('w-busy-guard', wr.WORKER_STATUS.BUSY, 'task_xxx');
+  const res = wr.removeWorker('w-busy-guard'); // force:false (default)
+  assert.strictEqual(res.ok, false, 'busy なのに削除できた');
+  assert.strictEqual(res.reason, 'BUSY');
+  assert.ok(res.worker, 'worker オブジェクトが返っていない');
+  info('2f2: busy guard ok → reason=' + res.reason);
+  // force:true なら削除できる
+  wr.updateWorkerStatus('w-busy-guard', wr.WORKER_STATUS.IDLE, null);
+  wr.removeWorker('w-busy-guard');
+});
+
+test('2f3. removeWorker: force:true なら busy でも削除できる', () => {
+  wr.addWorker('IMPLEMENTER', 'w-force-del', pid);
+  wr.updateWorkerStatus('w-force-del', wr.WORKER_STATUS.BUSY, 'task_yyy');
+  const res = wr.removeWorker('w-force-del', { force: true });
+  assert.strictEqual(res.ok, true, 'force:true で削除できなかった');
+  assert.strictEqual(res.wasBusy, true);
+  info('2f3: force delete ok → wasBusy=' + res.wasBusy);
+});
+
 test('2g. workerId 省略で自動生成される', () => {
   const res = wr.addWorker('TESTER');
   assert.strictEqual(res.ok, true);

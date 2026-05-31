@@ -404,6 +404,10 @@ function computeDelta(projectId, plan) {
   const toRemove = [];
   const warnings = [];
 
+  // MAX_WORKERS 上限判定: 削除分を差し引いた実効的な空き枠を計算する
+  // (削除予定を先に集計して累積 toAdd との整合を取る)
+  let pendingAddCount = 0; // このループで累積する追加予定数
+
   for (const [role, needed] of Object.entries(plan.workers)) {
     const existing = scoped.filter(w => w.role === role);
     const have     = existing.length;
@@ -411,9 +415,11 @@ function computeDelta(projectId, plan) {
 
     if (diff > 0) {
       // 不足: 追加が必要
-      const globalCount = allWorkers.length;
-      const canAdd      = Math.max(0, MAX_WORKERS - globalCount);
-      const actualAdd   = Math.min(diff, canAdd);
+      // MAX_WORKERS 上限を「全体現在数 + 累積追加予定数 - 削除予定数」で判定し
+      // preview と実行結果がズレないようにする（H3 修正）
+      const effectiveTotal = allWorkers.length + pendingAddCount - toRemove.length;
+      const canAdd         = Math.max(0, MAX_WORKERS - effectiveTotal);
+      const actualAdd      = Math.min(diff, canAdd);
       if (actualAdd < diff) {
         warnings.push(
           `⚠️ ${role}: ${diff}人追加したいが MAX_WORKERS(${MAX_WORKERS}) の上限で ${actualAdd}人のみ追加`
@@ -421,6 +427,7 @@ function computeDelta(projectId, plan) {
       }
       if (actualAdd > 0) {
         toAdd.push({ role, count: actualAdd });
+        pendingAddCount += actualAdd;
       }
     } else if (diff < 0) {
       // 過剰: idle な Worker を削除候補にする（busy / '*' は触らない）
@@ -480,13 +487,17 @@ function applyStaffingPlan(projectId, options = {}) {
         }
       }
     }
-    // 削除
+    // 削除（H1 修正: removeWorker の busy ガードを確認し BUSY なら skipped へ）
     for (const wid of delta.toRemove) {
-      const res = workerRegistry.removeWorker(wid);
+      const res = workerRegistry.removeWorker(wid); // force:false がデフォルト
       if (res.ok) {
         removed.push(wid);
+      } else if (res.reason === 'BUSY') {
+        // apply 直前に busy 化していた場合: skipped に記録して警告
+        skipped.push(wid);
+        warnings.push(`⚠️ \`${wid}\` は実行中のため削除不可（busy）`);
       } else {
-        // busy に変わっていた等: スキップして警告
+        // 未登録等その他エラー
         skipped.push(wid);
         warnings.push(`removeWorker(${wid}) スキップ: ${res.reason}`);
       }
