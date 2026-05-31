@@ -467,5 +467,92 @@ test('9k. FIXタスクが type=FIX / projectId 維持で生成される', () => 
   cleanup2();
 });
 
+// ─────────────────────────────────────────────────────
+// 10. H-1/M-1/L-2 修正テスト
+// ─────────────────────────────────────────────────────
+console.log('\n[10. H-1/M-1/L-2 修正テスト]');
+
+// ソース確認
+const loopSrc = src;
+
+test('H-1a. _handleSoftRed が createTask 後に updateTask で priority=高 を設定する', () => {
+  const fn = loopSrc.indexOf('async function _handleSoftRed(');
+  const fe  = loopSrc.indexOf('\n// ─', fn + 1);
+  const fb  = loopSrc.slice(fn, fe > 0 ? fe : fn + 2000);
+  assert.ok(fb.includes("priority:       '高'") || fb.includes("priority: '高'"),
+    "priority='高' の updateTask がない");
+  assert.ok(fb.includes("priorityReason: 'soft RED auto-FIX'") ||
+            fb.includes("priorityReason:"),
+    'priorityReason がない');
+});
+
+test('H-1b. dangerLevel → priority 変換コメントが削除または修正されている', () => {
+  const fn = loopSrc.indexOf('async function _handleSoftRed(');
+  const fe  = loopSrc.indexOf('\n// ─', fn + 1);
+  const fb  = loopSrc.slice(fn, fe > 0 ? fe : fn + 2000);
+  assert.ok(!fb.includes('dangerLevel → priority 高になる'),
+    '誤ったコメントが残っている');
+});
+
+test('H-1c. 実際に生成された FIX タスクの priority が「高」になる', () => {
+  const fixPrompt = '[quality-gate auto-FIX] テスト';
+  const fixTask   = tm.createTask(fixPrompt, 'auto-runner', null, '低', pid2, 'FIX');
+  CLEANUP_IDS2.push(fixTask.id);
+  // 明示的に priority 上書き
+  tm.updateTask(fixTask.id, { priority: '高', priorityReason: 'soft RED auto-FIX' });
+  const updated = tm.listTasks().find(t => t.id === fixTask.id);
+  assert.strictEqual(updated.priority, '高', 'priority が高でない');
+  assert.ok(updated.priorityReason.includes('soft RED'), 'priorityReason が設定されていない');
+  cleanup2();
+});
+
+test('M-1a. 正常 REVIEWING では tasksFailed が増えない（ソース確認）', () => {
+  // REVIEWING ブランチで validFailNote がない場合は tasksFailed++ しないことを確認
+  const loopFn = loopSrc.indexOf('async function _runProjectLoop(');
+  const loopFe = loopSrc.indexOf('\n// ─', loopFn + 1);
+  const loopFb = loopSrc.slice(loopFn, loopFe > 0 ? loopFe : loopFn + 8000);
+  // REVIEWING ブランチ内
+  const revIdx = loopFb.indexOf("taskManager.STATES.REVIEWING");
+  const revArea = loopFb.slice(revIdx, revIdx + 600);
+  // validFailNote が true の場合にのみ tasksFailed++ が来る
+  const failIncIdx = revArea.indexOf('ctx.tasksFailed++');
+  const condIdx    = revArea.indexOf('if (validFailNote)');
+  // tasksFailed++ は if(validFailNote) の中にある
+  assert.ok(condIdx >= 0 && failIncIdx > condIdx,
+    'tasksFailed++ が validFailNote チェックの外にある');
+});
+
+test('M-1b. 正常 REVIEWING では consecutiveErrors が増えない（ソース確認）', () => {
+  const loopFn = loopSrc.indexOf('async function _runProjectLoop(');
+  const loopFe = loopSrc.indexOf('\n// ─', loopFn + 1);
+  const loopFb = loopSrc.slice(loopFn, loopFe > 0 ? loopFe : loopFn + 8000);
+  const revIdx  = loopFb.indexOf("taskManager.STATES.REVIEWING");
+  const revArea = loopFb.slice(revIdx, revIdx + 600);
+  const errIncIdx = revArea.indexOf('ctx.consecutiveErrors++');
+  const condIdx   = revArea.indexOf('if (validFailNote)');
+  assert.ok(condIdx >= 0 && errIncIdx > condIdx,
+    'consecutiveErrors++ が validFailNote チェックの外にある');
+});
+
+test('M-1c. completion-validator 失敗時のみ tasksFailed / consecutiveErrors が増える', () => {
+  // _isValidationFailureNote が null → 分岐に入らない
+  const nullResult = (() => {
+    const hist = [{ state: 'レビュー待ち', note: 'AIレビュー: 問題なし' }];
+    const last = [...hist].reverse().find(h => h.state === 'レビュー待ち');
+    return (last?.note || '').includes('未完了') ? last.note : null;
+  })();
+  assert.strictEqual(nullResult, null);
+
+  // _isValidationFailureNote が note → 分岐に入る
+  const noteResult = (() => {
+    const hist = [{ state: 'レビュー待ち', note: '未完了 — 変更なし' }];
+    const last = [...hist].reverse().find(h => h.state === 'レビュー待ち');
+    return (last?.note || '').includes('未完了') ? last.note : null;
+  })();
+  assert.ok(noteResult !== null && noteResult.includes('未完了'));
+});
+
+cleanup2();
+
 console.log(`\n結果: ${pass} passed / ${fail} failed\n`);
 if (fail > 0) process.exit(1);

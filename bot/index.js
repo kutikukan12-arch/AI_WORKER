@@ -1089,11 +1089,17 @@ async function _handleSoftRed(ctx, failedTask, failureNote) {
       fixPrompt,
       'auto-runner',   // requestedBy
       null,            // taskId（自動生成）
-      '高',            // dangerLevel → priority 高になる
+      '低',            // dangerLevel（priority は下記で明示上書き）
       projectId,
       'FIX'
     );
-    logger.info(`[SoftRed] FIX タスク生成: ${fixTask.id} → 元タスク:${originalId} | ${projectId}`);
+    // H-1: dangerLevel から priority への変換は不安定なため、明示的に上書きする
+    taskManager.updateTask(fixTask.id, {
+      priority:       '高',
+      priorityReason: 'soft RED auto-FIX',
+    });
+    fixTask.priority = '高'; // 戻り値にも反映
+    logger.info(`[SoftRed] FIX タスク生成: ${fixTask.id} priority:高 → 元タスク:${originalId} | ${projectId}`);
   } catch (createErr) {
     logger.error(`[SoftRed] FIX タスク生成失敗: ${createErr.message}`);
     await message.channel.send(
@@ -1334,12 +1340,14 @@ async function _runProjectLoop(ctx) {
         ctx.tasksDone++;  // 人間確認待ちも「実行済み」としてカウント
         ctx.consecutiveErrors = 0;
       } else if (finalTask.state === taskManager.STATES.REVIEWING) {
-        // REVIEWING: 通常のレビュー待ち か completion-validator 失敗かを判定
+        // REVIEWING: completion-validator 失敗 か 正常なレビュー待ちかを判定
         const validFailNote = _isValidationFailureNote(finalTask);
-        ctx.tasksFailed++;
-        ctx.consecutiveErrors++;
 
         if (validFailNote) {
+          // M-1: completion-validator 失敗時のみ failed / consecutiveErrors を増やす
+          ctx.tasksFailed++;
+          ctx.consecutiveErrors++;
+
           // ── Phase F-3: soft RED auto-FIX ───────────────────
           if (!ctx.softRedHandled) {
             // 初回: FIX タスクを自動生成して次ループへ
@@ -1358,6 +1366,8 @@ async function _runProjectLoop(ctx) {
             break;
           }
         }
+        // M-1: 正常なレビュー待ち（AIレビュー等）は failed 扱いしない
+        // tasksDone も増やさない（実行済みだが完了ではない）
       } else if (finalTask.state === taskManager.STATES.IN_PROGRESS) {
         // タイムアウト → Auto Split 試行
         const splitAction = await handleAutoTimeoutSplit({
