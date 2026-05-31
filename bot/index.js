@@ -2488,7 +2488,7 @@ async function executeClaudeTask({
         prompt:        prompt.slice(0, 200),
         resultSummary: result.output.slice(0, 150),
       };
-      const runnerResult = autoProjectRunner.runPlannerStep(projectId, {
+      const runnerResult = await autoProjectRunner.runPlannerStepAsync(projectId, {
         completedTask: completedTaskContext,
       });
 
@@ -2555,7 +2555,7 @@ async function executeClaudeTask({
         logger.info(`[AutoRunner] C-4フック: ${projectId} | planner:${plannerAct} | loop:${runnerResult.loopCount}`);
       }
     } catch (runnerErr) {
-      logger.warn(`[AutoRunner] runPlannerStep エラー: ${runnerErr.message}`);
+      logger.warn(`[AutoRunner] runPlannerStepAsync エラー: ${runnerErr.message}`);
     }
 
   } catch (error) {
@@ -2837,7 +2837,7 @@ async function executeReviewTask({ message, task, projectId }) {
     try {
       const runnerState0 = autoProjectRunner.getRunnerState(projectId);
       if (runnerState0.enabled) {
-        const runnerResult = autoProjectRunner.runPlannerStep(projectId, { reviewResult: parsed });
+        const runnerResult = await autoProjectRunner.runPlannerStepAsync(projectId, { reviewResult: parsed });
 
         if (runnerResult.nextExecutableTaskId) {
           const nextTask     = taskManager.getTask(runnerResult.nextExecutableTaskId);
