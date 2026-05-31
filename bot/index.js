@@ -475,160 +475,125 @@ async function sendPRHumanConfirm(channel, taskId, prResult, dangerLevel) {
 async function handleHelp(message) {
   const embed = new EmbedBuilder()
     .setColor(0x5865F2)
-    .setTitle('🤖 AI_WORKER Bot コマンド一覧 (Phase5)')
+    .setTitle('🤖 AI_WORKER Bot コマンド一覧 (Phase F-4)')
     .addFields(
+      // ── 自律ループ ───────────────────────────────────────
       {
-        name: '!claude <指示>',
-        value: 'Claude Code に作業を依頼します\n例: `!claude Pythonでfizzbuzzを書いて`',
-        inline: false,
-      },
-      {
-        name: '!codex <内容>',
+        name: '🚀 !project run <projectId>',
         value: [
-          'スマホから直接 Codex（GPT-4o）にレビューを依頼します',
-          '`OPENAI_API_KEY` が設定済みなら自動でレビュー結果を表示します',
-          '未設定の場合は手動貼り付け用ファイルを `reviews/` に保存します',
-          '例: `!codex このエラーの直し方を教えて: TypeError: Cannot read properties of undefined`',
+          '**自律 AI 開発ループを開始します**',
+          'RESEARCH → DOCS → IMPLEMENT → REVIEW → 品質判定 → 自己修復 を自動で繰り返します',
+          '`!project stop <projectId>` — 安全停止（人間確認待ち中でも対応）',
+          '`!project runner status` — ループ状況・loopCount・softRED 回数を表示',
+          '`!project runner on/off` — Auto Runner 有効化/無効化',
+          '例: `!project run youtube予測ai`',
         ].join('\n'),
         inline: false,
       },
+      // ── 人間確認 ─────────────────────────────────────────
       {
-        name: '!task [サブコマンド]',
+        name: '❓ !approve / !deny — HUMAN_CHECK 対応',
         value: [
-          'タスクを管理します',
-          '`!task list` — タスク一覧（優先度順）',
-          '`!task <タスクID>` — タスク詳細',
-          '`!task done <タスクID>` — タスクを完了にする',
-          '`!task hold <タスクID>` — タスクを保留にする',
-          '`!task resume <タスクID>` — 保留タスクを未着手に戻す',
-          '`!task stats` — タスク統計',
-        ].join('\n'),
-        inline: false,
-      },
-      {
-        name: '!meeting <議題>',
-        value: 'Claude / Codex / ChatGPT の3者が議題を議論します\n例: `!meeting 次にどの機能を作るべきか`',
-        inline: false,
-      },
-      {
-        name: '!approve / !deny / !pause / !resume',
-        value: [
-          '⚠️ 承認システム（管理者のみ）',
-          '高危険度の `!claude` は自動実行されず承認待ちになります',
-          '`!approve <タスクID>` — 承認して Claude Code を実行',
-          '`!deny <タスクID>` — 却下してキャンセル',
-          '`!pause <タスクID>` — 一時停止',
-          '`!resume <タスクID>` — 一時停止を解除',
+          '**AI が判断できない場面（AUTH エラー・危険操作・未解決バグ）で通知が届きます**',
+          '`!task show <taskId>` — タスク内容を確認',
+          '`!approve <taskId>` — 承認 → ループ再開',
+          '`!deny <taskId>` — 却下 → 安全停止',
           '`!approve` — 承認待ち一覧を表示',
+          '※ 高危険度の `!claude` 直接実行にも使用します（管理者のみ）',
         ].join('\n'),
         inline: false,
       },
+      // ── 品質ゲート ────────────────────────────────────────
       {
-        name: '!restart',
+        name: '📊 !quality [サブコマンド]',
         value: [
-          '⚙️ Bot を安全に再起動します（管理者のみ）',
-          '再起動前に構文チェック・Token確認・キュー状態を確認します',
-          '問題がある場合は確認メッセージを表示します',
-          '`!restart confirm` — 警告がある場合に強制再起動',
+          '`!quality status [projectId]` — 品質状態（GREEN / YELLOW / RED）',
+          '`!quality report [projectId]` — 詳細レポート（スコア・RED 要因）',
+          '`!quality gate list` — 登録ゲート一覧',
+          '`!quality gate add <id> <project> <GREEN|YELLOW> [説明]` — ゲート追加',
+          '`!quality gate remove <id>` — ゲート削除',
+          '`!quality gate check [project]` — ゲート評価',
         ].join('\n'),
         inline: false,
       },
+      // ── プロジェクト管理 ─────────────────────────────────
       {
-        name: '!queue',
-        value: 'タスクキューの状況を確認します\n`!queue clear` — 待機中タスクをクリア（オーナーのみ）',
-        inline: false,
-      },
-      {
-        name: '!next',
-        value: '最優先の実行可能タスクを1件表示します（完了・レビュー待ち・人間確認待ち・保留を除外）',
-        inline: false,
-      },
-      {
-        name: '!run-next',
-        value: '最優先の未着手タスクを自動実行します（PENDING → IN_PROGRESS → Claude Code 実行）',
-        inline: false,
-      },
-      {
-        name: '!auto run 1',
-        value: 'Auto Task Runner Phase3: 未着手タスクを1件だけ安全実行します\n例: `!auto run 1`',
-        inline: false,
-      },
-      {
-        name: '!auto on',
-        value: 'Auto Task Runner Phase4: 未着手タスクを最大3件まで順次自動実行します\n停止条件: タスクなし / 高危険度 / バリデーション失敗 / 人間確認待ち / 上限(3件)',
-        inline: false,
-      },
-      {
-        name: '!batch',
-        value: 'ナイトバッチを今すぐ手動実行します',
-        inline: false,
-      },
-      {
-        name: '!train',
-        value: 'AI 予測モデルを手動でトレーニングします\n`data/history/` のアーカイブデータを分析してウェイトを更新します',
-        inline: false,
-      },
-      {
-        name: '!apply-review <タスクID>',
-        value: 'Codex のレビュー結果を Claude Code にフィードバックします\n例: `!apply-review task_1748344800000`',
-        inline: false,
-      },
-      {
-        name: '!create-pr <タスクID>',
-        value: 'タスクの PR を手動で作成します（ENABLE_PR=true が必要）\n例: `!create-pr task_1748344800000`',
-        inline: false,
-      },
-      {
-        name: '!history [タスクID]',
-        value: 'レビュー履歴を表示します\n例: `!history` / `!history task_1748344800000`',
-        inline: false,
-      },
-      {
-        name: '!research list / show <ID>',
-        value: '調査レポートを一覧表示 / フル表示します\n例: `!research list` / `!research show task_xxx`',
-        inline: false,
-      },
-      {
-        name: '!review list / show <ID>',
-        value: 'Codex レビュー結果を一覧表示 / フル表示します\n例: `!review list` / `!review show task_xxx`',
-        inline: false,
-      },
-      {
-        name: '!project [サブコマンド]',
+        name: '📁 !project [サブコマンド] — プロジェクト管理',
         value: [
-          'プロジェクトを管理します',
           '`!project current` — 現在のプロジェクトを表示',
           '`!project list` — プロジェクト一覧',
           '`!project create <名前>` — 新しいプロジェクトを作成',
           '`!project switch <名前>` — プロジェクトを切り替え',
-          '例: `!project create youtube-ai` / `!project switch youtube-ai`',
+          '`!project plan [id]` — タスク候補を表示',
+          '`!project plan apply` — 候補上位3件をタスクに登録',
+          '`!project runner auto-apply on/off/status` — 自動タスク登録',
         ].join('\n'),
         inline: false,
       },
+      // ── タスク管理 ────────────────────────────────────────
       {
-        name: '!worker [サブコマンド]',
+        name: '📋 !task [サブコマンド] — タスク管理',
         value: [
-          'Worker Role を管理します（Phase E-5b）',
-          '`!worker add <role> [id] [project]` — Worker を登録',
-          '`!worker list` — 登録 Worker 一覧',
-          '`!worker rm <id>` — Worker を削除',
-          '`!worker status` — ワンライナー状況',
-          '役割: IMPLEMENTER / REVIEWER / TESTER / RESEARCHER',
+          '`!task list` — タスク一覧（優先度順）',
+          '`!task show <id>` / `!task <id>` — タスク詳細',
+          '`!task add <内容>` — タスク手動追加',
+          '`!task done/hold/resume <id>` — 状態変更',
+          '`!task stats` — 統計',
+          '`!task split [preview] <id>` — 大タスクを分割',
+          '`!task archive` / `!task cleanup` — 整理',
         ].join('\n'),
         inline: false,
       },
+      // ── Worker / 人員管理 ─────────────────────────────────
       {
-        name: '!doctor',
-        value: '⚙️ システム診断（管理者のみ）\n設定・Claude・ログ・タスクの状態を確認します',
+        name: '👥 !worker / !company — 人員管理',
+        value: [
+          '`!worker add <role> [id] [project]` — Worker を登録',
+          '`!worker list` / `!worker status` — 一覧・状況確認',
+          '`!worker rm <id>` — 削除',
+          '役割: IMPLEMENTER / REVIEWER / TESTER / RESEARCHER',
+          '`!company staff [projectId]` — 推奨人員を表示',
+          '`!company assign [projectId] [--preview]` — 人員を適用',
+        ].join('\n'),
         inline: false,
       },
+      // ── レビュー・研究 ───────────────────────────────────
       {
-        name: '!help',
-        value: 'このヘルプを表示します',
+        name: '🔍 レビュー・調査系',
+        value: [
+          '`!codex <内容>` — Codex（GPT-4o）に直接レビューを依頼',
+          '`!review list / show <ID>` — Codex レビュー結果を表示',
+          '`!research list / show <ID>` — 調査レポートを表示',
+          '`!apply-review <taskId>` — Codex フィードバックを Claude Code に適用',
+          '`!history [taskId]` — レビュー履歴を表示',
+          '`!create-pr <taskId>` — PR を手動作成（ENABLE_PR=true 必須）',
+        ].join('\n'),
+        inline: false,
+      },
+      // ── AI 会議・Claude 直接実行 ─────────────────────────
+      {
+        name: '🧠 !meeting / !claude — 会議・直接実行',
+        value: [
+          '`!meeting [full] <議題>` — Claude / Codex / ChatGPT の3者討論',
+          '`!claude <指示>` — Claude Code に直接作業を依頼（単発実行）',
+          '`!pause <taskId>` / `!resume <taskId>` — 一時停止・解除',
+        ].join('\n'),
+        inline: false,
+      },
+      // ── システム管理 ─────────────────────────────────────
+      {
+        name: '⚙️ システム管理（管理者のみ）',
+        value: [
+          '`!restart [confirm]` — Bot を安全に再起動',
+          '`!doctor` — システム診断（設定・Claude・タスク状態確認）',
+          '`!queue` / `!queue clear` — タスクキュー確認・クリア',
+          '`!batch` — ナイトバッチを手動実行',
+          '`!help` — このヘルプを表示',
+        ].join('\n'),
         inline: false,
       },
     )
-    .setFooter({ text: 'AI_WORKER Phase E-5b | 半自律AI開発チーム' })
+    .setFooter({ text: 'AI_WORKER Phase F-4 | 自律AI開発チーム | !project run で開始' })
     .setTimestamp();
 
   await message.reply({ embeds: [embed] });

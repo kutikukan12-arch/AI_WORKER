@@ -1,274 +1,268 @@
-# AI_WORKER Bot - Phase 1
+# AI_WORKER Bot — 自律 AI 開発チーム
 
-スマホの Discord から指示を送ると、Windows PC 上で Claude Code が動いてコードを作ってくれるシステムです。
+**Phase F-4** | スマホの Discord から指示を送ると、Windows PC 上で Claude Code が計画・実装・レビュー・品質判定・自己修復まで自律的に動くシステムです。
 
 ---
 
 ## これで何ができる？
 
 ```
-スマホ → Discord に !claude コマンドを送る
+スマホ → Discord に !project run を送る
           ↓
-        PC で Claude Code が自動で動く
+        AI が自律ループを開始
           ↓
-        結果が Discord に届く
+        📋 計画（RESEARCH → DOCS → IMPLEMENT）
+        🔨 実装（Claude Code CLI）
+        🔍 レビュー（Codex / GPT-4o）
+        📊 品質判定（Quality Gate: GREEN / YELLOW / RED）
+        🔧 自己修復（soft RED → FIX タスク自動生成）
+        ❓ 人間確認（HUMAN_CHECK → !approve / !deny）
           ↓
-        次に何をするか（Codex/ChatGPT/Claude Code）も教えてくれる
+        結果・ログが Discord に届く
+          ↓
+        GitHub に自動コミット・Push
 ```
 
 ---
 
-## セットアップ手順（初めての方向け）
+## セットアップ手順
 
 ### 必要なもの
 
 | ツール | 説明 | 入手先 |
 |--------|------|--------|
-| Node.js 18以上 | Bot を動かすための基盤 | https://nodejs.org → LTS版をダウンロード |
-| Claude Code | AIがコードを書くツール | `npm install -g @anthropic-ai/claude-code` |
-| Discord Bot | DiscordとPCをつなぐ橋 | 下の手順で作成 |
+| Node.js 18以上 | Bot を動かす基盤 | https://nodejs.org → LTS版 |
+| Claude Code | AI がコードを書くツール | `npm install -g @anthropic-ai/claude-code` |
+| Discord Bot | Discord と PC をつなぐ橋 | 下記手順で作成 |
 
 ---
 
 ### STEP 1: Node.js をインストール
 
 1. https://nodejs.org を開く
-2. **「LTS」と書かれたボタン**をクリックしてダウンロード
-3. ダウンロードしたファイルをダブルクリックしてインストール
-4. インストール完了後、PowerShell を開いて確認：
+2. **「LTS」** をクリックしてダウンロード・インストール
+3. 確認：
    ```
    node --version
    ```
-   `v18.x.x` のような表示が出ればOK
+   `v18.x.x` と表示されればOK
 
 ---
 
 ### STEP 2: Claude Code をインストール
 
-PowerShell を開いて以下を実行：
-
 ```powershell
 npm install -g @anthropic-ai/claude-code
+claude   # 初回ログイン
 ```
-
-完了後、ログインします：
-
-```powershell
-claude
-```
-
-（初回は Anthropic のサイトでログインが求められます）
 
 ---
 
 ### STEP 3: Discord Bot を作る
 
-**3-1. Discord Developer Portal を開く**
-
-ブラウザで https://discord.com/developers/applications を開く
-
-**3-2. アプリを作る**
-
-1. 右上の「New Application」をクリック
-2. 名前を入力（例: `AI-Worker-Bot`）
-3. 「Create」をクリック
-
-**3-3. Bot を有効にする**
-
-1. 左メニューの「Bot」をクリック
-2. 「Add Bot」をクリック → 「Yes, do it!」
-3. 「MESSAGE CONTENT INTENT」を**オン**にする（重要！）
-4. 「Save Changes」をクリック
-
-**3-4. トークンをコピーする**
-
-1. 「Bot」ページの「Reset Token」をクリック
-2. 表示されたトークンをコピー（**絶対に他人に見せないこと**）
-
-**3-5. Bot をサーバーに招待する**
-
-1. 左メニューの「OAuth2」→「URL Generator」をクリック
-2. 「SCOPES」で `bot` にチェック
-3. 「BOT PERMISSIONS」で以下にチェック：
-   - `Send Messages`
-   - `Read Messages/View Channels`
-   - `Embed Links`
-   - `Read Message History`
-4. 生成された URL をブラウザで開いてサーバーに招待
+1. https://discord.com/developers/applications → 「New Application」
+2. 左メニュー「Bot」→「Add Bot」→「MESSAGE CONTENT INTENT」をオン
+3. 「Reset Token」でトークンをコピー（他人に見せないこと）
+4. 「OAuth2」→「URL Generator」→ `bot` スコープ + `Send Messages / Read Messages / Embed Links / Read Message History` でサーバーに招待
 
 ---
 
 ### STEP 4: 環境変数を設定する
 
-**4-1. .env ファイルを作る**
-
-AI_WORKER フォルダで PowerShell を開いて：
-
 ```powershell
 Copy-Item .env.example .env
-```
-
-**4-2. .env をメモ帳で開いて設定する**
-
-```powershell
 notepad .env
 ```
 
-以下の3つを設定してください：
+| 設定名 | 説明 |
+|--------|------|
+| `DISCORD_TOKEN` | Bot のトークン |
+| `ALLOWED_CHANNEL_IDS` | 監視チャンネル ID（カンマ区切りで複数可）|
+| `DISCORD_OWNER_ID` | あなた自身のユーザー ID |
+| `OPENAI_API_KEY` | Codex レビュー用（任意）|
+| `GITHUB_TOKEN` | GitHub 自動 Push 用（任意）|
+| `BATCH_CHANNEL_ID` | バッチ通知チャンネル ID（任意）|
 
-| 設定名 | 説明 | 取得方法 |
-|--------|------|----------|
-| `DISCORD_TOKEN` | BotのID | STEP 3-4 でコピーしたもの |
-| `ALLOWED_CHANNEL_IDS` | 監視するチャンネルのID | 下記参照 |
-| `DISCORD_OWNER_ID` | あなた自身のユーザーID | 下記参照 |
-
-**チャンネルID の取得方法：**
-1. Discord の設定 → 詳細設定 → 「開発者モード」をオンにする
-2. 監視したいチャンネルを右クリック
-3. 「IDをコピー」をクリック
-
-**ユーザーID の取得方法：**
-1. 開発者モードをオンにする（上記参照）
-2. Discord 上の自分のアイコンを右クリック
-3. 「IDをコピー」をクリック
+チャンネル ID の取得: Discord 設定 → 詳細設定 → 開発者モード ON → チャンネル右クリック →「ID をコピー」
 
 ---
 
 ### STEP 5: 起動する
 
 ```powershell
-.\scripts\start.ps1
-```
-
-または：
-
-```powershell
 npm start
 ```
 
-以下のような表示が出たら成功です：
-
+以下が表示されれば成功：
 ```
 ✅ AI_WORKER Bot がオンラインになりました
-   Bot 名: AI-Worker-Bot#1234
-   監視チャンネル: 1234567890123456789
-   コマンド: !claude <やりたいこと>
 ```
 
 ---
 
 ## 使い方
 
-### 基本コマンド
-
-Discord の監視チャンネルに以下を送信：
+### 基本フロー（推奨）
 
 ```
-!claude <Claude Code への指示>
-```
+① プロジェクト作成
+   !project create <名前>
 
-### 例
+② タスク登録（任意 — AI が自動生成するので省略可）
+   !task add <やりたいこと>
 
-```
-!claude Hello Worldを出力するPythonスクリプトを作ってください
-```
+③ 自律ループ開始
+   !project run <名前>
 
-```
-!claude シンプルなTODOアプリのHTMLを作ってください
-```
+④ 人間確認が来たら
+   !task show <taskId>    ← 内容確認
+   !approve <taskId>      ← 承認 → ループ再開
+   !deny <taskId>         ← 却下 → 停止
 
+⑤ 停止
+   !project stop <名前>
 ```
-!claude package.jsonのひな形を作ってください
-```
-
-### 結果の見方
-
-Bot から以下のように返信が来ます：
-
-1. `⏳ 処理中...` → Claude Code が作業中
-2. `✅ 完了！` → 作業が終わった。`workspace/task_XXX/` フォルダに成果物がある
-3. `📋 次の依頼文` → 次に誰のAIへ依頼するか（コピーして使える形式）
 
 ---
 
-## フォルダの説明
+### 状態確認コマンド
 
-| フォルダ | 役割 |
+| コマンド | 内容 |
 |---------|------|
-| `bot/` | Bot本体のプログラム |
-| `workspace/` | Claude Code の作業場所（成果物はここに保存される） |
-| `logs/` | Bot の実行ログ（何かあった時に確認する） |
-| `docs/` | 仕様書・次タスク情報 |
-| `prompts/` | よく使うプロンプトのテンプレート（自由に追加可能） |
-| `reviews/` | AIレビューの記録（Phase2以降） |
-| `temp/` | 一時ファイル |
-| `scripts/` | 起動スクリプト |
+| `!project runner status` | ループ状況・loopCount・品質スコア |
+| `!quality status [id]` | Quality Gate 状態（GREEN/YELLOW/RED）|
+| `!task list` | タスク一覧（優先度順）|
+| `!task stats` | タスク統計 |
+| `!worker list` | AI Worker 一覧 |
+| `!doctor` | システム診断 |
+
+---
+
+### Claude Code に直接作業を依頼（単発）
+
+```
+!claude <やりたいこと>
+```
+
+---
+
+## Discord チャンネル推奨構成
+
+```
+📁 AI_WORKER
+├── 📢 INFORMATION
+│   ├── #ai-worker-guide    ← 使い方ガイド（固定メッセージ）
+│   └── #changelog          ← 更新履歴
+├── 🚀 OPERATIONS
+│   ├── #project-run        ← !project run / stop / runner status
+│   ├── #human-check        ← HUMAN_CHECK 通知 / !approve / !deny
+│   └── #quality-gate       ← !quality status / gate / report
+├── 🧠 PLANNING
+│   ├── #planner            ← !project plan / !task / !meeting
+│   └── #research           ← !research
+├── 🔍 REVIEW
+│   ├── #codex-review       ← !review / !codex
+│   └── #fix-tasks          ← !apply-review / soft RED 通知
+└── 📊 MONITORING
+    ├── #project-status     ← !task stats / !worker / !doctor
+    └── #auto-runner-log    ← バッチ・MID-RUN Gate 自動通知
+```
+
+> **ヒント:** `!project run` を `#human-check` から起動すると
+> HUMAN_CHECK 通知がそのチャンネルに届き、`!approve/!deny` が集約されます。
+
+---
+
+## コマンド一覧
+
+`!help` を Discord で送ると最新のコマンド一覧が表示されます。
+
+主要コマンド：
+
+| カテゴリ | コマンド |
+|---------|---------|
+| 自律ループ | `!project run/stop <id>` |
+| 人間確認 | `!approve / !deny <taskId>` |
+| 品質ゲート | `!quality status/report/gate` |
+| プロジェクト | `!project create/list/switch/plan` |
+| タスク | `!task list/add/done/hold/show` |
+| 人員管理 | `!worker add/list` / `!company staff/assign` |
+| レビュー | `!codex / !review / !apply-review` |
+| 会議 | `!meeting <議題>` |
+| システム | `!restart / !doctor / !batch` |
+
+---
+
+## フォルダ構成
+
+```
+AI_WORKER/
+├─ bot/
+│   ├─ index.js                Bot 本体（コマンドルーター）
+│   └─ utils/
+│       ├─ claude-runner.js    Claude Code CLI 実行
+│       ├─ task-manager.js     タスク CRUD
+│       ├─ auto-project-runner.js  Auto Runner
+│       ├─ quality-gate.js     Quality Gate 判定
+│       ├─ auto-policy.js      タスク安全分類
+│       ├─ worker-registry.js  Worker 役割管理
+│       ├─ approval-manager.js 承認フロー
+│       ├─ project-manager.js  プロジェクト管理
+│       ├─ project-planner.js  LLM 計画生成
+│       ├─ codex.js            OpenAI API
+│       ├─ github.js           git commit/push
+│       └─ night-batch.js      定期バッチ
+├─ data/
+│   ├─ tasks.json              タスクデータ
+│   ├─ projects.json           プロジェクトデータ
+│   ├─ workers.json            Worker データ
+│   └─ approvals.json          承認待ちデータ
+├─ workspace/                  Claude Code の作業場所
+├─ docs/                       設計書・仕様書・ステータス
+├─ reviews/                    Codex レビュー記録
+├─ logs/                       Bot 実行ログ
+├─ tests/                      自動テスト（92件）
+├─ scripts/
+│   └─ start.ps1               起動スクリプト
+└─ .env.example                環境変数テンプレート
+```
 
 ---
 
 ## よくあるエラーと対処法
 
-### 「DISCORD_TOKEN が設定されていません」
-
-→ `.env` ファイルに `DISCORD_TOKEN` を設定してください
-
-### 「MESSAGE CONTENT INTENT」エラー
-
-→ Discord Developer Portal → Bot → 「MESSAGE CONTENT INTENT」をオンにしてください
-
-### 「Claude Code が見つかりません」
-
-→ `npm install -g @anthropic-ai/claude-code` を実行してください
-
-### Bot がオフラインのまま
-
-→ `DISCORD_TOKEN` が正しいか確認してください（スペースが入っていないか注意）
-
-### 「セキュリティチェックで拒否されました」
-
-→ 危険なコマンド（ファイル削除など）を含む指示は実行できません。指示を変えてください
+| エラー | 対処 |
+|--------|------|
+| `DISCORD_TOKEN が設定されていません` | `.env` に `DISCORD_TOKEN` を設定 |
+| `MESSAGE CONTENT INTENT` エラー | Discord Developer Portal → Bot → Intent をオン |
+| Bot がオフライン | Token が正しいか確認（スペースに注意）|
+| `!project run` が RED で止まる | `!quality status` で原因を確認 → `!approve` または手動修正 |
+| HUMAN_CHECK 通知が来た | `!task show <id>` で内容確認 → `!approve` / `!deny` |
 
 ---
 
-## セキュリティについて
+## 実装済み機能（Phase F-4 時点）
 
-- **workspace フォルダ以外には触れません**（Claude Code の作業はここだけ）
-- **危険なコマンドは事前にブロック**されます（rm -rf 等）
-- **トークンは .env で管理**し、Git には含まれません
-- **タイムアウト**があるため、Bot が無限に動き続けることはありません
-
----
-
-## 次のフェーズ（Phase2 予定）
-
-- Codex との自動連携
-- GitHub への自動コミット
-- タスクのキュー管理（複数タスクを順番に処理）
-- タスク履歴の検索
+| フェーズ | 機能 |
+|---------|------|
+| Phase 1 | Discord Bot 基盤・Claude Code 連携・セキュリティチェック |
+| Phase 2 | GitHub 自動コミット・Codex レビュー・危険度判定 |
+| Phase 3 | PR 自動作成・フィードバック適用・レビュー履歴 |
+| Phase 4 | タスク管理・優先度ソート・AI 会議・バッチ処理 |
+| Phase 5 | タスクキュー・高危険度承認フロー・Bot 再起動 |
+| Phase D | Auto Project Runner・LLM Planner・Secret Masking |
+| Phase E | Auto Policy・Worker Registry・Task Lease・Quality Gate・Company Staffing |
+| Phase F | RunContext・!project run/stop・MID-RUN Gate・soft RED auto-FIX・HUMAN_CHECK |
 
 ---
 
-## ファイル構成
+## セキュリティ
 
-```
-AI_WORKER/
-├─ bot/
-│   ├─ index.js           Bot本体
-│   └─ utils/
-│       ├─ logger.js      ログ管理
-│       ├─ security.js    セキュリティチェック
-│       ├─ claude-runner.js  Claude Code 実行
-│       └─ next-task.js   次タスク判断
-├─ workspace/             成果物の保存場所
-├─ logs/                  実行ログ
-├─ prompts/               プロンプトテンプレート
-├─ docs/                  仕様書・履歴
-├─ reviews/               レビュー記録
-├─ temp/                  一時ファイル
-├─ scripts/
-│   └─ start.ps1          起動スクリプト
-├─ .env.example           環境変数テンプレート
-├─ .gitignore
-├─ package.json
-└─ README.md              ← このファイル
-```
+- GitHub PAT・Bearer トークンは Discord に表示されません（自動マスク）
+- 危険コマンド（`rm -rf` 等）は事前にブロック
+- 高危険度タスクは `!approve` で人間が承認するまで実行されません
+- トークンは `.env` で管理し Git には含まれません
+
+---
+
+*AI_WORKER Phase F-4 | 2026-06-01*
