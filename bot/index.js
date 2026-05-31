@@ -2971,6 +2971,31 @@ async function executeResearchTask({ message, task, projectId }) {
       ? `**結果（先頭200文字）:**\n${resultOutput.slice(0, 200)}${resultOutput.length > 200 ? '...' : ''}`
       : '（出力なし）')
   ).catch(() => {});
+
+  // ─ Auto Project Runner フック ─
+  // RESEARCH 完了後も runPlannerStepAsync() を呼び、
+  // LLM Planner が次の候補（IMPLEMENT 等）を判断できるようにする。
+  // runner off / エラー時は RESEARCH 完了処理を壊さない。
+  try {
+    const runnerState = autoProjectRunner.getRunnerState(projectId);
+    if (runnerState.enabled) {
+      const completedTaskCtx = {
+        id:            taskId,
+        type:          'RESEARCH',
+        prompt:        prompt.slice(0, 200),
+        resultSummary: resultOutput.slice(0, 150),
+      };
+      const runnerResult = await autoProjectRunner.runPlannerStepAsync(projectId, {
+        completedTask: completedTaskCtx,
+      });
+      if (runnerResult.action !== 'skip') {
+        await message.channel.send(runnerResult.summary).catch(() => {});
+        logger.info(`[AutoRunner] RESEARCH 完了フック: ${projectId} | ${runnerResult.action} | loop:${runnerResult.loopCount}`);
+      }
+    }
+  } catch (runnerErr) {
+    logger.warn(`[AutoRunner] RESEARCH 完了フック エラー: ${runnerErr.message}`);
+  }
 }
 
 // ─────────────────────────────────────────────────────
