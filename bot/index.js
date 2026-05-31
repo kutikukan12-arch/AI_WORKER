@@ -100,6 +100,11 @@ const companyManager  = require('./utils/company-manager');
 // ※ Bot 再起動で消える設計（意図的割り切り）
 const pendingExecutions = new Map();
 
+// Phase E-5c: !project run の二重起動防止 Map
+// key: projectId, value: true（実行中）
+// TODO !project stop <project> 実装時にここをクリアする
+const activeRuns = new Map();
+
 // ─── 環境変数読み込み ───
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
@@ -858,6 +863,99 @@ function _companyResolvePid(args, channelId) {
   const rawPid = tokens[0] || '';
   const current = projectManager.getCurrentProject(channelId);
   return rawPid || current || 'default';
+}
+
+// ─────────────────────────────────────────────────────
+// !project run <projectId> — Phase E-5c
+//
+// 指定プロジェクトの人員を自動配置し、Auto Runner を起動する。
+// handleAutoOn() は fire-and-forget で非同期実行し、
+// Discord ハンドラをブロックしない。
+//
+// 実行順序:
+//   1. 二重起動チェック（activeRuns）
+//   2. companyManager.getStaffingReport() で現状確認
+//   3. companyManager.applyStaffingPlan() で人員配置
+//   4. autoProjectRunner.enableRunner() + setAutoApplyPlanning(true)
+//   5. 開始メッセージ送信
+//   6. handleAutoOn() fire-and-forget
+//
+// TODO !project stop <project>:
+//   activeRuns.delete(projectId) で実行中フラグをクリアし、
+//   autoProjectRunner.disableRunner(projectId) を呼んで
+//   Runner を安全停止する。
+// ─────────────────────────────────────────────────────
+async function handleProjectRun(message, projectId) {
+  if (!projectId) {
+    await message.reply(
+      '**使い方**\n```\n!project run <projectId>\n```\n' +
+      '例: `!project run youtube予測ai`'
+    ).catch(() => {});
+    return;
+  }
+
+  // 二重起動防止
+  if (activeRuns.get(projectId)) {
+    await message.reply(
+      `⚠️ **\`${projectId}\` は既に実行中です**\n\n` +
+      `\`!project runner status\` で状況を確認してください。`
+    ).catch(() => {});
+    return;
+  }
+
+  // プロジェクト存在確認
+  const project = projectManager.getProject(projectId);
+  if (!project) {
+    await message.reply(`❌ プロジェクト \`${projectId}\` が見つかりません。`).catch(() => {});
+    return;
+  }
+
+  // チャンネルの現在プロジェクトを設定（handleAutoOn が getCurrentProject を使うため）
+  const prevPid = projectManager.getCurrentProject(message.channelId);
+  projectManager.setCurrentProject(message.channelId, projectId);
+
+  // 人員配置（applyStaffingPlan は部分失敗を warnings に記録するだけでクラッシュしない）
+  let staffText = '';
+  try {
+    const staffResult = companyManager.applyStaffingPlan(projectId, { dryRun: false });
+    const added   = staffResult.added.length;
+    const removed = staffResult.removed.length;
+    if (added > 0 || removed > 0) {
+      staffText = `\n👥 人員調整: +${added} / -${removed}人`;
+    }
+    if (staffResult.warnings.length > 0) {
+      logger.warn(`[ProjectRun] staffing warnings: ${staffResult.warnings.join(' | ')}`);
+    }
+  } catch (staffErr) {
+    logger.warn(`[ProjectRun] applyStaffingPlan エラー（無視して続行）: ${staffErr.message}`);
+  }
+
+  // Runner 有効化
+  autoProjectRunner.enableRunner(projectId);
+  autoProjectRunner.setAutoApplyPlanning(projectId, true);
+
+  // 実行中フラグをセット
+  activeRuns.set(projectId, true);
+
+  // 開始メッセージ
+  await message.reply(
+    `🚀 **Project Runner 開始**\n\n` +
+    `Project: **${project.name}** (\`${projectId}\`)${staffText}\n\n` +
+    `Auto Runner を有効化しました。タスクを順次実行します。\n` +
+    `\`!project runner status\` で進捗を確認できます。`
+  ).catch(() => {});
+
+  // handleAutoOn fire-and-forget（Discord ハンドラをブロックしない）
+  handleAutoOn(message)
+    .catch(err => logger.error(`[ProjectRun] handleAutoOn エラー: ${err.message}`))
+    .finally(() => {
+      activeRuns.delete(projectId);
+      // プロジェクト設定を元に戻す
+      if (prevPid && prevPid !== projectId) {
+        projectManager.setCurrentProject(message.channelId, prevPid);
+      }
+      logger.info(`[ProjectRun] 完了: ${projectId}`);
+    });
 }
 
 async function handleCompanyStaff(message, args) {
@@ -1860,9 +1958,16 @@ async function handleProject(message, args) {
     return;
   }
 
+  // !project run <projectId>
+  if (sub === 'run') {
+    const runPid = args[1] || '';
+    await handleProjectRun(message, runPid);
+    return;
+  }
+
   // 不明なサブコマンド
   await message.reply(
-    '**使い方**\n```\n!project current\n!project list\n!project create <名前>\n!project switch <名前>\n!project plan\n!project runner status|on|off|reset\n```'
+    '**使い方**\n```\n!project current\n!project list\n!project create <名前>\n!project switch <名前>\n!project plan\n!project runner status|on|off|reset\n!project run <projectId>  → Runner 起動\n```'
   );
 }
 
