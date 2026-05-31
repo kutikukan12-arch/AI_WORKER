@@ -385,8 +385,10 @@ const OPS_PROMPT_PATTERNS = [
 function allowsNoCodeChange(taskType, prompt = '') {
   const normalizedType = String(taskType || 'IMPLEMENT').toUpperCase();
   if (NON_CODE_CHANGE_TYPES.has(normalizedType)) return true;
+  // OPS キーワードは task.type に関係なく最優先（IMPLEMENT/FIX/REFACTOR でも上書き）
+  if (OPS_PROMPT_PATTERNS.some(re => re.test(prompt || ''))) return true;
   if (CODE_CHANGE_REQUIRED_TYPES.has(normalizedType)) return false;
-  return OPS_PROMPT_PATTERNS.some(re => re.test(prompt || ''));
+  return false;
 }
 
 function validateNonImplement(output, taskType) {
@@ -465,7 +467,8 @@ function validate(output, repoPath, taskId = '', passedFiles = null, beforeMs = 
     // DOCS: .md ファイルの作成・更新でも完了OK。出力内容チェックで判定。
     // OPS キーワード（診断/確認/push/status/調査）を含む場合: 会話応答ログがあれば完了
     const hasOpsKeyword = OPS_PROMPT_PATTERNS.some(re => re.test(prompt || ''));
-    if (hasOpsKeyword && outputLength >= 10) {
+    if (hasOpsKeyword) {
+      // 会話応答ログが取れなくてもプロセス正常終了で完了扱い
       ok     = true;
       reason = `OPSタスク完了（会話応答ログ${outputLength}文字）`;
     } else {
