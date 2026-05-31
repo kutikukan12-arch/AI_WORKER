@@ -89,11 +89,12 @@ function _loadCodexResults(projectId) {
 // ─────────────────────────────────────────────────────
 function _isValidationFailure(task) {
   const hist = task.stateHistory || [];
-  // stateHistory 全体から「REVIEWING かつ 未完了」の記録を探す
-  return hist.some(h =>
-    (h.state === 'レビュー待ち' || h.state === 'REVIEWING') &&
-    (h.note || '').includes('未完了')
+  // M-1修正: 最新のREVIEWINGエントリだけを見る。
+  // 過去に未完了があっても、最新のREVIEWINGが正常なら RED にしない。
+  const lastReviewing = [...hist].reverse().find(h =>
+    h.state === 'レビュー待ち' || h.state === 'REVIEWING'
   );
+  return (lastReviewing?.note || '').includes('未完了');
 }
 
 // ─────────────────────────────────────────────────────

@@ -422,7 +422,46 @@ test('M4. _isValidationFailure が stateHistory 全体をスキャンする', ()
     require('path').join(__dirname, '..', 'bot', 'utils', 'quality-gate.js'), 'utf8'
   );
   // hist.some を使っていることを確認
-  assert.ok(src.includes('hist.some'), 'stateHistory 全体スキャンに hist.some が使われていない');
+  assert.ok(src.includes('reverse().find'), 'M-1修正: 最新REVIEWING検索に reverse().find が使われていない');
+  assert.ok(!src.includes('hist.some'), 'hist.some が残っている');
+});
+
+test('M4. 最新 REVIEWING note が「未完了」なら validator 失敗（RED）', () => {
+  function mockIsValidationFailure(task) {
+    const hist = task.stateHistory || [];
+    const lastReviewing = [...hist].reverse().find(h =>
+      h.state === 'レビュー待ち' || h.state === 'REVIEWING'
+    );
+    return (lastReviewing?.note || '').includes('未完了');
+  }
+  const taskFail = {
+    stateHistory: [
+      { state: '作業中',     note: '開始' },
+      { state: 'レビュー待ち', note: '未完了 — 変更0件' }, // 最新REVIEWING=失敗
+    ],
+  };
+  assert.ok(mockIsValidationFailure(taskFail), '最新REVIEWING=未完了でREDにならない');
+});
+
+test('M4(M-1). 過去に「未完了」があっても最新 REVIEWING が正常なら RED にしない', () => {
+  function mockIsValidationFailure(task) {
+    const hist = task.stateHistory || [];
+    const lastReviewing = [...hist].reverse().find(h =>
+      h.state === 'レビュー待ち' || h.state === 'REVIEWING'
+    );
+    return (lastReviewing?.note || '').includes('未完了');
+  }
+  const taskRecovered = {
+    stateHistory: [
+      { state: '作業中',     note: '開始' },
+      { state: 'レビュー待ち', note: '未完了 — 変更0件' }, // 過去の失敗
+      { state: '未着手',     note: '再実行' },
+      { state: '作業中',     note: '修正実施' },
+      { state: 'レビュー待ち', note: 'AIレビュー: 問題なし' }, // 最新REVIEWING=正常
+    ],
+  };
+  assert.ok(!mockIsValidationFailure(taskRecovered),
+    '修正後の正常なREVIEWINGでもREDになっている（sticky RED バグ）');
 });
 
 test('M4. 末尾でない REVIEWING+未完了 で validator 失敗が検出される', () => {
