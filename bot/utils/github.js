@@ -312,8 +312,16 @@ async function commitAndPush(prompt, taskId) {
   const remoteReady = configureGitHubRemote(repoPath);
 
   if (remoteReady) {
-    // 現在の branch を動的に取得（main 固定しない）
-    const currentBranch = GITHUB_BRANCH_DEFAULT || getCurrentBranch(repoPath);
+    // 現在の branch を動的に取得し push 先を決定する。
+    //
+    // 優先順位:
+    //   1. getCurrentBranch() — 実在する現在ブランチ（最優先）
+    //   2. GITHUB_BRANCH_DEFAULT — 現在ブランチが取得できなかった場合のフォールバック
+    //   3. 'master' — どちらも得られなかった場合の最終フォールバック
+    //
+    // GITHUB_BRANCH_DEFAULT を先にするとブランチが実在しない場合に
+    // "src refspec main does not match any" で失敗するため順序を逆転。
+    const currentBranch = getCurrentBranch(repoPath) || GITHUB_BRANCH_DEFAULT || 'master';
 
     // トークンを HTTP Authorization ヘッダーで渡す（remote URL には埋め込まない）
     const authHeader = Buffer.from(`x-oauth-basic:${GITHUB_TOKEN}`).toString('base64');
@@ -347,7 +355,7 @@ async function commitAndPush(prompt, taskId) {
     pushed,
     pushError,
     repoPath,
-    branch: GITHUB_BRANCH_DEFAULT || getCurrentBranch(repoPath),
+    branch: getCurrentBranch(repoPath) || GITHUB_BRANCH_DEFAULT || 'master',
     repo: GITHUB_REPO || '（未設定）',
   };
 }
