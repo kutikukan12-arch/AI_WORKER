@@ -95,6 +95,7 @@ const autoPolicy         = require('./utils/auto-policy');
 // ─── Phase E-5b: Worker Role ───
 const workerRegistry  = require('./utils/worker-registry');
 const companyManager  = require('./utils/company-manager');
+const qualityGate     = require('./utils/quality-gate');
 
 // 承認待ちの実行待機Map: taskId → () => void
 // ※ Bot 再起動で消える設計（意図的割り切り）
@@ -967,6 +968,138 @@ async function handleCompanyStaff(message, args) {
     logger.warn(`[Company] staff エラー: ${e.message}`);
     await message.reply(`❌ 人員分析に失敗しました: ${e.message.slice(0, 100)}`).catch(() => {});
   }
+}
+
+// ─────────────────────────────────────────────────────
+// !quality status [projectId]  — Quality Gate の現在状態を表示
+// !quality gate list           — 登録ゲート一覧
+// !quality gate add <id> <project> <GREEN|YELLOW> [説明]
+// !quality gate remove <id>
+// !quality report [projectId]  — 詳細レポート
+// ─────────────────────────────────────────────────────
+async function handleQuality(message, args) {
+  const sub        = args[0] || 'status';
+  const currentPid = projectManager.getCurrentProject(message.channelId);
+
+  // ── !quality status [projectId] ──────────────────────
+  if (sub === 'status') {
+    const pid = args[1] || currentPid || 'default';
+    const msg = await message.reply(`🔍 **Quality 状態を確認中...**\n\`${pid}\``).catch(() => null);
+    try {
+      const assessment = qualityGate.assessQuality(pid);
+      const text       = qualityGate.formatQualityStatus(assessment);
+      if (msg) await msg.edit(text).catch(() => {});
+      else await message.channel.send(text).catch(() => {});
+    } catch (e) {
+      const err = `❌ Quality チェックに失敗しました: ${e.message.slice(0, 100)}`;
+      if (msg) await msg.edit(err).catch(() => {});
+      else await message.reply(err).catch(() => {});
+    }
+    return;
+  }
+
+  // ── !quality gate ──────────────────────────────────────
+  if (sub === 'gate') {
+    const gateSub = args[1] || 'list';
+
+    if (gateSub === 'list') {
+      await message.reply(qualityGate.formatGateList()).catch(() => {});
+      return;
+    }
+
+    if (gateSub === 'add') {
+      // !quality gate add <id> <project> <GREEN|YELLOW> [説明...]
+      const [, , gateId, gatePid, minLevel, ...descParts] = args;
+      if (!gateId || !gatePid || !minLevel) {
+        await message.reply(
+          '**使い方**\n```\n!quality gate add <id> <project> <GREEN|YELLOW> [説明]\n```\n' +
+          '例: `!quality gate add ci-check youtube予測ai GREEN 本番前 GREEN 必須`'
+        ).catch(() => {});
+        return;
+      }
+      const res = qualityGate.addGate({
+        id:          gateId,
+        projectId:   gatePid,
+        minLevel:    minLevel.toUpperCase(),
+        description: descParts.join(' '),
+      });
+      await message.reply(
+        res.ok
+          ? `✅ ゲート \`${gateId}\` を追加しました。\nProject: \`${gatePid}\` | 必須レベル: **${minLevel.toUpperCase()}**`
+          : `❌ 追加失敗: ${res.reason}`
+      ).catch(() => {});
+      return;
+    }
+
+    if (gateSub === 'remove') {
+      const gateId = args[2];
+      if (!gateId) {
+        await message.reply('使い方: `!quality gate remove <id>`').catch(() => {});
+        return;
+      }
+      const res = qualityGate.removeGate(gateId);
+      await message.reply(
+        res.ok ? `✅ ゲート \`${gateId}\` を削除しました。` : `❌ ${res.reason}`
+      ).catch(() => {});
+      return;
+    }
+
+    if (gateSub === 'check') {
+      const pid = args[2] || currentPid || 'default';
+      const res = qualityGate.evaluateGates(pid);
+      if (res.noGates) {
+        await message.reply(`⬜ \`${pid}\` にゲートが設定されていません。\n\`!quality gate add\` で追加できます。`).catch(() => {});
+        return;
+      }
+      const icon  = res.passed ? '✅ PASSED' : '❌ FAILED';
+      const lines = [`🚦 **Gate 評価: ${icon}** | \`${pid}\``];
+      res.results.forEach(r => {
+        const ri = r.ok ? '✅' : '❌';
+        lines.push(`  ${ri} \`${r.gate.id}\` 必須:${r.gate.minLevel} → 現在:**${r.level}** (${r.score ?? 'n/a'}点)`);
+      });
+      await message.reply(lines.join('\n')).catch(() => {});
+      return;
+    }
+
+    await message.reply(
+      '**!quality gate の使い方**\n```\n' +
+      '!quality gate list                           → ゲート一覧\n' +
+      '!quality gate add <id> <project> <level>     → ゲート追加\n' +
+      '!quality gate remove <id>                    → ゲート削除\n' +
+      '!quality gate check [project]                → ゲート評価\n' +
+      '```'
+    ).catch(() => {});
+    return;
+  }
+
+  // ── !quality report [projectId] ───────────────────────
+  if (sub === 'report') {
+    const pid = args[1] || currentPid || 'default';
+    const msg = await message.reply(`📋 **Quality レポート生成中...**\n\`${pid}\``).catch(() => null);
+    try {
+      const report = qualityGate.generateReport(pid);
+      // 長い場合は 1900 文字で切り詰め
+      const text   = report.text.slice(0, 1900);
+      if (msg) await msg.edit(text).catch(() => {});
+      else await message.channel.send(text).catch(() => {});
+    } catch (e) {
+      const err = `❌ レポート生成に失敗しました: ${e.message.slice(0, 100)}`;
+      if (msg) await msg.edit(err).catch(() => {});
+      else await message.reply(err).catch(() => {});
+    }
+    return;
+  }
+
+  // ── ヘルプ ─────────────────────────────────────────────
+  await message.reply(
+    '**!quality の使い方**\n```\n' +
+    '!quality status [project]   → Quality 現在状態\n' +
+    '!quality gate list          → ゲート一覧\n' +
+    '!quality gate add/remove    → ゲート管理\n' +
+    '!quality gate check         → ゲート評価\n' +
+    '!quality report [project]   → 詳細レポート\n' +
+    '```'
+  ).catch(() => {});
 }
 
 async function handleCompanyAssign(message, args) {
@@ -4495,6 +4628,12 @@ client.on('messageCreate', async (message) => {
       '!company assign <project> --preview   → 指定プロジェクトをプレビュー\n' +
       '```'
     );
+    return;
+  }
+
+  if (content.startsWith('!quality')) {
+    const qualArgs = content.slice('!quality'.length).trim().split(/\s+/).filter(Boolean);
+    await handleQuality(message, qualArgs);
     return;
   }
 

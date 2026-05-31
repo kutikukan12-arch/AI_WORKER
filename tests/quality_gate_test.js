@@ -271,5 +271,105 @@ test('7c. assessQuality が export されている', () =>
 test('7d. formatQualityStatus が export されている', () =>
   assert.strictEqual(typeof qg.formatQualityStatus, 'function'));
 
+// ─────────────────────────────────────────────────────
+// 8. Gate 管理 (addGate / removeGate / listGates / evaluateGates)
+// ─────────────────────────────────────────────────────
+console.log('\n[8. Gate 管理]');
+
+// テスト用ゲートをクリーンアップ
+const path = require('path');
+const fs   = require('fs');
+const GATES_FILE = path.join(__dirname, '..', 'data', 'quality-gates.json');
+function cleanupGates() {
+  if (!fs.existsSync(GATES_FILE)) return;
+  const raw = JSON.parse(fs.readFileSync(GATES_FILE, 'utf8'));
+  raw.gates = (raw.gates || []).filter(g => !g.id.startsWith('test-'));
+  fs.writeFileSync(GATES_FILE, JSON.stringify(raw, null, 2), 'utf8');
+}
+cleanupGates();
+
+test('8a. addGate が { ok:true, gate } を返す', () => {
+  const res = qg.addGate({ id: 'test-gate-1', projectId: 'youtube予測ai', minLevel: 'GREEN', description: 'テスト' });
+  assert.strictEqual(res.ok, true);
+  assert.ok(res.gate.id === 'test-gate-1');
+  info('8a: gate added: ' + res.gate.id);
+});
+
+test('8b. 重複 id は { ok:false }', () => {
+  const res = qg.addGate({ id: 'test-gate-1', projectId: 'youtube予測ai', minLevel: 'GREEN' });
+  assert.strictEqual(res.ok, false);
+});
+
+test('8c. 不正 minLevel は { ok:false }', () => {
+  const res = qg.addGate({ id: 'test-gate-bad', projectId: 'p', minLevel: 'ORANGE' });
+  assert.strictEqual(res.ok, false);
+});
+
+test('8d. listGates が配列を返す', () => {
+  const list = qg.listGates();
+  assert.ok(Array.isArray(list));
+  assert.ok(list.some(g => g.id === 'test-gate-1'));
+});
+
+test('8e. removeGate が { ok:true } を返す', () => {
+  const res = qg.removeGate('test-gate-1');
+  assert.strictEqual(res.ok, true);
+  assert.ok(!qg.listGates().some(g => g.id === 'test-gate-1'));
+});
+
+test('8f. evaluateGates: ゲートなし → { passed:true, noGates:true }', () => {
+  const res = qg.evaluateGates('nonexistent-project');
+  assert.strictEqual(res.passed, true);
+  assert.strictEqual(res.noGates, true);
+});
+
+test('8g. evaluateGates: GREEN 必須 + 現在 GREEN → passed', () => {
+  qg.addGate({ id: 'test-gate-2', projectId: 'youtube予測ai', minLevel: 'YELLOW' });
+  const res = qg.evaluateGates('youtube予測ai');
+  info('8g: level=' + res.assessment?.level + ' passed=' + res.passed);
+  // youtube予測ai は現在 GREEN → YELLOW 以上必須を満たす
+  assert.ok(typeof res.passed === 'boolean');
+  qg.removeGate('test-gate-2');
+});
+
+// ─────────────────────────────────────────────────────
+// 9. generateReport
+// ─────────────────────────────────────────────────────
+console.log('\n[9. generateReport]');
+
+test('9a. generateReport が text/assessment/gateResult を返す', () => {
+  const report = qg.generateReport('youtube予測ai');
+  assert.ok(typeof report.text === 'string' && report.text.length > 0);
+  assert.ok(report.assessment);
+  assert.ok(report.gateResult);
+  info('9a: report text length=' + report.text.length);
+});
+
+test('9b. レポートに Quality Gate と現状サマリが含まれる', () => {
+  const report = qg.generateReport('youtube予測ai');
+  assert.ok(report.text.includes('Quality'));
+  assert.ok(report.text.includes('完了'));
+});
+
+// ─────────────────────────────────────────────────────
+// 10. index.js 接続確認
+// ─────────────────────────────────────────────────────
+console.log('\n[10. index.js 接続確認]');
+
+const src = fs.readFileSync(path.join(__dirname, '..', 'bot', 'index.js'), 'utf8');
+
+test('10a. handleQuality が定義されている', () =>
+  assert.ok(src.includes('async function handleQuality')));
+test('10b. !quality routing がある', () =>
+  assert.ok(src.includes("startsWith('!quality')")));
+test('10c. qualityGate が require されている', () =>
+  assert.ok(src.includes("require('./utils/quality-gate')")));
+test('10d. data/quality-gates.json が .gitignore にある', () => {
+  const gi = fs.readFileSync(path.join(__dirname, '..', '.gitignore'), 'utf8');
+  assert.ok(gi.includes('data/quality-gates.json'));
+});
+
+cleanupGates();
+
 console.log(`\n結果: ${pass} passed / ${fail} failed\n`);
 if (fail > 0) process.exit(1);

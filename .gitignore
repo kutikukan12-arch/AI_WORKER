@@ -64,3 +64,4 @@ Desktop.ini
 !logs/.gitkeep
 !.env.example
 data/workers.json
+data/quality-gates.json

@@ -342,9 +342,176 @@ function formatQualityStatus(assessment) {
   return lines.join('\n');
 }
 
+// ─────────────────────────────────────────────────────
+// quality-gates.json — Gate 定義ストレージ
+//
+// !quality gate add / remove で管理するゲート設定を保存する。
+// ゲートは "GREEN 以上必須" / "YELLOW 以上必須" など閾値を持つ。
+// ─────────────────────────────────────────────────────
+const GATES_FILE = path.join(DATA_DIR, 'quality-gates.json');
+
+function _loadGates() {
+  if (!fs.existsSync(GATES_FILE)) return [];
+  try {
+    return JSON.parse(fs.readFileSync(GATES_FILE, 'utf8')).gates || [];
+  } catch { return []; }
+}
+
+function _saveGates(gates) {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(GATES_FILE, JSON.stringify({ gates, updatedAt: new Date().toISOString() }, null, 2), 'utf8');
+}
+
+// ─────────────────────────────────────────────────────
+// addGate(gate)
+//
+// ゲート定義を追加する。
+// gate: { id, projectId, minLevel, description }
+//   minLevel: 'GREEN' | 'YELLOW'（それ以下なら gate NG）
+// ─────────────────────────────────────────────────────
+function addGate(gate) {
+  if (!gate.id || !gate.projectId || !gate.minLevel) {
+    return { ok: false, reason: 'id / projectId / minLevel が必要です' };
+  }
+  const VALID_LEVELS = new Set(['GREEN', 'YELLOW']);
+  if (!VALID_LEVELS.has(gate.minLevel)) {
+    return { ok: false, reason: `minLevel は GREEN または YELLOW のみ有効` };
+  }
+  const gates = _loadGates();
+  if (gates.find(g => g.id === gate.id)) {
+    return { ok: false, reason: `gate \`${gate.id}\` は既に存在します` };
+  }
+  gates.push({ ...gate, createdAt: new Date().toISOString() });
+  _saveGates(gates);
+  logger.info(`[QualityGate] gate 追加: ${gate.id} | ${gate.projectId} | minLevel:${gate.minLevel}`);
+  return { ok: true, gate };
+}
+
+// ─────────────────────────────────────────────────────
+// removeGate(id)
+// ─────────────────────────────────────────────────────
+function removeGate(id) {
+  const gates = _loadGates();
+  const idx   = gates.findIndex(g => g.id === id);
+  if (idx === -1) return { ok: false, reason: `gate \`${id}\` が見つかりません` };
+  const [removed] = gates.splice(idx, 1);
+  _saveGates(gates);
+  return { ok: true, gate: removed };
+}
+
+// ─────────────────────────────────────────────────────
+// listGates()
+// ─────────────────────────────────────────────────────
+function listGates() { return _loadGates(); }
+
+// ─────────────────────────────────────────────────────
+// evaluateGates(projectId)
+//
+// 登録済みゲートのうち projectId に関係するものを評価する。
+// assessment を取得し、minLevel を満たすか判定。
+//
+// 戻り値: { passed: bool, results: [{gate, level, ok}] }
+// ─────────────────────────────────────────────────────
+const LEVEL_ORDER = { RED: 0, YELLOW: 1, GREEN: 2 };
+
+function evaluateGates(projectId) {
+  const gates = _loadGates().filter(g =>
+    g.projectId === projectId || g.projectId === '*'
+  );
+  if (gates.length === 0) {
+    return { passed: true, results: [], noGates: true };
+  }
+
+  const assessment = assessQuality(projectId);
+  const results    = gates.map(gate => {
+    const currentOrder = LEVEL_ORDER[assessment.level] ?? 0;
+    const minOrder     = LEVEL_ORDER[gate.minLevel]    ?? 2;
+    const ok           = currentOrder >= minOrder;
+    return { gate, level: assessment.level, score: assessment.score, ok };
+  });
+
+  const passed = results.every(r => r.ok);
+  return { passed, results, assessment };
+}
+
+// ─────────────────────────────────────────────────────
+// generateReport(projectId)
+//
+// !quality report 用の詳細レポートを生成する。
+// assessQuality + gateResults をまとめたテキストを返す。
+// ─────────────────────────────────────────────────────
+function generateReport(projectId) {
+  const assessment = assessQuality(projectId);
+  const gateResult = evaluateGates(projectId);
+  const lines      = [];
+  const now        = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+
+  lines.push(`📋 **Quality Report** — ${now}`);
+  if (projectId) lines.push(`Project: \`${projectId}\``);
+  lines.push('');
+
+  // Gate 評価
+  if (gateResult.noGates) {
+    lines.push('**ゲート:** 未設定（`!quality gate add` で追加できます）');
+  } else {
+    const gateIcon = gateResult.passed ? '✅' : '❌';
+    lines.push(`**ゲート評価:** ${gateIcon} ${gateResult.passed ? 'PASSED' : 'FAILED'}`);
+    gateResult.results.forEach(r => {
+      const icon = r.ok ? '✅' : '❌';
+      lines.push(`  ${icon} \`${r.gate.id}\` ${r.gate.minLevel} 以上必須 → 現在 **${r.level}**`);
+    });
+  }
+  lines.push('');
+
+  // Quality 状態
+  lines.push(formatQualityStatus(assessment));
+
+  // インジケータ詳細
+  const ind = assessment.indicators;
+  lines.push('');
+  lines.push('**📊 指標詳細:**');
+  lines.push(`  完了タスク: ${ind.doneCount}件 | 失敗: ${ind.failedCount}件 | タイムアウト: ${ind.timeoutCount}件`);
+  lines.push(`  エラー率: ${Math.round(ind.errorRate * 100)}% | Codex 高: ${ind.codexHighCount}件 | Codex 中: ${ind.codexMidCount}件`);
+
+  return {
+    text:       lines.join('\n'),
+    assessment,
+    gateResult,
+    generatedAt: now,
+  };
+}
+
+// ─────────────────────────────────────────────────────
+// formatGateList() — !quality gate list 用
+// ─────────────────────────────────────────────────────
+function formatGateList() {
+  const gates = _loadGates();
+  if (gates.length === 0) {
+    return (
+      '**🚦 Quality Gates: 未設定**\n\n' +
+      '```\n!quality gate add <id> <project> <GREEN|YELLOW>\n```'
+    );
+  }
+  const lines = ['**🚦 Quality Gates**', ''];
+  gates.forEach(g => {
+    lines.push(`  \`${g.id}\`  ${g.projectId}  minLevel:**${g.minLevel}**  ${g.description || ''}`);
+  });
+  lines.push('');
+  lines.push('`!quality gate add/remove` でゲートを管理できます。');
+  return lines.join('\n');
+}
+
 module.exports = {
   gatherIndicators,
   computeQualityScore,
   assessQuality,
   formatQualityStatus,
+  // Gate 管理
+  addGate,
+  removeGate,
+  listGates,
+  evaluateGates,
+  // レポート
+  generateReport,
+  formatGateList,
 };
