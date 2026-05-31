@@ -580,20 +580,293 @@ function runPlannerStep(projectId, context = {}) {
 }
 
 // ─────────────────────────────────────────────────────
-// runPlannerStepAsync(projectId, context = {}) — Phase D-7a
+// runPlannerStepAsync(projectId, context = {}) — Phase D-7c
 //
-// runPlannerStep() の async ラッパー。
-// 現時点では内部で既存の同期版を呼ぶだけで、戻り値・挙動は同一。
-// 将来 Phase D-7b 以降で LLM Planner（planProjectGoalsBest）を
-// ここから await 呼び出しに差し替える際の差し込み口として設ける。
+// runPlannerStep() の async 版。
+// plannerResult.action === 'none' の場合のみ、
+// planProjectGoalsBest()（LLM 優先 → rule-based fallback）を使用し
+// D-4e/D-5 の自動登録候補を決定する。
 //
-// 制約:
-//   - LLM API を呼ばない（D-7a 時点）
-//   - tasks.json を直接変更しない
+// FIX / REVIEW / project_done の判定は同期版と同じロジックを使う。
+// autoApplyPlanning の各ガード（最大1件・重複防止・自動実行なし）も維持。
+//
+// 安全条件:
+//   - LLM 結果を直接実行しない
+//   - autoApplyPlanning=false なら候補表示のみ
+//   - runner off / ループ上限超過なら LLM を呼ばない
+//   - try/catch で API エラーを吸収し、タスク完了処理を壊さない
 //   - 既存 runPlannerStep() は変更しない
 // ─────────────────────────────────────────────────────
 async function runPlannerStepAsync(projectId, context = {}) {
-  return runPlannerStep(projectId, context);
+  const state   = getRunnerState(projectId);
+  const project = (() => {
+    try {
+      const fs2   = require('fs');
+      const path2 = require('path');
+      const pfile = path2.join(DATA_DIR, 'projects.json');
+      if (!fs2.existsSync(pfile)) return null;
+      const data  = JSON.parse(fs2.readFileSync(pfile, 'utf8'));
+      return (data.projects || []).find(p => p.id === projectId) || null;
+    } catch { return null; }
+  })();
+  const maxLoop = project?.runner?.maxPlannerCalls ?? MAX_LOOP_COUNT_DEFAULT;
+
+  // ① enabled=false → LLM を呼ばずスキップ
+  if (!state.enabled) {
+    logger.debug(`[AutoRunner] runPlannerStepAsync skip: ${projectId} (disabled)`);
+    return {
+      action:    'skip',
+      summary:   `⛔ Runner は無効です (\`${projectId}\`)`,
+      projectId,
+      loopCount: state.loopCount,
+    };
+  }
+
+  // ② loopCount 上限 → LLM を呼ばず停止
+  if (state.loopCount >= maxLoop) {
+    logger.warn(`[AutoRunner] loopCount 上限到達 (async): ${projectId} (${state.loopCount}/${maxLoop})`);
+    saveRunnerState(projectId, {
+      enabled:     false,
+      pauseReason: `loopCount 上限到達 (${state.loopCount}/${maxLoop})`,
+      pausedAt:    new Date().toISOString(),
+    });
+    syncProjectsEnabled(projectId, false);
+    return {
+      action:    'stopped',
+      summary:   `🛑 **Auto Runner 停止** | \`${projectId}\`\nloopCount 上限 (${state.loopCount}/${maxLoop}) に達しました。\n\`!project runner reset\` でリセット後に再開できます。`,
+      projectId,
+      loopCount: state.loopCount,
+    };
+  }
+
+  // ③ loopCount インクリメント
+  const nextCount = state.loopCount + 1;
+  saveRunnerState(projectId, {
+    loopCount:     nextCount,
+    lastPlannerAt: new Date().toISOString(),
+  });
+  logger.info(`[AutoRunner] runPlannerStepAsync: ${projectId} | loop ${nextCount}/${maxLoop}`);
+
+  // ④ planNextTask（FIX/REVIEW/project_done の判定 — 同期版と同じ）
+  let plannerResult = null;
+  try {
+    plannerResult = getPlanner().planNextTask(projectId, context);
+    logger.info(`[AutoRunner] Planner結果 (async): ${projectId} | action:${plannerResult.action}`);
+  } catch (plannerErr) {
+    logger.warn(`[AutoRunner] planNextTask エラー (async): ${plannerErr.message}`);
+    plannerResult = { action: 'error', reason: plannerErr.message, suggestedTask: null, summary: 'Planner エラー' };
+  }
+
+  // ⑤-pre project_done → runner 停止（FIX/REVIEW より優先）
+  if (plannerResult.action === 'project_done') {
+    logger.info(`[AutoRunner] project_done 検出 (async): ${projectId} → runner 停止`);
+    saveRunnerState(projectId, {
+      enabled:     false,
+      pauseReason: 'project_done',
+      pausedAt:    new Date().toISOString(),
+    });
+    syncProjectsEnabled(projectId, false);
+    return {
+      action:        'project_done',
+      summary:
+        `🎉 **Project Done**\n` +
+        `Project: \`${projectId}\`\n` +
+        `残作業: 0件\n` +
+        `Runner: stopped\n\n` +
+        `次:\n\`\`\`\n!project runner status\n\`\`\``,
+      projectId,
+      loopCount:            nextCount,
+      plannerResult,
+      createdTask:          null,
+      nextExecutableTaskId: null,
+    };
+  }
+
+  // ⑤ create_task（FIX / REVIEW）— 同期版と同じロジック
+  let createdTask     = null;
+  let autoAppliedTask = null;
+  let plannerSummaryLine;
+
+  if (plannerResult.action === 'create_task' && plannerResult.suggestedTask) {
+    const suggested     = plannerResult.suggestedTask;
+    const isRegistrable = suggested.type === 'FIX' || suggested.type === 'REVIEW';
+    if (!isRegistrable) {
+      plannerSummaryLine =
+        `Planner: ${suggested.type} 候補あり（未登録）\n` +
+        `type: ${suggested.type} | priority: ${suggested.priority}`;
+    } else {
+      const isDuplicate = (() => {
+        try {
+          const tm       = require('./task-manager');
+          const allTasks = tm.listTasks();
+          if (suggested.type === 'REVIEW') {
+            const srcId = suggested.sourceImplementId || '';
+            return srcId && allTasks.some(t =>
+              t.type === 'REVIEW' && t.projectId === projectId &&
+              (t.state === tm.STATES.PENDING || t.state === tm.STATES.IN_PROGRESS) &&
+              (t.prompt || '').includes(srcId)
+            );
+          }
+          const promptPrefix = (suggested.prompt || '').slice(0, 60);
+          return allTasks.some(t =>
+            t.type === 'FIX' && t.projectId === projectId &&
+            (t.state === tm.STATES.PENDING || t.state === tm.STATES.IN_PROGRESS) &&
+            (t.prompt || '').slice(0, 60) === promptPrefix
+          );
+        } catch { return false; }
+      })();
+
+      if (isDuplicate) {
+        logger.info(`[AutoRunner] 重複ガード (async): 同内容の ${suggested.type} が既に存在 (${projectId})`);
+        plannerSummaryLine =
+          `Planner: ${suggested.type} 候補あり (重複のためスキップ)\n` +
+          (suggested.type === 'REVIEW'
+            ? `元IMPLEMENT: ${suggested.sourceImplementId || '—'}`
+            : `危険度: ${suggested.sourceReviewDanger || '—'}`);
+      } else {
+        try {
+          const tm         = require('./task-manager');
+          const taskPrompt = (suggested.type === 'REVIEW' && suggested.sourceImplementId)
+            ? suggested.prompt + `\n[対象IMPLEMENT: ${suggested.sourceImplementId}]`
+            : suggested.prompt;
+          createdTask = tm.createTask(
+            taskPrompt, 'auto-runner', null,
+            suggested.priority === '高' ? '高' : '低',
+            projectId, suggested.type || 'FIX'
+          );
+          if (suggested.priority && createdTask.priority !== suggested.priority) {
+            tm.updateTask(createdTask.id, {
+              priority:       suggested.priority,
+              priorityReason: `Auto Planner 指定 (危険度: ${suggested.sourceReviewDanger || '—'})`,
+            });
+            createdTask.priority = suggested.priority;
+          }
+          const currentState = getRunnerState(projectId);
+          saveRunnerState(projectId, {
+            lastTaskId:        createdTask.id,
+            totalTasksCreated: (currentState.totalTasksCreated || 0) + 1,
+          });
+          logger.info(`[AutoRunner] タスク登録 (async): ${createdTask.id} [${suggested.type}] | ${projectId}`);
+          plannerSummaryLine = suggested.type === 'REVIEW'
+            ? `Planner: REVIEW タスクを登録しました ✅\nID: \`${createdTask.id}\`\n元IMPLEMENT: ${suggested.sourceImplementId || '—'} | priority: ${createdTask.priority}\n次に実行:\n\`\`\`\n!auto run 1\n\`\`\``
+            : `Planner: FIX タスクを登録しました ✅\nID: \`${createdTask.id}\`\n危険度: ${suggested.sourceReviewDanger || '—'} | priority: ${createdTask.priority}\n次に実行:\n\`\`\`\n!auto run 1\n\`\`\``;
+        } catch (createErr) {
+          logger.error(`[AutoRunner] createTask エラー (async): ${createErr.message}`);
+          plannerSummaryLine = `Planner: create_task 試みたが失敗 (${createErr.message.slice(0, 40)})`;
+        }
+      }
+    }
+
+  } else {
+    // ── Phase D-7c: action=none のとき LLM Planner で候補取得 ──────
+    let nextCandidatesHint = '';
+
+    if (plannerResult.action === 'none') {
+      try {
+        const pm2           = require('./project-manager');
+        const proj2         = pm2.getProject(projectId);
+        const description   = (proj2?.description || proj2?.name || '');
+        const currentState2 = getRunnerState(projectId);
+        const SAFE_TYPES    = new Set(['DOCS', 'RESEARCH', 'TEST']);
+
+        // planProjectGoalsBest: LLM 優先 → rule-based fallback
+        const fullPlan = await require('./project-planner').planProjectGoalsBest(
+          projectId, { description }
+        );
+        const plannerLabel = fullPlan.source === 'llm' ? '🤖 LLM Planner' : '📋 rule-based';
+        logger.info(`[AutoRunner] D-7c plan source: ${plannerLabel} | candidates:${fullPlan.nextCandidates.length} | ${projectId}`);
+
+        if (currentState2.autoApplyPlanning && fullPlan.nextCandidates.length > 0) {
+          try {
+            const tm     = require('./task-manager');
+            const allT   = tm.listTasks();
+            const ACTIVE = new Set([tm.STATES.PENDING, tm.STATES.IN_PROGRESS]);
+
+            // D-4e: DOCS/RESEARCH/TEST を優先登録
+            const safeCand = fullPlan.nextCandidates.find(c => SAFE_TYPES.has(c.type));
+            if (safeCand) {
+              const isDup = allT.some(t =>
+                t.projectId === projectId && t.type === safeCand.type && ACTIVE.has(t.state) &&
+                (t.prompt || '').slice(0, 30) === (safeCand.prompt || '').slice(0, 30)
+              );
+              if (!isDup) {
+                autoAppliedTask = tm.createTask(
+                  safeCand.prompt, 'auto-runner', null,
+                  safeCand.priority === '高' ? '高' : '低',
+                  projectId, safeCand.type
+                );
+                const st3 = getRunnerState(projectId);
+                saveRunnerState(projectId, {
+                  lastTaskId:        autoAppliedTask.id,
+                  totalTasksCreated: (st3.totalTasksCreated || 0) + 1,
+                });
+                logger.info(`[AutoRunner] D-4e auto-apply (${plannerLabel}): ${autoAppliedTask.id} [${safeCand.type}] | ${projectId}`);
+                nextCandidatesHint =
+                  `\n${plannerLabel} 📋 Auto Apply: [${safeCand.type}] タスクを登録\n` +
+                  `\`${autoAppliedTask.id}\`\n` +
+                  `次:\n\`\`\`\n!task list\n!auto run 1\n\`\`\``;
+              } else {
+                nextCandidatesHint =
+                  `\n${plannerLabel} 次候補があります (重複のためスキップ):\n` +
+                  `\`\`\`\n!project plan apply\n\`\`\``;
+              }
+            }
+
+            // D-5: IMPLEMENT（D-4e が登録しなかった場合 + PENDING IMPLEMENT なし）
+            if (!autoAppliedTask) {
+              const hasPendingImpl = allT.some(t =>
+                t.projectId === projectId && t.type === 'IMPLEMENT' && ACTIVE.has(t.state)
+              );
+              if (!hasPendingImpl) {
+                const implCand = fullPlan.nextCandidates.find(c => c.type === 'IMPLEMENT');
+                if (implCand) {
+                  autoAppliedTask = tm.createTask(
+                    implCand.prompt, 'auto-runner', null,
+                    implCand.priority === '高' ? '高' : '低',
+                    projectId, 'IMPLEMENT'
+                  );
+                  const st5 = getRunnerState(projectId);
+                  saveRunnerState(projectId, {
+                    lastTaskId:        autoAppliedTask.id,
+                    totalTasksCreated: (st5.totalTasksCreated || 0) + 1,
+                  });
+                  logger.info(`[AutoRunner] D-5 auto-apply IMPLEMENT (${plannerLabel}): ${autoAppliedTask.id} | ${projectId}`);
+                  nextCandidatesHint =
+                    `\n${plannerLabel} 🔨 Auto Apply: [IMPLEMENT] タスクを登録\n` +
+                    `\`${autoAppliedTask.id}\`\n` +
+                    `次:\n\`\`\`\n!task list\n!auto run 1\n\`\`\``;
+                }
+              }
+            }
+          } catch (applyErr) {
+            logger.warn(`[AutoRunner] D-7c auto-apply エラー: ${applyErr.message}`);
+          }
+        } else if (fullPlan.nextCandidates.length > 0) {
+          // autoApplyPlanning=false: ヒントのみ表示
+          nextCandidatesHint =
+            `\n${plannerLabel} 次候補があります (${fullPlan.nextCandidates.length}件):\n` +
+            `\`\`\`\n!project plan\n!project plan apply\n\`\`\``;
+        }
+      } catch (llmErr) {
+        logger.warn(`[AutoRunner] D-7c LLM/fallback エラー（無視）: ${llmErr.message}`);
+      }
+    }
+    plannerSummaryLine = `Planner: ${plannerResult.action}` + nextCandidatesHint;
+  }
+
+  const nextExecutableTaskId = createdTask ? createdTask.id : null;
+  return {
+    action:    'step',
+    summary:
+      `📋 **[AutoRunner] ステップ ${nextCount}/${maxLoop}** | \`${projectId}\`\n` +
+      plannerSummaryLine,
+    projectId,
+    loopCount:            nextCount,
+    plannerResult,
+    createdTask,
+    nextExecutableTaskId,
+    autoAppliedTask,
+  };
 }
 
 module.exports = {
