@@ -382,11 +382,46 @@ const OPS_PROMPT_PATTERNS = [
   /\u8abf\u67fb/, // 調査
 ];
 
+function isOperationLikePrompt(prompt = '') {
+  return OPS_PROMPT_PATTERNS.some(re => re.test(prompt || ''));
+}
+
+function findTaskOutputArtifact(repoPath, taskId, sinceMs) {
+  if (!repoPath || !taskId) return null;
+  const workspaceRoot = path.join(repoPath, 'workspace');
+  const names = new Set(['result.md', 'output.md', 'log.md']);
+
+  function inspectTaskDir(dir) {
+    try {
+      for (const name of names) {
+        const file = path.join(dir, name);
+        if (!fs.existsSync(file)) continue;
+        const stat = fs.statSync(file);
+        if (!sinceMs || stat.mtimeMs >= sinceMs) return file;
+      }
+    } catch { /* ignore */ }
+    return null;
+  }
+
+  const direct = inspectTaskDir(path.join(workspaceRoot, taskId));
+  if (direct) return direct;
+
+  try {
+    for (const entry of fs.readdirSync(workspaceRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const found = inspectTaskDir(path.join(workspaceRoot, entry.name, taskId));
+      if (found) return found;
+    }
+  } catch { /* workspace がない場合は証拠なし */ }
+
+  return null;
+}
+
 function allowsNoCodeChange(taskType, prompt = '') {
   const normalizedType = String(taskType || 'IMPLEMENT').toUpperCase();
   if (NON_CODE_CHANGE_TYPES.has(normalizedType)) return true;
   // OPS キーワードは task.type に関係なく最優先（IMPLEMENT/FIX/REFACTOR でも上書き）
-  if (OPS_PROMPT_PATTERNS.some(re => re.test(prompt || ''))) return true;
+  if (isOperationLikePrompt(prompt)) return true;
   if (CODE_CHANGE_REQUIRED_TYPES.has(normalizedType)) return false;
   return false;
 }
@@ -447,6 +482,8 @@ function validate(output, repoPath, taskId = '', passedFiles = null, beforeMs = 
   const sinceMs        = beforeMs ?? (Date.now() - 60 * 1000);
   const modifiedFiles  = findRecentlyModified(repoPath, sinceMs, scanExtensions);
   const hasAnyChanges  = changedFiles.length > 0 || modifiedFiles.length > 0 || addedLines > 0;
+  const operationLike  = isOperationLikePrompt(prompt);
+  const outputArtifact = operationLike ? findTaskOutputArtifact(repoPath, taskId, sinceMs) : null;
 
   // ── 2. 構文チェック（変更があった .js のみ）──
   const allChangedFiles = [...changedFiles, ...modifiedFiles.map(f => f.file)];
@@ -466,11 +503,14 @@ function validate(output, repoPath, taskId = '', passedFiles = null, beforeMs = 
     // ── 非IMPLEMENTタイプ: コード変更なしでOK、出力内容で判定 ──
     // DOCS: .md ファイルの作成・更新でも完了OK。出力内容チェックで判定。
     // OPS キーワード（診断/確認/push/status/調査）を含む場合: 会話応答ログがあれば完了
-    const hasOpsKeyword = OPS_PROMPT_PATTERNS.some(re => re.test(prompt || ''));
-    if (hasOpsKeyword) {
+    if (operationLike) {
       // 会話応答ログが取れなくてもプロセス正常終了で完了扱い
       ok     = true;
-      reason = `OPSタスク完了（会話応答ログ${outputLength}文字）`;
+      reason = outputLength > 0
+        ? `OPSタスク完了（会話応答ログ${outputLength}文字）`
+        : outputArtifact
+          ? `OPSタスク完了（出力ファイルあり: ${path.basename(outputArtifact)}）`
+          : 'OPSタスク完了（Claude正常終了）';
     } else {
       const nonImplResult = validateNonImplement(output, normalizedTaskType);
       ok     = nonImplResult.ok;
@@ -555,6 +595,7 @@ function validate(output, repoPath, taskId = '', passedFiles = null, beforeMs = 
 module.exports = {
   validate,
   allowsNoCodeChange,
+  isOperationLikePrompt,
   getChangedFilesFromGit,
   getDiffStat,
   checkSyntaxOfChangedFiles,
