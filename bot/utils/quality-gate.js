@@ -587,6 +587,11 @@ function formatGateList() {
   return lines.join('\n');
 }
 
+// ─────────────────────────────────────────────────────
+// MID_RUN_INTERVAL — MID-RUN Quality Gate の実行間隔（タスク数）
+// ─────────────────────────────────────────────────────
+const MID_RUN_INTERVAL = 3; // 3 タスク完了ごとに一度チェック
+
 module.exports = {
   gatherIndicators,
   computeQualityScore,
@@ -600,4 +605,6 @@ module.exports = {
   // レポート
   generateReport,
   formatGateList,
+  // 定数
+  MID_RUN_INTERVAL,
 };

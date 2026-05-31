@@ -1210,6 +1210,46 @@ async function _runProjectLoop(ctx) {
       ctx.tasksFailed++;
       ctx.consecutiveErrors++;
     }
+
+    // ─ Phase F-2: MID-RUN Quality Gate ──────────────────────
+    // tasksDone が MID_RUN_INTERVAL の倍数になったタイミングでチェック。
+    // GREEN → 続行
+    // YELLOW → ctx.yellowCount++ し警告して続行
+    // RED → ctx.stopReason = 'midrun_quality_gate_red' で break
+    if (ctx.tasksDone > 0 &&
+        ctx.tasksDone % (qualityGate.MID_RUN_INTERVAL || 3) === 0) {
+      try {
+        const midQa = qualityGate.assessQuality(projectId);
+        logger.info(`[ProjectLoop] MID-RUN QA: ${projectId} | level=${midQa.level} score=${midQa.score}`);
+
+        if (midQa.level === 'RED') {
+          ctx.stopReason = 'midrun_quality_gate_red';
+          await message.channel.send(
+            `🔴 **MID-RUN Quality Gate: RED — 停止します**\n\n` +
+            `Project: \`${projectId}\`\n` +
+            midQa.redTriggers.map(t => `  ${t}`).join('\n') + '\n\n' +
+            `問題を解消してから \`!project run\` で再開してください。`
+          ).catch(() => {});
+          break;
+        }
+
+        if (midQa.level === 'YELLOW') {
+          ctx.yellowCount++;
+          await message.channel.send(
+            `🟡 **MID-RUN Quality Gate: YELLOW (${ctx.yellowCount}回目)**\n\n` +
+            `Project: \`${projectId}\` | スコア: ${midQa.score}/100\n` +
+            (midQa.deductions.length > 0
+              ? midQa.deductions.map(d => `  • ${d}`).join('\n') + '\n'
+              : '') +
+            `続行します。\`!quality status ${projectId}\` で詳細を確認できます。`
+          ).catch(() => {});
+        }
+        // GREEN は通知なしで続行
+      } catch (midQaErr) {
+        logger.warn(`[ProjectLoop] MID-RUN Quality Gate エラー（続行）: ${midQaErr.message}`);
+        // フェイルオープン: MID-RUN チェック失敗はループを止めない
+      }
+    }
   }
 
   if (!ctx.stopReason) ctx.stopReason = 'max_tasks_reached';
@@ -1230,7 +1270,7 @@ async function _runProjectLoop(ctx) {
 //   6. logger 出力
 // ─────────────────────────────────────────────────────
 async function _teardown(ctx, prevPid) {
-  const { projectId, message, runId, tasksDone, tasksFailed, stopReason } = ctx;
+  const { projectId, message, runId, tasksDone, tasksFailed, stopReason, yellowCount } = ctx;
 
   // 1. タイマー cleanup
   if (ctx.progressTimerId) { clearInterval(ctx.progressTimerId); ctx.progressTimerId = null; }
@@ -1249,11 +1289,13 @@ async function _teardown(ctx, prevPid) {
   }
 
   // 3. 完了メッセージ
-  const stopMsg = stopReason === 'stopped_by_user' ? ' (ユーザーが停止)' : '';
+  const stopMsg      = stopReason === 'stopped_by_user' ? ' (ユーザーが停止)' : '';
+  const yellowNote   = yellowCount > 0 ? ` | 🟡 YELLOW警告: ${yellowCount}回` : '';
+  const midRedNote   = stopReason === 'midrun_quality_gate_red' ? '\n⚠️ MID-RUN Quality Gate RED で停止' : '';
   await message.channel.send(
     `🏁 **Project Runner 完了**${stopMsg}\n\n` +
     `Project: \`${projectId}\` | runId: \`${runId}\`\n` +
-    `✅ 完了: ${tasksDone}件 | ❌ 失敗: ${tasksFailed}件` +
+    `✅ 完了: ${tasksDone}件 | ❌ 失敗: ${tasksFailed}件${yellowNote}${midRedNote}` +
     postQaText
   ).catch(() => {});
 
@@ -1268,7 +1310,7 @@ async function _teardown(ctx, prevPid) {
   // 6. logger
   logger.info(
     `[ProjectRun] teardown: ${projectId} | runId:${runId} ` +
-    `done:${tasksDone} failed:${tasksFailed} stop:${stopReason || 'none'}`
+    `done:${tasksDone} failed:${tasksFailed} yellow:${yellowCount} stop:${stopReason || 'none'}`
   );
 }
 

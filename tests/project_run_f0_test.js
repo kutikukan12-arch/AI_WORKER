@@ -206,5 +206,79 @@ test('6b. stopRequested が立った次のループで停止する', () => {
   assert.ok(nearBreak.includes('break'), 'stopRequested 後の break がない');
 });
 
+// ─────────────────────────────────────────────────────
+// 7. MID-RUN Quality Gate (Phase F-2 Step5)
+// ─────────────────────────────────────────────────────
+console.log('\n[7. MID-RUN Quality Gate]');
+
+// _runProjectLoop のソース取得
+const loopStart2 = src.indexOf('async function _runProjectLoop(');
+const loopEnd2   = src.indexOf('\n// ─', loopStart2 + 1);
+const loopBody2  = src.slice(loopStart2, loopEnd2 > 0 ? loopEnd2 : loopStart2 + 7000);
+
+test('7a. MID-RUN Quality Gate が _runProjectLoop に含まれる', () =>
+  assert.ok(loopBody2.includes('MID-RUN Quality Gate'), 'MID-RUN コメントがない'));
+
+test('7b. MID_RUN_INTERVAL を参照している', () =>
+  assert.ok(loopBody2.includes('MID_RUN_INTERVAL') || loopBody2.includes('qualityGate.MID_RUN_INTERVAL'),
+    'MID_RUN_INTERVAL 参照がない'));
+
+test('7c. RED 判定で stopReason を midrun_quality_gate_red に設定する', () => {
+  assert.ok(loopBody2.includes("'midrun_quality_gate_red'"), 'midrun_quality_gate_red がない');
+});
+
+test('7d. RED 判定で break する', () => {
+  const redIdx  = loopBody2.indexOf("'midrun_quality_gate_red'");
+  const redArea = loopBody2.slice(redIdx, redIdx + 300);
+  assert.ok(redArea.includes('break'), 'RED 後の break がない');
+});
+
+test('7e. YELLOW 判定で ctx.yellowCount++ する', () =>
+  assert.ok(loopBody2.includes('ctx.yellowCount++'), 'yellowCount++ がない'));
+
+test('7f. YELLOW 判定で break しない（続行する）', () => {
+  // YELLOW ブロックの末尾を確認 — ctx.yellowCount++ の直後の closing } までを見る
+  // YELLOW は if (midQa.level === 'YELLOW') { ... } で囲まれており、
+  // その中に break がないことを確認
+  const yellowBlockStart = loopBody2.indexOf("midQa.level === 'YELLOW'");
+  const yellowBlockEnd   = loopBody2.indexOf('\n        // GREEN', yellowBlockStart);
+  if (yellowBlockStart < 0) { assert.fail('YELLOW ブロックが見つからない'); }
+  const yellowBlock = loopBody2.slice(yellowBlockStart, yellowBlockEnd > 0 ? yellowBlockEnd : yellowBlockStart + 400);
+  assert.ok(!yellowBlock.includes('break'), 'YELLOW ブロック内に break がある（続行すべき）');
+});
+
+test('7g. GREEN は通知なしで続行（メッセージを送らない分岐がある）', () => {
+  // GREEN のケースはコメントで明記されていること
+  assert.ok(loopBody2.includes('GREEN') || loopBody2.includes('続行'),
+    'GREEN 続行の記述がない');
+});
+
+test('7h. MID-RUN チェックエラー時はフェイルオープン（ループを止めない）', () => {
+  const midQaErrIdx  = loopBody2.indexOf('midQaErr');
+  const midQaErrArea = loopBody2.slice(midQaErrIdx, midQaErrIdx + 200);
+  // catch に break が含まれない
+  assert.ok(!midQaErrArea.includes('break'), 'MID-RUN エラー時にフェイルクローズになっている');
+});
+
+// _teardown のソース取得
+const teardownStart2 = src.indexOf('async function _teardown(');
+const teardownEnd2   = src.indexOf('\nasync function ', teardownStart2 + 1);
+const teardownBody2  = src.slice(teardownStart2, teardownEnd2 > 0 ? teardownEnd2 : teardownStart2 + 2000);
+
+test('7i. _teardown で yellowCount を表示する', () =>
+  assert.ok(teardownBody2.includes('yellowCount'), '_teardown に yellowCount がない'));
+
+test('7j. _teardown で midrun_quality_gate_red を表示する', () =>
+  assert.ok(teardownBody2.includes('midrun_quality_gate_red'), 'teardown に midred 記述がない'));
+
+// quality-gate.js に MID_RUN_INTERVAL が export されている
+test('7k. quality-gate.js が MID_RUN_INTERVAL を export している', () => {
+  const qgSrc = require('fs').readFileSync(
+    require('path').join(__dirname, '..', 'bot', 'utils', 'quality-gate.js'), 'utf8'
+  );
+  assert.ok(qgSrc.includes('MID_RUN_INTERVAL'), 'MID_RUN_INTERVAL がない');
+  assert.ok(qgSrc.includes("module.exports"), 'module.exports がない');
+});
+
 console.log(`\n結果: ${pass} passed / ${fail} failed\n`);
 if (fail > 0) process.exit(1);
