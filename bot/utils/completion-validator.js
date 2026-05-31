@@ -380,6 +380,7 @@ const OPS_PROMPT_PATTERNS = [
   /\u8a3a\u65ad/, // 診断
   /\u78ba\u8a8d/, // 確認
   /\u8abf\u67fb/, // 調査
+  /送信/,  // 送信（GitHub送信確認 等）
 ];
 
 function isOperationLikePrompt(prompt = '') {
