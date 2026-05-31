@@ -93,7 +93,8 @@ const autoProjectRunner  = require('./utils/auto-project-runner');
 const autoPolicy         = require('./utils/auto-policy');
 
 // ─── Phase E-5b: Worker Role ───
-const workerRegistry = require('./utils/worker-registry');
+const workerRegistry  = require('./utils/worker-registry');
+const companyManager  = require('./utils/company-manager');
 
 // 承認待ちの実行待機Map: taskId → () => void
 // ※ Bot 再起動で消える設計（意図的割り切り）
@@ -847,6 +848,26 @@ async function handleApplyReview(message, taskId) {
 // サブコマンド:
 //   add <role> [workerId] [project]  Worker を登録
 //   list                              一覧表示
+// ─────────────────────────────────────────────────────
+// !company staff [projectId] — Phase E-5c
+//
+// 現在プロジェクト（または指定 projectId）の推奨人員を表示する。
+// companyManager.getStaffingReport() を呼び .text を Discord に返す。
+// ─────────────────────────────────────────────────────
+async function handleCompanyStaff(message, args) {
+  const rawPid     = args[0] || '';
+  const currentPid = projectManager.getCurrentProject(message.channelId);
+  const pid        = rawPid || currentPid || 'default';
+
+  try {
+    const report = companyManager.getStaffingReport(pid);
+    await message.reply(report.text).catch(() => {});
+  } catch (e) {
+    logger.warn(`[Company] getStaffingReport エラー: ${e.message}`);
+    await message.reply(`❌ 人員分析に失敗しました: ${e.message.slice(0, 100)}`).catch(() => {});
+  }
+}
+
 //   rm <workerId>                     Worker を削除
 //   status                            ワンライナー状況
 // ─────────────────────────────────────────────────────
@@ -4320,6 +4341,22 @@ client.on('messageCreate', async (message) => {
 
   if (content.startsWith('!worker')) {
     await handleWorker(message, content);
+    return;
+  }
+
+  if (content.startsWith('!company')) {
+    const compArgs = content.slice('!company'.length).trim().split(/\s+/);
+    const compSub  = compArgs[0] || '';
+    if (compSub === 'staff') {
+      await handleCompanyStaff(message, compArgs.slice(1));
+      return;
+    }
+    await message.reply(
+      '**!company の使い方**\n```\n' +
+      '!company staff           → 現在プロジェクトの推奨人員を表示\n' +
+      '!company staff <project> → 指定プロジェクトの推奨人員を表示\n' +
+      '```'
+    );
     return;
   }
 
