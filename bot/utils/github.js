@@ -42,28 +42,13 @@ const GIT_REPO_PATH = process.env.GIT_REPO_PATH
 // ─────────────────────────────────────────────────────
 // maskSecret(str) — ログ・エラーメッセージからトークン類をマスク
 //
-// マスク対象:
-//   - github_pat_* / ghp_* トークン
-//   - Authorization: Basic/Bearer <値>
-//   - http.extraheader の値
-//   - URL 埋め込みトークン (https://token@github.com)
-//
-// Discord にもログにも生のトークンが出ないようにする。
+// 後方互換のため関数名・シグネチャは維持しつつ、実体は単一サニタイズ層
+// redact.js #redact へ委譲する（マスク対象は redact.js のコメント参照）。
+// 既存の呼び出し元（setTaskError / error.md / Discord / 各種ログ）は
+// 変更不要で、JWT / 秘密鍵 / *_TOKEN 等の追加マスクも自動で効く。
 // ─────────────────────────────────────────────────────
 function maskSecret(str) {
-  if (typeof str !== 'string') return str;
-  return str
-    // github_pat_xxx / ghp_xxx
-    .replace(/github_pat_[A-Za-z0-9_]+/gi, '[MASKED]')
-    .replace(/ghp_[A-Za-z0-9]+/gi, '[MASKED]')
-    // Authorization: Basic/Bearer <値>
-    .replace(/(Authorization:\s*(?:Basic|Bearer)\s+)[A-Za-z0-9+/=_\-]+/gi, '$1[MASKED]')
-    // http.extraheader="Authorization: ..."
-    .replace(/(extraheader[="\s]*Authorization[^"]*?)[A-Za-z0-9+/=_\-]{8,}/gi, '$1[MASKED]')
-    // URL 埋め込み (https://TOKEN@github.com)
-    .replace(/https?:\/\/[^@\s]+@/gi, 'https://[MASKED]@')
-    // 汎用: 40文字以上の英数字列（トークンらしき値）を含む行はマスク
-    .replace(/\b[A-Za-z0-9_\-]{40,}\b/g, '[MASKED]');
+  return require('./redact').redact(str);
 }
 
 // ─────────────────────────────────────────────────────
