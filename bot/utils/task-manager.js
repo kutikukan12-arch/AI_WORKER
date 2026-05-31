@@ -672,10 +672,31 @@ function incrementRootTimeoutCount(taskId) {
 const SPLIT_TARGET_TYPES = new Set(['IMPLEMENT', 'FIX', 'REFACTOR', 'TEST']);
 
 function autoSplitOnTimeout(taskId) {
-  // H2修正: タイプ・proposals チェックを先に行い、split確定後に timeoutCount をインクリメント
+  // ─ split由来タスクの再split禁止ガード ─
+  // splitTask() は rootTaskId を設定しないため、
+  // ID末尾パターン /_s\d+$/ で split 由来かどうかを判定する。
+  // autoSplitOnTimeout 由来の子タスクも同様に rootTaskId が設定されているので
+  // rootTaskId チェックと ID パターンチェックの両方で防御する。
+  //
+  // 禁止ケース:
+  //   A. rootTaskId が設定されている（autoSplitOnTimeout 由来の子）
+  //   B. ID末尾が _s\d+（splitTask 由来、rootTaskId=null）
+  //
+  // これにより root→child→grandchild の無限 split チェーンを防ぐ。
   const tasks    = loadTasks();
   const original = tasks.find(t => t.id === taskId);
   if (!original) return { ok: false, reason: 'not_found' };
+
+  if (original.rootTaskId) {
+    logger.warn(`[TaskManager] autoSplitOnTimeout: rootTaskId あり → 再split禁止 | ${taskId}`);
+    return { ok: false, reason: 'already_split_child' };
+  }
+  if (/_s\d+$/.test(taskId)) {
+    logger.warn(`[TaskManager] autoSplitOnTimeout: _sN suffix → split由来タスク再split禁止 | ${taskId}`);
+    return { ok: false, reason: 'already_split_child' };
+  }
+
+  // H2修正: タイプ・proposals チェックを先に行い、split確定後に timeoutCount をインクリメント
 
   // タイプチェック（count 消費前に確認）
   const taskType = String(original.type || '').toUpperCase();

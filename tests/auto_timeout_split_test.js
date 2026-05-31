@@ -374,6 +374,86 @@ test('11f. handleAutoRun が enqueueAndWait を使っている（fire-and-forget
   assert.ok(handleAutoRunBody.includes('handleAutoTimeoutSplit'), 'handleAutoRunがhandleAutoTimeoutSplitを呼ぶ');
 });
 
+// ─────────────────────────────────────────────────────
+// 12. split由来タスクの再split禁止（本番問題の再現確認）
+// ─────────────────────────────────────────────────────
+console.log('\n[12. split由来タスクの再split禁止]');
+
+test('12a. !task split 由来の child（rootTaskId=null, _s2 suffix）は autoSplitOnTimeout 禁止', () => {
+  // splitTask が rootTaskId を設定しないため、IDパターンで判定する
+  // ID末尾 /_s\d+$/ にマッチする → already_split_child を返すべき
+
+  // 実際にtasks.jsonにタスクを作って確認（IDを _s2 で終わらせる）
+  const fakeId = 'task_9999990000001_s2'; // ← _s2 で終わる
+  // 直接 JSON 操作でrootTaskId=nullの_s2を作る
+  const fpath = require('path').join(__dirname, '..', 'data', 'tasks.json');
+  const raw   = JSON.parse(require('fs').readFileSync(fpath, 'utf8'));
+  const fakeTask = {
+    id: fakeId, type: 'IMPLEMENT', size: 'SMALL',
+    projectId: pid, prompt: '[fake] s2\n- A\n- B',
+    state: '作業中', priority: '低', priorityReason: 'test',
+    dangerLevel: '低', assignee: 'test', requestedBy: '',
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    stateHistory: [], reviewResult: null, codexResult: null, prUrl: null, notes: '',
+    rootTaskId: null,   // splitTask 由来: rootTaskId 未設定
+    childTasks: [], timeoutCount: 0, splitCount: 0,
+  };
+  raw.tasks.push(fakeTask);
+  require('fs').writeFileSync(fpath, JSON.stringify(raw, null, 2));
+  CLEANUP_IDS.push(fakeId);
+
+  // _sN suffix → already_split_child
+  const result = tm.autoSplitOnTimeout(fakeId);
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.reason, 'already_split_child',
+    `expected already_split_child, got ${result.reason}`);
+  info('12a: _sN suffix タスクのsplit禁止 → ' + result.reason);
+});
+
+test('12b. autoSplitOnTimeout 由来の child（rootTaskId あり）は再split禁止', () => {
+  // rootTaskIdが設定されているchild
+  const root12 = tm.createTask('[E3-test] 12b root\n- A\n- B\n- C', 'e3-test', null, '低', pid, 'IMPLEMENT');
+  CLEANUP_IDS.push(root12.id);
+  tm.updateState(root12.id, tm.STATES.IN_PROGRESS, 'test');
+  const split12 = tm.autoSplitOnTimeout(root12.id);
+  split12.newTasks?.forEach(t => CLEANUP_IDS.push(t.id));
+  assert.strictEqual(split12.ok, true, 'rootのsplitは成功');
+
+  // 子タスクをIN_PROGRESSにしてautoSplitOnTimeoutを試みる
+  if (split12.ok && split12.newTasks.length > 0) {
+    const child12 = split12.newTasks[0];
+    tm.updateState(child12.id, tm.STATES.IN_PROGRESS, 'test child');
+    const childSplit = tm.autoSplitOnTimeout(child12.id);
+    assert.strictEqual(childSplit.ok, false);
+    assert.strictEqual(childSplit.reason, 'already_split_child',
+      `expected already_split_child, got ${childSplit.reason}`);
+    info('12b: rootTaskIdあり child のsplit禁止 → ' + childSplit.reason);
+  }
+});
+
+test('12c. 無限splitチェーンが発生しない', () => {
+  // root → child → grandchild の split が起きないことを確認
+  const root12c = tm.createTask('[E3-test] 12c root\n- X\n- Y', 'e3-test', null, '低', pid, 'IMPLEMENT');
+  CLEANUP_IDS.push(root12c.id);
+  tm.updateState(root12c.id, tm.STATES.IN_PROGRESS, 'test');
+
+  // root split
+  const split12c = tm.autoSplitOnTimeout(root12c.id);
+  split12c.newTasks?.forEach(t => CLEANUP_IDS.push(t.id));
+  assert.strictEqual(split12c.ok, true, 'root split ok');
+
+  // childを全てIN_PROGRESSにしてsplit試行
+  let grandChildAttempts = 0;
+  for (const child of (split12c.newTasks || [])) {
+    tm.updateState(child.id, tm.STATES.IN_PROGRESS, 'test');
+    const r = tm.autoSplitOnTimeout(child.id);
+    if (!r.ok) grandChildAttempts++;
+  }
+  assert.strictEqual(grandChildAttempts, (split12c.newTasks || []).length,
+    '全childのsplitが禁止されている');
+  info('12c: ' + grandChildAttempts + '件のchild split禁止確認');
+});
+
 // 11g: handleAutoOn が handleAutoTimeoutSplit を使っていること（ソース確認）
 test('11g. handleAutoOn が handleAutoTimeoutSplit を使っている', () => {
   const src = require('fs').readFileSync(require('path').join(__dirname,'..','bot','index.js'),'utf8');
