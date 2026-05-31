@@ -1058,6 +1058,21 @@ async function _handleHumanCheck(ctx, task, reason, details) {
   ctx.pendingApproval = taskId;
   ctx.stopReason      = 'awaiting_human';
 
+  // C-1修正: approval record を作成して !approve / !deny が機能するようにする
+  // AWAITING と同方式（type='post'）で登録。重複は createApproval 内で自動スキップ。
+  try {
+    approvalManager.createApproval(taskId, {
+      type:      'post',
+      projectId,
+      reason:    reason.slice(0, 200),
+      danger:    '中',
+      prompt:    (task?.prompt || '').slice(0, 500),
+      channelId: message.channelId,
+    });
+  } catch (approvalErr) {
+    logger.warn(`[HumanCheck] approval 作成失敗（続行）: ${approvalErr.message}`);
+  }
+
   logger.warn(`[HumanCheck] 人間確認が必要: ${projectId} | task:${taskId} | reason:${reason}`);
 
   await message.channel.send(
@@ -2677,6 +2692,20 @@ async function handleProject(message, args) {
       await message.reply(`⚠️ \`${stopPid}\` は現在実行中ではありません。`).catch(() => {});
       return;
     }
+    // ④ C-1修正: awaiting_human 中の stop は _teardown を直接呼んで activeRuns を解放
+    if (ctx.stopReason === 'awaiting_human') {
+      ctx.stopRequested = true;
+      ctx.stopReason    = 'stopped_by_user';
+      ctx.pendingApproval = null;
+      await message.reply(
+        `⏹️ **人間確認待ちを中断して停止します**\n\nProject: \`${stopPid}\``
+      ).catch(() => {});
+      logger.info(`[ProjectRun] awaiting_human 中の stop: ${stopPid}`);
+      const prevPid2 = projectManager.getCurrentProject(message.channelId);
+      await _teardown(ctx, prevPid2);
+      return;
+    }
+
     ctx.stopRequested = true;
     ctx.stopReason    = 'stopped_by_user';
     await message.reply(

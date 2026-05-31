@@ -74,7 +74,7 @@ test('2d. 実行中でない場合「実行中ではありません」と返す'
 
 test('2e. 停止リクエストメッセージを送信する', () => {
   const stopIdx = src.indexOf("sub === 'stop'");
-  const stopBody = src.slice(stopIdx, stopIdx + 600);
+  const stopBody = src.slice(stopIdx, stopIdx + 1200); // awaiting_human 分岐追加で範囲拡大
   assert.ok(stopBody.includes('停止リクエストを受け付けました'), '停止メッセージがない');
 });
 
@@ -655,6 +655,92 @@ test('11l. 初回 validator失敗は HUMAN_CHECKではなく soft RED', () => {
   assert.ok(firstRedArea.includes('_handleSoftRed'), '初回 soft RED が _handleSoftRed でない');
   assert.ok(!firstRedArea.includes('_handleHumanCheck'),
     '初回 soft RED が誤って HUMAN_CHECK になっている');
+});
+
+// ─────────────────────────────────────────────────────
+// 12. C-1/H-1 修正: approval record + !project stop awaiting_human
+// ─────────────────────────────────────────────────────
+console.log('\n[12. C-1/H-1 修正テスト]');
+
+test('12a. _handleHumanCheck が approvalManager.createApproval を呼ぶ', () => {
+  const fn = src.indexOf('async function _handleHumanCheck(');
+  const fe  = src.indexOf('\n// ─', fn + 1);
+  const fb  = src.slice(fn, fe > 0 ? fe : fn + 2000);
+  assert.ok(fb.includes('createApproval'), 'createApproval 呼び出しがない');
+});
+
+test('12b. createApproval に type="post" を渡している', () => {
+  const fn = src.indexOf('async function _handleHumanCheck(');
+  const fe  = src.indexOf('\n// ─', fn + 1);
+  const fb  = src.slice(fn, fe > 0 ? fe : fn + 2000);
+  assert.ok(fb.includes("type:      'post'"), "type='post' がない");
+});
+
+test('12c. createApproval に projectId を渡している', () => {
+  const fn = src.indexOf('async function _handleHumanCheck(');
+  const fe  = src.indexOf('\n// ─', fn + 1);
+  const fb  = src.slice(fn, fe > 0 ? fe : fn + 2000);
+  assert.ok(fb.includes('projectId'), 'projectId がない');
+});
+
+test('12d. approval 作成失敗はフェイルオープン（続行）', () => {
+  const fn = src.indexOf('async function _handleHumanCheck(');
+  const fe  = src.indexOf('\n// ─', fn + 1);
+  const fb  = src.slice(fn, fe > 0 ? fe : fn + 2000);
+  assert.ok(fb.includes('approvalErr'), 'エラーハンドリングがない');
+  // catch 内に throw や return がなく続行する
+  const catchIdx  = fb.indexOf('approvalErr');
+  const catchArea = fb.slice(catchIdx, catchIdx + 150);
+  assert.ok(!catchArea.includes('throw'), 'catch 内で throw している');
+});
+
+test('12e. !project stop が awaiting_human 中に _teardown を直接呼ぶ', () => {
+  const stopIdx  = src.indexOf("sub === 'stop'");
+  const stopArea = src.slice(stopIdx, stopIdx + 1400); // 十分な範囲
+  assert.ok(stopArea.includes("ctx.stopReason === 'awaiting_human'"), 'awaiting_human チェックがない');
+  assert.ok(stopArea.includes('_teardown(ctx'), 'teardown 呼び出しがない');
+});
+
+test('12f. !project stop の awaiting_human 処理が pendingApproval をクリアする', () => {
+  const stopIdx  = src.indexOf("sub === 'stop'");
+  const stopArea = src.slice(stopIdx, stopIdx + 800);
+  const awaitIdx = stopArea.indexOf("ctx.stopReason === 'awaiting_human'");
+  const awaitArea = stopArea.slice(awaitIdx, awaitIdx + 300);
+  assert.ok(awaitArea.includes('ctx.pendingApproval = null'), 'pendingApproval クリアがない');
+});
+
+test('12g. 実際に approval record が作成・取得できる', () => {
+  const am = require('../bot/utils/approval-manager');
+  const testTaskId = 'test_humancheck_approval_' + Date.now();
+  // _handleHumanCheck と同じ方式で作成
+  const a = am.createApproval(testTaskId, {
+    type: 'post',
+    projectId: 'test-project',
+    reason: 'AUTH エラー',
+    danger: '中',
+    prompt: 'test prompt',
+    channelId: '',
+  });
+  assert.ok(a, 'approval 作成失敗');
+  assert.strictEqual(a.taskId, testTaskId);
+  assert.strictEqual(a.type, 'post');
+  // 取得できる
+  const got = am.getApproval(testTaskId);
+  assert.ok(got, 'approval 取得失敗');
+  assert.strictEqual(got.taskId, testTaskId);
+  // cleanup
+  am.deny(testTaskId, 'test');
+});
+
+test('12h. handleApprove が approval 処理後に activeRuns を確認する順序になっている', () => {
+  const fn = src.indexOf('async function handleApprove(');
+  const fe  = src.indexOf('\nasync function handleDeny', fn + 1);
+  const fb  = src.slice(fn, fe > 0 ? fe : fn + 5000);
+  const approveIdx  = fb.indexOf("approvalManager.approve(taskId");
+  const resumeIdx   = fb.indexOf("ctx.pendingApproval === taskId");
+  assert.ok(approveIdx >= 0, 'approve 呼び出しがない');
+  assert.ok(resumeIdx  >= 0, 'pendingApproval チェックがない');
+  assert.ok(approveIdx < resumeIdx, 'approve より先に resume チェックが来ている');
 });
 
 console.log(`\n結果: ${pass} passed / ${fail} failed\n`);
