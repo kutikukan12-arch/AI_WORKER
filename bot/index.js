@@ -79,8 +79,9 @@ const taskQueue      = require('./utils/task-queue');
 const restartManager = require('./utils/restart-manager');
 
 // ─── AI 予測モデル ───
-const aiTrainer   = require('./utils/ai-predictor-trainer');
-const aiPredictor = require('./utils/ai-predictor');
+const aiTrainer    = require('./utils/ai-predictor-trainer');
+const aiV2Trainer  = require('./utils/ai-model-v2-trainer');
+const aiPredictor  = require('./utils/ai-predictor');
 
 // ─── Approval（承認管理）───
 const approvalManager = require('./utils/approval-manager');
@@ -2577,23 +2578,34 @@ async function executeClaudeTask({
       error.message.slice(0, 80)
     );
 
+    // Phase E-4: Secret マスク後に lastError / errorType をタスクに保存
+    const { maskSecret } = require('./utils/github');
+    const maskedErrMsg = maskSecret(error.message);
+    const errorType    = taskManager.classifyErrorType(maskedErrMsg);
+    taskManager.setTaskError(taskId, maskedErrMsg); // setTaskError内でも maskSecret するが念のため渡す
+    logger.info(`[E-4] errorType: ${errorType} | ${taskId}`);
+
     try {
       fs.writeFileSync(
         path.join(taskWorkspace, 'error.md'),
-        `# エラー: ${taskId}\n\n- 発生日時: ${new Date().toLocaleString('ja-JP')}\n\n## エラー内容\n${error.message}\n`,
+        // error.md にも maskSecret 済みメッセージを使用
+        `# エラー: ${taskId}\n\n- 発生日時: ${new Date().toLocaleString('ja-JP')}\n- errorType: ${errorType}\n\n## エラー内容\n${maskedErrMsg}\n`,
         'utf8'
       );
     } catch { /* ignore */ }
 
+    const errorTypeEmoji = { TIMEOUT: '⏱️', AUTH: '🔑', PERMISSION: '🚫', SYNTAX: '📝', UNKNOWN: '❓' }[errorType] || '❓';
     const errorEmbed = new EmbedBuilder()
       .setColor(0xFF3333)
       .setTitle('❌ 作業中にエラーが発生しました')
       .setDescription(
         `AIが作業していたタスクでエラーが起きて止まりました。\n\n` +
-        `**エラーの詳細**\n${fmt.embedDesc(error.message, `../logs/`)}`
+        // Discord embed にも maskSecret 済みメッセージを使用
+        `**エラーの詳細**\n${fmt.embedDesc(maskedErrMsg, `../logs/`)}`
       )
       .addFields(
         { name: '📋 タスクID', value: `\`${taskId}\``, inline: true },
+        { name: `${errorTypeEmoji} エラー種別`, value: errorType, inline: true },
         { name: '📁 ログの場所', value: `\`logs/\` または \`workspace/${taskId}/error.md\``, inline: false },
         { name: '💡 次のステップ', value: '内容を確認して、必要なら `!claude` で再度依頼してください。', inline: false },
       )

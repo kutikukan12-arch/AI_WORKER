@@ -211,6 +211,9 @@ function createTask(prompt, discordUserId, taskId = null, dangerLevel = '低', p
     childTasks:   [],     // auto-split で生成した子タスクID一覧（rootのみ有効）
     timeoutCount: 0,      // タイムアウト発生回数（rootTaskId===null のタスクのみ実体）
     splitCount:   0,      // auto-split 実行回数（rootのみ）
+    // ─── Phase E-4: Failure Recovery ───
+    lastError:    null,   // 最後のエラーメッセージ（スライス済み）
+    errorType:    null,   // エラー分類: TIMEOUT|AUTH|PERMISSION|SYNTAX|UNKNOWN
   };
 
   tasks.push(task);
@@ -269,6 +272,49 @@ function updateTask(taskId, fields) {
   Object.assign(task, fields, { updatedAt: new Date().toISOString() });
   saveTasks(tasks);
   return task;
+}
+
+// ─────────────────────────────────────────────────────
+// Phase E-4: classifyErrorType(message) — エラー分類
+//
+// エラーメッセージから種別を判定する。
+// 戻り値: 'TIMEOUT'|'AUTH'|'PERMISSION'|'SYNTAX'|'UNKNOWN'
+// ─────────────────────────────────────────────────────
+const ERROR_TYPE_PATTERNS = [
+  { type: 'TIMEOUT',    re: /タイムアウト|timed?\s*out|timeout/i },
+  { type: 'AUTH',       re: /authentication|unauthorized|api.?key|credential|token.*invalid|invalid.*token/i },
+  { type: 'PERMISSION', re: /permission|denied|access.?denied|EACCES|EPERM|forbidden/i },
+  { type: 'SYNTAX',     re: /SyntaxError|syntax.?error|parse.?error|unexpected.?token|invalid.?json/i },
+];
+
+function classifyErrorType(message) {
+  if (!message || typeof message !== 'string') return 'UNKNOWN';
+  for (const { type, re } of ERROR_TYPE_PATTERNS) {
+    if (re.test(message)) return type;
+  }
+  return 'UNKNOWN';
+}
+
+// ─────────────────────────────────────────────────────
+// Phase E-4: setTaskError(taskId, errorMessage) — エラー情報をタスクに保存
+//
+// lastError と errorType を task に書き込む。
+// 安全条件:
+//   - DONE タスクは更新しない（アーカイブ済みを変更しない）
+//   - errorMessage は maskSecret() でマスクしてから保存する
+// ─────────────────────────────────────────────────────
+function setTaskError(taskId, errorMessage) {
+  // DONE ガード: アーカイブ済みタスクは更新しない
+  const task = getTask(taskId);
+  if (!task) return null;
+  if (task.state === STATES.DONE) return task;
+
+  // Secret マスク: github_pat / Authorization 等を除去してから保存
+  const { maskSecret } = require('./github');
+  const masked    = maskSecret(String(errorMessage || ''));
+  const errorType = classifyErrorType(masked); // 分類はマスク後のメッセージで行う
+  const lastError = masked.slice(0, 300);
+  return updateTask(taskId, { lastError, errorType });
 }
 
 // ─────────────────────────────────────────────────────
@@ -1093,6 +1139,8 @@ module.exports = {
   updateState,
   updateTask,
   updateTaskType,
+  classifyErrorType,
+  setTaskError,
   buildTypeGuard,
   createFixTaskFromReview,
   findFixTasksFromReview,

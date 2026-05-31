@@ -19,9 +19,11 @@
 const fs   = require('fs');
 const path = require('path');
 const logger = require('./logger');
+const { encode }                               = require('./ai-feature-extractor');
+const { LogisticRegression, LinearRegression } = require('./ai-model-v2');
 
 // ─────────────────────────────────────────────────────
-// 学習済みウェイトのキャッシュロード
+// V1: 学習済みウェイトのキャッシュロード
 // ai-predictor-trainer.js が data/predictor-weights.json を更新した後、
 // reloadWeights() を呼ぶことでキャッシュを破棄して再ロードできる。
 // ─────────────────────────────────────────────────────
@@ -44,6 +46,53 @@ function _loadWeights() {
 function reloadWeights() {
   _cachedWeights = null;
   return _loadWeights();
+}
+
+// ─────────────────────────────────────────────────────
+// V2: ML モデルのキャッシュロード
+// ai-model-v2-trainer.js が data/ml-models.json を更新した後、
+// reloadV2Models() を呼ぶことでキャッシュを破棄して再ロードできる。
+//
+// サンプル数が十分な場合（V2_BLEND_MIN_SAMPLES 以上）に
+// predictTaskOutcome / predictCompletionTime でブレンド使用する。
+// ─────────────────────────────────────────────────────
+const ML_MODELS_FILE = path.join(__dirname, '..', '..', 'data', 'ml-models.json');
+const V2_BLEND_MIN_SAMPLES      = 10; // 成功モデルのブレンド最小サンプル数
+const V2_TIME_BLEND_MIN_SAMPLES = 5;  // 時間モデルのブレンド最小サンプル数
+const V2_BLEND_RATIO            = 0.4; // V2 の混合率（残り 0.6 はルールベース）
+
+let _cachedV2Models = null;
+
+function _loadV2Models() {
+  if (_cachedV2Models !== null) return _cachedV2Models;
+  try {
+    if (fs.existsSync(ML_MODELS_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(ML_MODELS_FILE, 'utf8'));
+      _cachedV2Models = {
+        successModel:    raw.successModel    ? LogisticRegression.fromJSON(raw.successModel) : null,
+        timeModel:       raw.timeModel       ? LinearRegression.fromJSON(raw.timeModel)       : null,
+        sampleCount:     raw.sampleCount     || 0,
+        timeSampleCount: raw.timeSampleCount || 0,
+      };
+      logger.debug(`[Predictor] V2モデル読み込み (samples:${_cachedV2Models.sampleCount})`);
+    }
+  } catch (e) {
+    logger.warn(`[Predictor] V2モデル読み込み失敗: ${e.message}`);
+  }
+  return _cachedV2Models || {};
+}
+
+function reloadV2Models() {
+  _cachedV2Models = null;
+  return _loadV2Models();
+}
+
+// ─────────────────────────────────────────────────────
+// 内部: V2 ML 用に最小限のタスクオブジェクトをエンコードする
+// ─────────────────────────────────────────────────────
+function _encodeForPredict(prompt, taskType, taskSize) {
+  const now = new Date().toISOString();
+  return encode({ type: taskType, size: taskSize, prompt, createdAt: now, updatedAt: now });
 }
 
 // ─────────────────────────────────────────────────────
@@ -262,6 +311,14 @@ function predictTaskOutcome(prompt, taskType = 'IMPLEMENT', taskSize = 'MEDIUM')
   if (taskSize === 'LARGE')  score -= 10;
   if (taskSize === 'SMALL')  score += 5;
 
+  // V2 ML モデルが十分なサンプルを持つ場合はブレンド
+  const v2 = _loadV2Models();
+  if (v2.successModel && v2.sampleCount >= V2_BLEND_MIN_SAMPLES) {
+    const vec    = _encodeForPredict(prompt, taskType, taskSize);
+    const v2Prob = v2.successModel.predict(vec) * 100;
+    score = score * (1 - V2_BLEND_RATIO) + v2Prob * V2_BLEND_RATIO;
+  }
+
   const probability = _clamp(score);
 
   // 信頼度: リスク/ボーナスが検出されるほど予測根拠が明確
@@ -270,7 +327,8 @@ function predictTaskOutcome(prompt, taskType = 'IMPLEMENT', taskSize = 'MEDIUM')
 
   logger.info(
     `[Predictor] TaskOutcome: ${probability}% (confidence:${confidence}) | ` +
-    `risks:${risks.length} bonuses:${bonuses.length} | type:${taskType} size:${taskSize}`
+    `risks:${risks.length} bonuses:${bonuses.length} | type:${taskType} size:${taskSize} | ` +
+    `v2blend:${v2.successModel && v2.sampleCount >= V2_BLEND_MIN_SAMPLES}`
   );
 
   return { probability, confidence, risks, bonuses };
@@ -296,14 +354,29 @@ function predictCompletionTime(taskType = 'IMPLEMENT', taskSize = 'MEDIUM') {
   const base = TYPE_BASE[taskType] || DEFAULT_TYPE_BASE;
   const mult = SIZE_TIME_MULTIPLIER[taskSize] || 1.0;
 
-  // 学習済み時間乗数を適用
+  // V1: 学習済み時間乗数を適用
   const trainedMult = (_loadWeights().typeTimeMultipliers || {})[taskType] || 1.0;
-  const estimateMin = Math.round(base.timeMin * mult * trainedMult);
-  const estimateMax = Math.round(base.timeMax * mult * trainedMult);
+  let estimateMin = Math.round(base.timeMin * mult * trainedMult);
+  let estimateMax = Math.round(base.timeMax * mult * trainedMult);
+
+  // V2 ML 時間モデルが十分なサンプルを持つ場合はブレンド
+  const v2 = _loadV2Models();
+  if (v2.timeModel && v2.timeSampleCount >= V2_TIME_BLEND_MIN_SAMPLES) {
+    const vec    = _encodeForPredict('', taskType, taskSize);
+    const v2Time = v2.timeModel.predict(vec);
+    if (v2Time > 0 && v2Time <= 480) {
+      const ruleBasedMid = (estimateMin + estimateMax) / 2;
+      const blended = ruleBasedMid * (1 - V2_BLEND_RATIO) + v2Time * V2_BLEND_RATIO;
+      const spread  = Math.max(1, Math.round(blended * 0.35)); // ±35% の幅
+      estimateMin = Math.max(1, Math.round(blended - spread));
+      estimateMax = Math.round(blended + spread);
+    }
+  }
 
   logger.info(
     `[Predictor] CompletionTime: ${estimateMin}〜${estimateMax}min | ` +
-    `type:${taskType} size:${taskSize} mult:${mult}`
+    `type:${taskType} size:${taskSize} mult:${mult} | ` +
+    `v2blend:${v2.timeModel && v2.timeSampleCount >= V2_TIME_BLEND_MIN_SAMPLES}`
   );
 
   return { estimateMin, estimateMax, unit: 'minutes' };
@@ -384,4 +457,5 @@ module.exports = {
   predictCompletionTime,
   buildPredictionSummary,
   reloadWeights,
+  reloadV2Models,
 };

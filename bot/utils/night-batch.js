@@ -24,8 +24,9 @@ const fs   = require('fs');
 const path = require('path');
 const logger = require('./logger');
 const taskManager = require('./task-manager');
-const trainer   = require('./ai-predictor-trainer');
-const predictor = require('./ai-predictor');
+const trainer    = require('./ai-predictor-trainer');
+const v2Trainer  = require('./ai-model-v2-trainer');
+const predictor  = require('./ai-predictor');
 
 // ─── 設定 ───
 const BATCH_HOUR     = parseInt(process.env.BATCH_HOUR    || '2',  10);
@@ -172,6 +173,13 @@ function saveBatchReport(report) {
         .map(([t, r]) => `${t}(n=${r.samples},adj=${r.successAdj >= 0 ? '+' : ''}${r.successAdj},×${r.timeMult})`)
         .join(' / ');
 
+  const v2tr = report.v2TrainResult;
+  const v2TrainSection = v2tr === null
+    ? '⚠️ V2トレーニング失敗（ログ参照）'
+    : v2tr.skipped
+    ? `スキップ（${v2tr.reason === 'no_new_data' ? '差分なし' : v2tr.reason}）`
+    : `✅ ${v2tr.incremental ? `差分検出→全再学習 | samples:${v2tr.sampleCount} timeSamples:${v2tr.timeSampleCount}` : `完了 | samples:${v2tr.sampleCount} timeSamples:${v2tr.timeSampleCount}`}`;
+
   const content = [
     `# ナイトバッチレポート ${date}`,
     ``,
@@ -196,8 +204,11 @@ function saveBatchReport(report) {
       ? `✅ 接続OK: ${report.github.repo}（デフォルトブランチ: ${report.github.defaultBranch}）`
       : `❌ 接続失敗: ${report.github.reason}`,
     ``,
-    `## AI 予測モデル トレーニング`,
+    `## AI 予測モデル トレーニング（V1: ルールベース）`,
     trainSection,
+    ``,
+    `## AI ML モデル トレーニング（V2: LogisticRegression / LinearRegression）`,
+    v2TrainSection,
   ].join('\n');
 
   fs.writeFileSync(file, content, 'utf8');
@@ -224,7 +235,7 @@ async function runBatch(notifyFn = null) {
   const taskStatus    = checkIncompleteTasks();
   const github        = await checkGitHubStatus();
 
-  // AI 予測モデルのトレーニング（差分のみ学習）
+  // V1: ルールベース AI 予測モデルのトレーニング（差分のみ学習）
   let trainResult = null;
   try {
     trainResult = trainer.trainIncremental();
@@ -241,7 +252,21 @@ async function runBatch(notifyFn = null) {
     logger.warn(`[Batch] トレーニング失敗: ${e.message}`);
   }
 
-  const report = { runCount, logResults, reviewResults, taskStatus, github, trainResult };
+  // V2: ML モデル（LogisticRegression / LinearRegression）のトレーニング
+  let v2TrainResult = null;
+  try {
+    v2TrainResult = v2Trainer.trainIncrementalV2();
+    if (v2TrainResult && !v2TrainResult.skipped) {
+      predictor.reloadV2Models();
+      logger.info(`[Batch] V2トレーニング完了 | samples:${v2TrainResult.sampleCount} timeSamples:${v2TrainResult.timeSampleCount}`);
+    } else {
+      logger.info(`[Batch] V2トレーニングスキップ | reason:${v2TrainResult?.reason}`);
+    }
+  } catch (e) {
+    logger.warn(`[Batch] V2トレーニング失敗: ${e.message}`);
+  }
+
+  const report = { runCount, logResults, reviewResults, taskStatus, github, trainResult, v2TrainResult };
   const reportFile = saveBatchReport(report);
 
   // Discord 通知テキストを生成
@@ -254,12 +279,18 @@ async function runBatch(notifyFn = null) {
     : '';
 
   const trainLine = trainResult === null
-    ? `🤖 **AIトレーニング**: ⚠️ 失敗（ログ参照）`
+    ? `🤖 **AIトレーニング(V1)**: ⚠️ 失敗（ログ参照）`
     : trainResult.skipped
-    ? `🤖 **AIトレーニング**: ⭕ スキップ（${trainResult.reason === 'no_data' ? 'データなし' : trainResult.reason === 'no_new_data' ? '差分なし' : trainResult.reason}）`
+    ? `🤖 **AIトレーニング(V1)**: ⭕ スキップ（${trainResult.reason === 'no_data' ? 'データなし' : trainResult.reason === 'no_new_data' ? '差分なし' : trainResult.reason}）`
     : trainResult.incremental
-    ? `🤖 **AIトレーニング**: ✅ 差分学習 | +${trainResult.newSampleCount}件（累計 ${trainResult.sampleCount}件）`
-    : `🤖 **AIトレーニング**: ✅ 完了 | ${trainResult.sampleCount}サンプル`;
+    ? `🤖 **AIトレーニング(V1)**: ✅ 差分学習 | +${trainResult.newSampleCount}件（累計 ${trainResult.sampleCount}件）`
+    : `🤖 **AIトレーニング(V1)**: ✅ 完了 | ${trainResult.sampleCount}サンプル`;
+
+  const v2TrainLine = v2TrainResult === null
+    ? `🧠 **ML モデル(V2)**: ⚠️ 失敗（ログ参照）`
+    : v2TrainResult.skipped
+    ? `🧠 **ML モデル(V2)**: ⭕ スキップ（${v2TrainResult.reason === 'no_data' ? 'データなし' : v2TrainResult.reason === 'no_new_data' ? '差分なし' : v2TrainResult.reason}）`
+    : `🧠 **ML モデル(V2)**: ✅ 学習完了 | success:${v2TrainResult.sampleCount}件 time:${v2TrainResult.timeSampleCount}件`;
 
   const message = [
     `🌙 **ナイトバッチ完了** (${new Date().toLocaleString('ja-JP')})`,
@@ -275,6 +306,7 @@ async function runBatch(notifyFn = null) {
     `🔗 **GitHub**: ${github.connected ? `✅ ${github.repo}` : `❌ ${github.reason}`}`,
     ``,
     trainLine,
+    v2TrainLine,
     ``,
     `📄 レポート: \`docs/batch_${new Date().toISOString().slice(0, 10)}.md\``,
   ].filter(l => l !== undefined).join('\n');
