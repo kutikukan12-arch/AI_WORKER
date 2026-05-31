@@ -991,6 +991,114 @@ async function runPlannerStepAsync(projectId, context = {}) {
   };
 }
 
+// ─────────────────────────────────────────────────────
+// getResumeCandidates(projectId, options) — Phase E-2
+//
+// PENDING=0 の場合に Auto Resume できる保留タスクを返す。
+//
+// 変更点（設計修正）:
+//   Auto Resume は「実行許可」ではなく「保留解除」。
+//   実行時の安全判定は既存の Auto Policy / danger判定で行うため、
+//   Resume 段階では AUTO_SAFE と AI_REVIEW_REQUIRED を両方対象にする。
+//   BLOCKED / HUMAN_APPROVAL_REQUIRED のみ除外。
+//
+// 優先順位: IMPLEMENT > FIX > REFACTOR > DOCS > TEST > REVIEW > RESEARCH
+//
+// 禁止条件:
+//   - policy = BLOCKED or HUMAN_APPROVAL_REQUIRED
+//   - size = LARGE
+//   - 保留理由/promptにテスト・ダミー系キーワード含む（classifyHoldNote参照）
+//   - 同テーマの RESEARCH が DONE 履歴に存在する（RESEARCH のみ）
+//   - 同じタスクの resume 試行が 2 回以上ある（stateHistory 確認）
+//
+// 引数:
+//   projectId - プロジェクトID
+//   options   - { maxCount: 1 }  返す最大件数
+//
+// 戻り値: タスクオブジェクトの配列（優先度順）
+// ─────────────────────────────────────────────────────
+const RESUME_TYPE_PRIORITY = {
+  IMPLEMENT: 0,
+  FIX:       1,
+  REFACTOR:  2,
+  DOCS:      3,
+  TEST:      4,
+  REVIEW:    5,
+  RESEARCH:  6,
+};
+
+function getResumeCandidates(projectId, options = {}) {
+  const { maxCount = 1 } = options;
+
+  try {
+    const autoPolicy = require('./auto-policy');
+    const tm         = require('./task-manager');
+    const { AUTO_POLICY, classifyTask, classifyHoldNote } = autoPolicy;
+    const RESUMABLE  = new Set([AUTO_POLICY.AUTO_SAFE, AUTO_POLICY.AI_REVIEW_REQUIRED]);
+
+    // DONE 履歴（RESEARCH 重複チェック用）
+    const doneTasks  = getProjectDoneTasks(projectId);
+
+    const allTasks   = tm.listTasks();
+    const candidates = allTasks
+      .filter(t => {
+        if (t.projectId !== projectId)      return false;
+        if (t.state !== tm.STATES.ON_HOLD)  return false;
+        if ((t.size || '').toUpperCase() === 'LARGE') return false;
+
+        // policy チェック（BLOCKED / HUMAN_APPROVAL_REQUIRED は除外）
+        const policy = classifyTask(t, {});
+        if (!RESUMABLE.has(policy))         return false;
+
+        // 保留理由・prompt がテスト/ダミー由来なら除外
+        const lastNote = _getLastHoldNote(t);
+        if (classifyHoldNote(lastNote, t.prompt) === 'UNSAFE') return false;
+
+        // RESEARCH: 同テーマが DONE 履歴にあれば除外（重複防止）
+        if ((t.type || '').toUpperCase() === 'RESEARCH') {
+          const promptHead = (t.prompt || '').slice(0, 30).toLowerCase();
+          const isDoneAlready = doneTasks.some(d =>
+            d.toUpperCase().startsWith('RESEARCH:') &&
+            d.toLowerCase().includes(promptHead.slice(0, 15))
+          );
+          if (isDoneAlready) return false;
+        }
+
+        // resume 試行 2 回以上は除外
+        if (_getResumeAttempts(t) >= 2) return false;
+
+        return true;
+      })
+      .sort((a, b) => {
+        const pa = RESUME_TYPE_PRIORITY[String(a.type).toUpperCase()] ?? 99;
+        const pb = RESUME_TYPE_PRIORITY[String(b.type).toUpperCase()] ?? 99;
+        return pa - pb;
+      });
+
+    return candidates.slice(0, maxCount);
+  } catch (e) {
+    logger.warn(`[AutoRunner] getResumeCandidates エラー: ${e.message}`);
+    return [];
+  }
+}
+
+// ─── 内部ヘルパー ─────────────────────────────────────
+
+// タスクの最後の保留理由ノートを取得
+function _getLastHoldNote(task) {
+  const history = task.stateHistory || [];
+  const holdEntries = history.filter(h => h.state === '保留');
+  return holdEntries.length > 0 ? (holdEntries[holdEntries.length - 1].note || '') : '';
+}
+
+// タスクの auto-resume 試行回数を stateHistory から取得
+function _getResumeAttempts(task) {
+  const history = task.stateHistory || [];
+  return history.filter(h =>
+    h.state === '未着手' && (h.note || '').includes('auto-resume')
+  ).length;
+}
+
 module.exports = {
   getRunnerState,
   saveRunnerState,
@@ -1001,4 +1109,5 @@ module.exports = {
   runPlannerStep,
   runPlannerStepAsync,
   setAutoApplyPlanning,
+  getResumeCandidates,
 };

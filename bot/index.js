@@ -3106,6 +3106,50 @@ async function handleAutoOn(message) {
     const prepared = await prepareNextTask(message, 'auto-on');
 
     if (!prepared) {
+      // ─ Phase E-2: Auto Resume ─────────────────────────────────
+      // PENDING=0 のとき、安全な保留タスクを自動的に PENDING に戻して続行する。
+      //
+      // 順序:
+      //   1. project_done でないことを確認（project_done なら停止）
+      //   2. getResumeCandidates() で候補を取得
+      //   3. 候補があれば最上位1件を PENDING に戻してループ継続
+      //   4. 候補がなければ停止
+
+      const currentPidAR = projectManager.getCurrentProject(message.channelId);
+      const runnerStateAR = autoProjectRunner.getRunnerState(currentPidAR);
+
+      // runner が有効でない場合は通常停止
+      if (!runnerStateAR.enabled) {
+        stopReason = '未着手タスクなし';
+        break;
+      }
+
+      // project_done チェック（active タスクが 0 件 = 完了状態）
+      const activeTasks = taskManager.listTasks().filter(t =>
+        t.projectId === currentPidAR &&
+        (t.state === taskManager.STATES.PENDING || t.state === taskManager.STATES.IN_PROGRESS)
+      );
+      if (activeTasks.length === 0) {
+        // Auto Resume 候補があれば project_done にはしない
+        const resumeCandidates = autoProjectRunner.getResumeCandidates(currentPidAR, { maxCount: 1 });
+        if (resumeCandidates.length === 0) {
+          stopReason = '未着手タスクなし（Resume候補もなし）';
+          logger.info(`[AUTO-ON] Auto Resume 候補なし → 停止 | ${currentPidAR}`);
+          break;
+        }
+
+        // 最上位1件を PENDING に戻す
+        const toResume = resumeCandidates[0];
+        taskManager.updateState(toResume.id, taskManager.STATES.PENDING, 'auto-resume');
+        logger.info(`[AUTO-ON] Auto Resume: ${toResume.id} [${toResume.type}] | ${currentPidAR}`);
+        await message.channel.send(
+          `♻️ **Auto Resume** | \`${currentPidAR}\`\n` +
+          `タスク \`${toResume.id}\` [${toResume.type}] を保留から復帰しました。\n` +
+          `${(toResume.prompt || '').slice(0, 60)}${(toResume.prompt || '').length > 60 ? '...' : ''}`
+        ).catch(() => {});
+        continue; // ループ先頭に戻り prepareNextTask() で拾う
+      }
+
       stopReason = '未着手タスクなし';
       break;
     }

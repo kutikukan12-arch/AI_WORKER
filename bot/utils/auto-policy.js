@@ -257,8 +257,42 @@ function describePolicy(policy) {
   }
 }
 
+// ─────────────────────────────────────────────────────
+// UNSAFE_HOLD_KEYWORDS — 保留理由がテスト/ダミー由来であることを示すキーワード
+// これらを含む保留タスクは Auto Resume しない
+// ─────────────────────────────────────────────────────
+const UNSAFE_HOLD_KEYWORDS = [
+  'テスト', 'ダミー', 'D4e-test', 'D5-test', 'd7c', 'd8',
+  'smoke', '通しテスト', '明示的テスト', '一時保留',
+];
+
+// UNSAFE_PROMPT_KEYWORDS — prompt 内容がテスト/ダミー由来であることを示すキーワード
+const UNSAFE_PROMPT_KEYWORDS = [
+  '[D4e-test]', 'ダミータスク', 'action:none', 'test2',
+];
+
+// ─────────────────────────────────────────────────────
+// classifyHoldNote(stateNote, prompt) — Phase E-2
+//
+// 保留理由ノートとプロンプトを確認し、Auto Resume が安全かどうかを返す。
+// 戻り値: 'SAFE' | 'UNSAFE'
+//
+// UNSAFE: テスト/ダミー由来のタスクは Auto Resume しない
+// SAFE:   実案件タスクは Auto Resume 候補として扱う
+// ─────────────────────────────────────────────────────
+function classifyHoldNote(stateNote = '', prompt = '') {
+  const noteStr   = String(stateNote || '');
+  const promptStr = String(prompt    || '');
+
+  if (UNSAFE_HOLD_KEYWORDS.some(k => noteStr.includes(k)))   return 'UNSAFE';
+  if (UNSAFE_PROMPT_KEYWORDS.some(k => promptStr.includes(k))) return 'UNSAFE';
+
+  return 'SAFE';
+}
+
 module.exports = {
   AUTO_POLICY,
   classifyTask,
+  classifyHoldNote,
   describePolicy,
 };
