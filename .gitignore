@@ -26,6 +26,9 @@ data/current-project.json
 data/runner-state.json
 data/fix-counts.json
 data/projects.json
+data/workers.json
+data/ml-models.json
+data/security-events.json
 
 # ─── 調査レポート（実行時に生成・大量蓄積）───
 reports/
@@ -60,3 +63,4 @@ Desktop.ini
 # ─── 維持するファイル（! で除外対象から除く）───
 !logs/.gitkeep
 !.env.example
+data/workers.json
