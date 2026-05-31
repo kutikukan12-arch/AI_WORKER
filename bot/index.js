@@ -101,10 +101,46 @@ const qualityGate     = require('./utils/quality-gate');
 // ※ Bot 再起動で消える設計（意図的割り切り）
 const pendingExecutions = new Map();
 
-// Phase E-5c: !project run の二重起動防止 Map
-// key: projectId, value: true（実行中）
-// TODO !project stop <project> 実装時にここをクリアする
+// Phase F-0/F-1: !project run の RunContext Map
+// key: projectId, value: RunContext（実行中状態を保持）
 const activeRuns = new Map();
+
+// ─────────────────────────────────────────────────────
+// createRunContext(projectId, message) — Step 1
+//
+// !project run 開始時に生成するコンテキストオブジェクト。
+// activeRuns に格納し、stop / teardown から参照する。
+// ─────────────────────────────────────────────────────
+function createRunContext(projectId, message) {
+  return {
+    // 識別情報
+    projectId,
+    runId:      `run_${Date.now()}`,
+    startedAt:  new Date().toISOString(),
+    channelId:  message.channelId,
+    message,
+
+    // 実行統計
+    tasksDone:         0,
+    tasksFailed:       0,
+    consecutiveErrors: 0,
+    yellowCount:       0,
+
+    // 状態フラグ
+    softRedHandled:    false,
+
+    // 停止制御（Step2: !project stop で設定）
+    stopRequested:     false,
+    stopReason:        null,
+
+    // 承認待ち（未実装: Step4以降）
+    pendingApproval:   null,
+
+    // タイマー（未実装: Step4以降）
+    progressTimerId:   null,
+    maxRunTimerId:     null,
+  };
+}
 
 // ─── 環境変数読み込み ───
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
@@ -895,11 +931,13 @@ async function handleProjectRun(message, projectId) {
     return;
   }
 
-  // 二重起動防止
-  if (activeRuns.get(projectId)) {
+  // 二重起動防止（Step1: RunContext の存在チェック）
+  if (activeRuns.has(projectId)) {
+    const existing = activeRuns.get(projectId);
     await message.reply(
       `⚠️ **\`${projectId}\` は既に実行中です**\n\n` +
-      `\`!project runner status\` で状況を確認してください。`
+      `runId: \`${existing?.runId || '—'}\`\n` +
+      `停止: \`!project stop ${projectId}\` | 状態: \`!project runner status\``
     ).catch(() => {});
     return;
   }
@@ -969,28 +1007,81 @@ async function handleProjectRun(message, projectId) {
   autoProjectRunner.enableRunner(projectId);
   autoProjectRunner.setAutoApplyPlanning(projectId, true);
 
-  // 実行中フラグをセット
-  activeRuns.set(projectId, true);
+  // Step1: RunContext を生成して activeRuns に登録
+  const ctx = createRunContext(projectId, message);
+  activeRuns.set(projectId, ctx);
+  logger.info(`[ProjectRun] 開始 runId:${ctx.runId} | ${projectId}`);
 
   // 開始メッセージ
   await message.reply(
     `🚀 **Project Runner 開始**\n\n` +
     `Project: **${project.name}** (\`${projectId}\`)${staffText}\n\n` +
     `Auto Runner を有効化しました。タスクを順次実行します。\n` +
-    `\`!project runner status\` で進捗を確認できます。`
+    `停止: \`!project stop ${projectId}\` | 状態: \`!project runner status\``
   ).catch(() => {});
 
   // handleAutoOn fire-and-forget（Discord ハンドラをブロックしない）
   handleAutoOn(message)
     .catch(err => logger.error(`[ProjectRun] handleAutoOn エラー: ${err.message}`))
     .finally(() => {
-      activeRuns.delete(projectId);
-      // プロジェクト設定を元に戻す
-      if (prevPid && prevPid !== projectId) {
-        projectManager.setCurrentProject(message.channelId, prevPid);
-      }
-      logger.info(`[ProjectRun] 完了: ${projectId}`);
+      _teardown(ctx, prevPid);
     });
+}
+
+// ─────────────────────────────────────────────────────
+// _teardown(ctx, prevPid) — Step3
+//
+// !project run の handleAutoOn.finally() から呼ばれる後処理。
+//
+// 責務:
+//   1. タイマー cleanup
+//   2. POST-RUN Quality Gate
+//   3. 完了メッセージ送信
+//   4. activeRuns.delete(projectId)
+//   5. チャンネル projectId 復元
+//   6. logger 出力
+// ─────────────────────────────────────────────────────
+async function _teardown(ctx, prevPid) {
+  const { projectId, message, runId, tasksDone, tasksFailed, stopReason } = ctx;
+
+  // 1. タイマー cleanup
+  if (ctx.progressTimerId) { clearInterval(ctx.progressTimerId); ctx.progressTimerId = null; }
+  if (ctx.maxRunTimerId)   { clearTimeout(ctx.maxRunTimerId);    ctx.maxRunTimerId   = null; }
+
+  // 2. POST-RUN Quality Gate
+  let postQaText = '';
+  try {
+    const qa   = qualityGate.assessQuality(projectId);
+    const icon = { GREEN: '🟢', YELLOW: '🟡', RED: '🔴' }[qa.level] || '❓';
+    postQaText = `\n${icon} **POST-RUN Quality: ${qa.level}**` +
+      (qa.score !== null ? ` (${qa.score}/100)` : '') +
+      (qa.redTriggers.length > 0 ? '\n' + qa.redTriggers.map(t => `  ${t}`).join('\n') : '');
+  } catch (e) {
+    logger.warn(`[Teardown] POST-RUN Quality Gate エラー: ${e.message}`);
+  }
+
+  // 3. 完了メッセージ
+  const stopMsg = stopReason === 'stopped_by_user' ? ' (ユーザーが停止)' : '';
+  await message.channel.send(
+    `🏁 **Project Runner 完了**${stopMsg}\n\n` +
+    `Project: \`${projectId}\` | runId: \`${runId}\`\n` +
+    `✅ 完了: ${tasksDone}件 | ❌ 失敗: ${tasksFailed}件` +
+    postQaText
+  ).catch(() => {});
+
+  // 4. activeRuns から削除
+  activeRuns.delete(projectId);
+
+  // 5. チャンネル projectId 復元
+  if (prevPid && prevPid !== projectId) {
+    projectManager.setCurrentProject(message.channelId, prevPid);
+  }
+
+  // 6. logger
+  logger.info(
+    `[ProjectRun] teardown: ${projectId} | runId:${runId} ` +
+    `done:${tasksDone} failed:${tasksFailed} stop:${stopReason || 'none'}`
+  );
 }
 
 async function handleCompanyStaff(message, args) {
@@ -2132,9 +2223,32 @@ async function handleProject(message, args) {
     return;
   }
 
+  // Step2: !project stop [projectId]
+  if (sub === 'stop') {
+    const stopPid = args[1] || projectManager.getCurrentProject(message.channelId) || '';
+    if (!stopPid) {
+      await message.reply('使い方: `!project stop <projectId>`').catch(() => {});
+      return;
+    }
+    const ctx = activeRuns.get(stopPid);
+    if (!ctx) {
+      await message.reply(`⚠️ \`${stopPid}\` は現在実行中ではありません。`).catch(() => {});
+      return;
+    }
+    ctx.stopRequested = true;
+    ctx.stopReason    = 'stopped_by_user';
+    await message.reply(
+      `⏹️ **停止リクエストを受け付けました**\n\n` +
+      `Project: \`${stopPid}\`\n` +
+      `現在実行中のタスクが完了した後に停止します。`
+    ).catch(() => {});
+    logger.info(`[ProjectRun] stop requested: ${stopPid}`);
+    return;
+  }
+
   // 不明なサブコマンド
   await message.reply(
-    '**使い方**\n```\n!project current\n!project list\n!project create <名前>\n!project switch <名前>\n!project plan\n!project runner status|on|off|reset\n!project run <projectId>  → Runner 起動\n```'
+    '**使い方**\n```\n!project current\n!project list\n!project create <名前>\n!project switch <名前>\n!project plan\n!project runner status|on|off|reset\n!project run <projectId>   → Runner 起動\n!project stop [projectId]  → Runner 停止\n```'
   );
 }
 

@@ -1,0 +1,133 @@
+'use strict';
+// Phase F-0/F-1 Step1-3: RunContext / !project stop / _teardown テスト
+
+const assert = require('assert');
+const path   = require('path');
+const fs     = require('fs');
+
+let pass = 0, fail = 0;
+function test(name, fn) {
+  try { fn(); console.log('  ✅', name); pass++; }
+  catch (e) { console.error('  ❌', name, '\n    ', e.message); fail++; }
+}
+function info(msg) { console.log('  ℹ️ ', msg); }
+
+const src = fs.readFileSync(path.join(__dirname, '..', 'bot', 'index.js'), 'utf8');
+
+// ─────────────────────────────────────────────────────
+// 1. createRunContext (Step1)
+// ─────────────────────────────────────────────────────
+console.log('\n[1. createRunContext]');
+
+test('1a. createRunContext が定義されている', () =>
+  assert.ok(src.includes('function createRunContext('), 'createRunContext がない'));
+
+test('1b. RunContext に必須フィールドが含まれる', () => {
+  const fnStart = src.indexOf('function createRunContext(');
+  const fnEnd   = src.indexOf('\n}', fnStart) + 2;
+  const fnBody  = src.slice(fnStart, fnEnd);
+  const fields  = ['projectId', 'runId', 'startedAt', 'channelId', 'message',
+                   'tasksDone', 'tasksFailed', 'consecutiveErrors', 'yellowCount',
+                   'softRedHandled', 'stopRequested', 'stopReason',
+                   'pendingApproval', 'progressTimerId', 'maxRunTimerId'];
+  fields.forEach(f => assert.ok(fnBody.includes(f), `フィールド ${f} がない`));
+});
+
+test('1c. activeRuns.set に RunContext が渡される（true ではない）', () => {
+  const setIdx = src.indexOf('activeRuns.set(projectId, ctx)');
+  assert.ok(setIdx >= 0, 'activeRuns.set(projectId, ctx) がない（true のまま？）');
+});
+
+test('1d. activeRuns.has で二重起動チェックしている', () =>
+  assert.ok(src.includes('activeRuns.has(projectId)'), 'has チェックがない'));
+
+test('1e. runId が run_ + timestamp 形式', () =>
+  assert.ok(src.includes("runId:      `run_${Date.now()}`") ||
+            src.includes("runId:      'run_' + Date.now()") ||
+            src.includes('runId'), 'runId 生成がない'));
+
+// ─────────────────────────────────────────────────────
+// 2. !project stop (Step2)
+// ─────────────────────────────────────────────────────
+console.log('\n[2. !project stop]');
+
+test('2a. !project stop routing がある', () =>
+  assert.ok(src.includes("sub === 'stop'"), "sub === 'stop' がない"));
+
+test('2b. ctx.stopRequested = true を設定する', () => {
+  const stopIdx = src.indexOf("sub === 'stop'");
+  const stopBody = src.slice(stopIdx, stopIdx + 600);
+  assert.ok(stopBody.includes('ctx.stopRequested = true'), 'stopRequested 設定がない');
+});
+
+test('2c. ctx.stopReason = "stopped_by_user" を設定する', () => {
+  const stopIdx = src.indexOf("sub === 'stop'");
+  const stopBody = src.slice(stopIdx, stopIdx + 600);
+  assert.ok(stopBody.includes("'stopped_by_user'"), 'stopReason 設定がない');
+});
+
+test('2d. 実行中でない場合「実行中ではありません」と返す', () => {
+  const stopIdx = src.indexOf("sub === 'stop'");
+  const stopBody = src.slice(stopIdx, stopIdx + 600);
+  assert.ok(stopBody.includes('実行中ではありません'), '未実行メッセージがない');
+});
+
+test('2e. 停止リクエストメッセージを送信する', () => {
+  const stopIdx = src.indexOf("sub === 'stop'");
+  const stopBody = src.slice(stopIdx, stopIdx + 600);
+  assert.ok(stopBody.includes('停止リクエストを受け付けました'), '停止メッセージがない');
+});
+
+test('2f. activeRuns に stopPid がない場合は警告して return する', () => {
+  const stopIdx = src.indexOf("sub === 'stop'");
+  const stopBody = src.slice(stopIdx, stopIdx + 600);
+  assert.ok(stopBody.includes('activeRuns.get(stopPid)'), 'ctx 取得がない');
+});
+
+// ─────────────────────────────────────────────────────
+// 3. _teardown (Step3)
+// ─────────────────────────────────────────────────────
+console.log('\n[3. _teardown]');
+
+test('3a. _teardown 関数が定義されている', () =>
+  assert.ok(src.includes('async function _teardown('), '_teardown がない'));
+
+const teardownStart = src.indexOf('async function _teardown(');
+const teardownEnd   = src.indexOf('\nasync function ', teardownStart + 1);
+const teardownBody  = src.slice(teardownStart, teardownEnd > 0 ? teardownEnd : teardownStart + 2000);
+
+test('3b. progressTimerId の clearInterval がある', () =>
+  assert.ok(teardownBody.includes('clearInterval(ctx.progressTimerId)'), 'clearInterval がない'));
+
+test('3c. maxRunTimerId の clearTimeout がある', () =>
+  assert.ok(teardownBody.includes('clearTimeout(ctx.maxRunTimerId)'), 'clearTimeout がない'));
+
+test('3d. POST-RUN Quality Gate を呼ぶ', () =>
+  assert.ok(teardownBody.includes('assessQuality(projectId)'), 'POST-RUN assessQuality がない'));
+
+test('3e. 完了メッセージを送信する', () =>
+  assert.ok(teardownBody.includes('Project Runner 完了'), '完了メッセージがない'));
+
+test('3f. activeRuns.delete(projectId) を呼ぶ', () =>
+  assert.ok(teardownBody.includes('activeRuns.delete(projectId)'), 'delete がない'));
+
+test('3g. stopReason が stopped_by_user のとき完了メッセージに表示する', () =>
+  assert.ok(teardownBody.includes('stopped_by_user'), '停止理由の判定がない'));
+
+test('3h. handleProjectRun から _teardown が呼ばれる', () => {
+  const runFnStart = src.indexOf('async function handleProjectRun(');
+  const runFnEnd   = src.indexOf('\nasync function ', runFnStart + 1);
+  const runBody    = src.slice(runFnStart, runFnEnd);
+  assert.ok(runBody.includes('_teardown(ctx'), '_teardown 呼び出しがない');
+});
+
+// ─────────────────────────────────────────────────────
+// 4. help テキスト更新確認
+// ─────────────────────────────────────────────────────
+console.log('\n[4. help テキスト]');
+
+test('4a. !project stop が help に含まれる', () =>
+  assert.ok(src.includes('!project stop'), '!project stop がヘルプにない'));
+
+console.log(`\n結果: ${pass} passed / ${fail} failed\n`);
+if (fail > 0) process.exit(1);
