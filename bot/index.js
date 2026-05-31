@@ -121,10 +121,11 @@ function createRunContext(projectId, message) {
     message,
 
     // 実行統計
-    tasksDone:         0,
-    tasksFailed:       0,
-    consecutiveErrors: 0,
-    yellowCount:       0,
+    tasksDone:             0,
+    tasksFailed:           0,
+    consecutiveErrors:     0,
+    yellowCount:           0,
+    lastMidRunTasksDone:   0, // MID-RUN 重複発火防止マーカー
 
     // 状態フラグ
     softRedHandled:    false,
@@ -1030,6 +1031,71 @@ async function handleProjectRun(message, projectId) {
 }
 
 // ─────────────────────────────────────────────────────
+// _maybeRunMidQualityGate(ctx) — Phase F-2 Step5 修正
+//
+// MID-RUN Quality Gate 実行ヘルパー。
+// 以下の条件を全て満たす場合のみ実行し、重複発火を防ぐ。
+//
+//   1. ctx.tasksDone > 0
+//   2. ctx.tasksDone % MID_RUN_INTERVAL === 0
+//   3. ctx.tasksDone !== ctx.lastMidRunTasksDone  ← 重複防止
+//
+// REVIEW / RESEARCH / IMPLEMENT 完了後に共通で呼ぶ。
+// 失敗タスク後は tasksDone が変わらないため条件3が成立せず重複しない。
+//
+// 戻り値:
+//   true  → 呼び出し元は break すること（RED停止）
+//   false → 続行可能
+// ─────────────────────────────────────────────────────
+async function _maybeRunMidQualityGate(ctx) {
+  const { projectId, message } = ctx;
+  const interval = qualityGate.MID_RUN_INTERVAL || 3;
+
+  if (!(ctx.tasksDone > 0 &&
+        ctx.tasksDone % interval === 0 &&
+        ctx.tasksDone !== ctx.lastMidRunTasksDone)) {
+    return false; // 発火条件を満たさない
+  }
+
+  // 発火確定 — マーカーを更新して重複発火を防ぐ
+  ctx.lastMidRunTasksDone = ctx.tasksDone;
+
+  try {
+    const midQa = qualityGate.assessQuality(projectId);
+    logger.info(`[ProjectLoop] MID-RUN QA: ${projectId} | level=${midQa.level} score=${midQa.score} done=${ctx.tasksDone}`);
+
+    if (midQa.level === 'RED') {
+      ctx.stopReason = 'midrun_quality_gate_red';
+      await message.channel.send(
+        `🔴 **MID-RUN Quality Gate: RED — 停止します**\n\n` +
+        `Project: \`${projectId}\`\n` +
+        midQa.redTriggers.map(t => `  ${t}`).join('\n') + '\n\n' +
+        `問題を解消してから \`!project run\` で再開してください。`
+      ).catch(() => {});
+      return true; // break 指示
+    }
+
+    if (midQa.level === 'YELLOW') {
+      ctx.yellowCount++;
+      await message.channel.send(
+        `🟡 **MID-RUN Quality Gate: YELLOW (${ctx.yellowCount}回目)**\n\n` +
+        `Project: \`${projectId}\` | スコア: ${midQa.score}/100\n` +
+        (midQa.deductions.length > 0
+          ? midQa.deductions.map(d => `  • ${d}`).join('\n') + '\n'
+          : '') +
+        `続行します。\`!quality status ${projectId}\` で詳細を確認できます。`
+      ).catch(() => {});
+    }
+    // GREEN は通知なしで続行
+  } catch (midQaErr) {
+    logger.warn(`[ProjectLoop] MID-RUN Quality Gate エラー（続行）: ${midQaErr.message}`);
+    // フェイルオープン: MID-RUN チェック失敗はループを止めない
+  }
+
+  return false; // 続行
+}
+
+// ─────────────────────────────────────────────────────
 // _runProjectLoop(ctx) — Phase F-1 Step4
 //
 // !project run 専用の実行ループ。handleAutoOn を使わず独立実装。
@@ -1152,6 +1218,8 @@ async function _runProjectLoop(ctx) {
         await executeReviewTask({ message, task: next, projectId });
         ctx.tasksDone++;
         ctx.consecutiveErrors = 0;
+        // REVIEW完了後も MID-RUN チェック（3の倍数到達で発火）
+        if (await _maybeRunMidQualityGate(ctx)) break;
         continue;
       }
 
@@ -1159,6 +1227,8 @@ async function _runProjectLoop(ctx) {
         await executeResearchTask({ message, task: next, projectId });
         ctx.tasksDone++;
         ctx.consecutiveErrors = 0;
+        // RESEARCH完了後も MID-RUN チェック
+        if (await _maybeRunMidQualityGate(ctx)) break;
         continue;
       }
 
@@ -1181,7 +1251,7 @@ async function _runProjectLoop(ctx) {
         ctx.tasksDone++;  // 人間確認待ちも「実行済み」としてカウント
         ctx.consecutiveErrors = 0;
       } else if (finalTask.state === taskManager.STATES.REVIEWING) {
-        // バリデーション未通過 → 失敗カウント
+        // バリデーション未通過 → 失敗カウント（tasksDone は増えないため重複防止条件で自動スキップ）
         ctx.tasksFailed++;
         ctx.consecutiveErrors++;
       } else if (finalTask.state === taskManager.STATES.IN_PROGRESS) {
@@ -1211,45 +1281,9 @@ async function _runProjectLoop(ctx) {
       ctx.consecutiveErrors++;
     }
 
-    // ─ Phase F-2: MID-RUN Quality Gate ──────────────────────
-    // tasksDone が MID_RUN_INTERVAL の倍数になったタイミングでチェック。
-    // GREEN → 続行
-    // YELLOW → ctx.yellowCount++ し警告して続行
-    // RED → ctx.stopReason = 'midrun_quality_gate_red' で break
-    if (ctx.tasksDone > 0 &&
-        ctx.tasksDone % (qualityGate.MID_RUN_INTERVAL || 3) === 0) {
-      try {
-        const midQa = qualityGate.assessQuality(projectId);
-        logger.info(`[ProjectLoop] MID-RUN QA: ${projectId} | level=${midQa.level} score=${midQa.score}`);
-
-        if (midQa.level === 'RED') {
-          ctx.stopReason = 'midrun_quality_gate_red';
-          await message.channel.send(
-            `🔴 **MID-RUN Quality Gate: RED — 停止します**\n\n` +
-            `Project: \`${projectId}\`\n` +
-            midQa.redTriggers.map(t => `  ${t}`).join('\n') + '\n\n' +
-            `問題を解消してから \`!project run\` で再開してください。`
-          ).catch(() => {});
-          break;
-        }
-
-        if (midQa.level === 'YELLOW') {
-          ctx.yellowCount++;
-          await message.channel.send(
-            `🟡 **MID-RUN Quality Gate: YELLOW (${ctx.yellowCount}回目)**\n\n` +
-            `Project: \`${projectId}\` | スコア: ${midQa.score}/100\n` +
-            (midQa.deductions.length > 0
-              ? midQa.deductions.map(d => `  • ${d}`).join('\n') + '\n'
-              : '') +
-            `続行します。\`!quality status ${projectId}\` で詳細を確認できます。`
-          ).catch(() => {});
-        }
-        // GREEN は通知なしで続行
-      } catch (midQaErr) {
-        logger.warn(`[ProjectLoop] MID-RUN Quality Gate エラー（続行）: ${midQaErr.message}`);
-        // フェイルオープン: MID-RUN チェック失敗はループを止めない
-      }
-    }
+    // ─ Phase F-2 修正: MID-RUN Quality Gate（共通ヘルパー経由）──
+    // tasksDone 変化時のみ発火。失敗タスク後の重複発火はマーカーで防ぐ。
+    if (await _maybeRunMidQualityGate(ctx)) break;
   }
 
   if (!ctx.stopReason) ctx.stopReason = 'max_tasks_reached';

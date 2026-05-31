@@ -219,45 +219,42 @@ const loopBody2  = src.slice(loopStart2, loopEnd2 > 0 ? loopEnd2 : loopStart2 + 
 test('7a. MID-RUN Quality Gate が _runProjectLoop に含まれる', () =>
   assert.ok(loopBody2.includes('MID-RUN Quality Gate'), 'MID-RUN コメントがない'));
 
-test('7b. MID_RUN_INTERVAL を参照している', () =>
-  assert.ok(loopBody2.includes('MID_RUN_INTERVAL') || loopBody2.includes('qualityGate.MID_RUN_INTERVAL'),
+// 7b〜7h は修正後 _maybeRunMidQualityGate ヘルパーに実装が移動したため参照先を変更
+const helperStart2 = src.indexOf('async function _maybeRunMidQualityGate(');
+const helperEnd2   = src.indexOf('\n// ─', helperStart2 + 1);
+const helperBody2  = src.slice(helperStart2, helperEnd2 > 0 ? helperEnd2 : helperStart2 + 2000);
+
+test('7b. MID_RUN_INTERVAL をヘルパーが参照している', () =>
+  assert.ok(helperBody2.includes('MID_RUN_INTERVAL') || helperBody2.includes('qualityGate.MID_RUN_INTERVAL'),
     'MID_RUN_INTERVAL 参照がない'));
 
-test('7c. RED 判定で stopReason を midrun_quality_gate_red に設定する', () => {
-  assert.ok(loopBody2.includes("'midrun_quality_gate_red'"), 'midrun_quality_gate_red がない');
-});
+test('7c. RED 判定で stopReason を midrun_quality_gate_red に設定する', () =>
+  assert.ok(helperBody2.includes("'midrun_quality_gate_red'"), 'midrun_quality_gate_red がない'));
 
-test('7d. RED 判定で break する', () => {
-  const redIdx  = loopBody2.indexOf("'midrun_quality_gate_red'");
-  const redArea = loopBody2.slice(redIdx, redIdx + 300);
-  assert.ok(redArea.includes('break'), 'RED 後の break がない');
+test('7d. RED 判定で true を返す（呼び出し元が break）', () => {
+  const redIdx  = helperBody2.indexOf("'midrun_quality_gate_red'");
+  const redArea = helperBody2.slice(redIdx, redIdx + 600); // メッセージが長いので600文字
+  assert.ok(redArea.includes('return true'), 'RED 後の return true がない');
 });
 
 test('7e. YELLOW 判定で ctx.yellowCount++ する', () =>
-  assert.ok(loopBody2.includes('ctx.yellowCount++'), 'yellowCount++ がない'));
+  assert.ok(helperBody2.includes('ctx.yellowCount++'), 'yellowCount++ がない'));
 
-test('7f. YELLOW 判定で break しない（続行する）', () => {
-  // YELLOW ブロックの末尾を確認 — ctx.yellowCount++ の直後の closing } までを見る
-  // YELLOW は if (midQa.level === 'YELLOW') { ... } で囲まれており、
-  // その中に break がないことを確認
-  const yellowBlockStart = loopBody2.indexOf("midQa.level === 'YELLOW'");
-  const yellowBlockEnd   = loopBody2.indexOf('\n        // GREEN', yellowBlockStart);
+test('7f. YELLOW 判定で break しない（false を返して続行する）', () => {
+  const yellowBlockStart = helperBody2.indexOf("midQa.level === 'YELLOW'");
+  const yellowBlockEnd   = helperBody2.indexOf('\n    // GREEN', yellowBlockStart);
   if (yellowBlockStart < 0) { assert.fail('YELLOW ブロックが見つからない'); }
-  const yellowBlock = loopBody2.slice(yellowBlockStart, yellowBlockEnd > 0 ? yellowBlockEnd : yellowBlockStart + 400);
-  assert.ok(!yellowBlock.includes('break'), 'YELLOW ブロック内に break がある（続行すべき）');
+  const yellowBlock = helperBody2.slice(yellowBlockStart, yellowBlockEnd > 0 ? yellowBlockEnd : yellowBlockStart + 400);
+  assert.ok(!yellowBlock.includes('return true'), 'YELLOW ブロック内に return true がある（続行すべき）');
 });
 
-test('7g. GREEN は通知なしで続行（メッセージを送らない分岐がある）', () => {
-  // GREEN のケースはコメントで明記されていること
-  assert.ok(loopBody2.includes('GREEN') || loopBody2.includes('続行'),
-    'GREEN 続行の記述がない');
-});
+test('7g. GREEN は通知なしで続行（ヘルパー内にコメントがある）', () =>
+  assert.ok(helperBody2.includes('GREEN'), 'GREEN 続行の記述がない'));
 
 test('7h. MID-RUN チェックエラー時はフェイルオープン（ループを止めない）', () => {
-  const midQaErrIdx  = loopBody2.indexOf('midQaErr');
-  const midQaErrArea = loopBody2.slice(midQaErrIdx, midQaErrIdx + 200);
-  // catch に break が含まれない
-  assert.ok(!midQaErrArea.includes('break'), 'MID-RUN エラー時にフェイルクローズになっている');
+  const midQaErrIdx  = helperBody2.indexOf('midQaErr');
+  const midQaErrArea = helperBody2.slice(midQaErrIdx, midQaErrIdx + 200);
+  assert.ok(!midQaErrArea.includes('return true'), 'MID-RUN エラー時にフェイルクローズになっている');
 });
 
 // _teardown のソース取得
@@ -278,6 +275,79 @@ test('7k. quality-gate.js が MID_RUN_INTERVAL を export している', () => {
   );
   assert.ok(qgSrc.includes('MID_RUN_INTERVAL'), 'MID_RUN_INTERVAL がない');
   assert.ok(qgSrc.includes("module.exports"), 'module.exports がない');
+});
+
+// ─────────────────────────────────────────────────────
+// 8. _maybeRunMidQualityGate 重複防止・発火タイミング修正 (Phase F-2 修正)
+// ─────────────────────────────────────────────────────
+console.log('\n[8. _maybeRunMidQualityGate 重複防止修正]');
+
+test('8a. _maybeRunMidQualityGate が定義されている', () =>
+  assert.ok(src.includes('async function _maybeRunMidQualityGate('),
+    '_maybeRunMidQualityGate がない'));
+
+const helperStart = src.indexOf('async function _maybeRunMidQualityGate(');
+const helperEnd   = src.indexOf('\n// ─', helperStart + 1);
+const helperBody  = src.slice(helperStart, helperEnd > 0 ? helperEnd : helperStart + 2000);
+
+test('8b. lastMidRunTasksDone との比較がある（重複防止条件3）', () =>
+  assert.ok(helperBody.includes('lastMidRunTasksDone'), 'lastMidRunTasksDone 参照がない'));
+
+test('8c. 発火後に lastMidRunTasksDone を更新する', () => {
+  assert.ok(helperBody.includes('ctx.lastMidRunTasksDone = ctx.tasksDone'),
+    'lastMidRunTasksDone 更新がない');
+});
+
+test('8d. createRunContext に lastMidRunTasksDone が含まれる', () => {
+  const ctxFnStart = src.indexOf('function createRunContext(');
+  const ctxFnEnd   = src.indexOf('\n}', ctxFnStart) + 2;
+  const ctxBody    = src.slice(ctxFnStart, ctxFnEnd);
+  assert.ok(ctxBody.includes('lastMidRunTasksDone'), 'RunContext に lastMidRunTasksDone がない');
+});
+
+test('8e. 失敗タスク後の重複発火防止: tasksDone 変化なし → 条件3で発火しない', () => {
+  // lastMidRunTasksDone = tasksDone の場合はスキップされる
+  // ヘルパーが条件3を持っていることを確認
+  assert.ok(helperBody.includes('ctx.tasksDone !== ctx.lastMidRunTasksDone'),
+    '重複防止条件3がない');
+});
+
+test('8f. REVIEW 完了後に _maybeRunMidQualityGate を呼ぶ', () => {
+  const loopStart3 = src.indexOf('async function _runProjectLoop(');
+  const loopEnd3   = src.indexOf('\n// ─', loopStart3 + 1);
+  const loopBody3  = src.slice(loopStart3, loopEnd3 > 0 ? loopEnd3 : loopStart3 + 7000);
+  // REVIEW 完了後の _maybeRunMidQualityGate 呼び出し
+  const reviewIdx  = loopBody3.indexOf('TASK_TYPES.REVIEW');
+  const reviewArea = loopBody3.slice(reviewIdx, reviewIdx + 400);
+  assert.ok(reviewArea.includes('_maybeRunMidQualityGate(ctx)'),
+    'REVIEW 完了後に _maybeRunMidQualityGate が呼ばれていない');
+});
+
+test('8g. RESEARCH 完了後に _maybeRunMidQualityGate を呼ぶ', () => {
+  const loopStart3 = src.indexOf('async function _runProjectLoop(');
+  const loopEnd3   = src.indexOf('\n// ─', loopStart3 + 1);
+  const loopBody3  = src.slice(loopStart3, loopEnd3 > 0 ? loopEnd3 : loopStart3 + 7000);
+  const researchIdx  = loopBody3.indexOf('TASK_TYPES.RESEARCH');
+  const researchArea = loopBody3.slice(researchIdx, researchIdx + 400);
+  assert.ok(researchArea.includes('_maybeRunMidQualityGate(ctx)'),
+    'RESEARCH 完了後に _maybeRunMidQualityGate が呼ばれていない');
+});
+
+test('8h. IMPLEMENT 完了後（ループ末尾）に _maybeRunMidQualityGate を呼ぶ', () => {
+  const loopStart3 = src.indexOf('async function _runProjectLoop(');
+  const loopEnd3   = src.indexOf('\n// ─', loopStart3 + 1);
+  const loopBody3  = src.slice(loopStart3, loopEnd3 > 0 ? loopEnd3 : loopStart3 + 7000);
+  // ループ末尾付近の呼び出し確認
+  const lastCallIdx = loopBody3.lastIndexOf('_maybeRunMidQualityGate(ctx)');
+  assert.ok(lastCallIdx >= 0, 'ループ末尾の _maybeRunMidQualityGate がない');
+});
+
+test('8i. RED 時は true を返して呼び出し元が break する', () => {
+  assert.ok(helperBody.includes('return true'), 'RED 時の return true がない');
+});
+
+test('8j. GREEN/YELLOW 時は false を返して続行する', () => {
+  assert.ok(helperBody.includes('return false'), 'false return がない');
 });
 
 console.log(`\n結果: ${pass} passed / ${fail} failed\n`);
