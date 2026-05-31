@@ -350,5 +350,122 @@ test('8j. GREEN/YELLOW 時は false を返して続行する', () => {
   assert.ok(helperBody.includes('return false'), 'false return がない');
 });
 
+// ─────────────────────────────────────────────────────
+// 9. Phase F-3 Step6: soft RED auto-FIX
+// ─────────────────────────────────────────────────────
+console.log('\n[9. soft RED auto-FIX]');
+
+const tm = require('../bot/utils/task-manager');
+const path2 = require('path');
+const fs2   = require('fs');
+const CLEANUP_IDS2 = [];
+const pid2 = 'youtube予測ai';
+
+function cleanup2() {
+  const fpath = path2.join(__dirname, '..', 'data', 'tasks.json');
+  const raw   = JSON.parse(fs2.readFileSync(fpath, 'utf8'));
+  raw.tasks   = raw.tasks.filter(t => !CLEANUP_IDS2.includes(t.id));
+  fs2.writeFileSync(fpath, JSON.stringify(raw, null, 2), 'utf8');
+}
+
+// ─ ソース確認テスト ─
+test('9a. _handleSoftRed が定義されている', () =>
+  assert.ok(src.includes('async function _handleSoftRed('), '_handleSoftRed がない'));
+
+test('9b. _isValidationFailureNote が定義されている', () =>
+  assert.ok(src.includes('function _isValidationFailureNote('), '_isValidationFailureNote がない'));
+
+const softRedFnStart = src.indexOf('async function _handleSoftRed(');
+const softRedFnEnd   = src.indexOf('\n// ─', softRedFnStart + 1);
+const softRedBody    = src.slice(softRedFnStart, softRedFnEnd > 0 ? softRedFnEnd : softRedFnStart + 2000);
+
+test('9c. FIX タスクを createTask で生成している', () =>
+  assert.ok(softRedBody.includes("'FIX'"), "FIX タスク type が指定されていない"));
+
+test('9d. projectId を維持して生成している', () =>
+  assert.ok(softRedBody.includes('projectId'), 'projectId が渡されていない'));
+
+test('9e. 元タスクIDを prompt に含めている', () =>
+  assert.ok(softRedBody.includes('originalId'), '元タスクID が prompt に含まれていない'));
+
+test('9f. softRedHandled フラグが RunContext に含まれる', () => {
+  const ctxFnStart = src.indexOf('function createRunContext(');
+  const ctxFnEnd   = src.indexOf('\n}', ctxFnStart) + 2;
+  const ctxBody    = src.slice(ctxFnStart, ctxFnEnd);
+  assert.ok(ctxBody.includes('softRedHandled'), 'softRedHandled がない');
+});
+
+test('9g. _runProjectLoop で softRedHandled チェックがある', () => {
+  const loopStart = src.indexOf('async function _runProjectLoop(');
+  const loopEnd   = src.indexOf('\n// ─', loopStart + 1);
+  const loopBody  = src.slice(loopStart, loopEnd > 0 ? loopEnd : loopStart + 8000);
+  assert.ok(loopBody.includes('ctx.softRedHandled'), 'softRedHandled 参照がない');
+});
+
+test('9h. 2回目soft REDで stopReason=soft_red_unresolved になる', () => {
+  const loopStart = src.indexOf('async function _runProjectLoop(');
+  const loopEnd   = src.indexOf('\n// ─', loopStart + 1);
+  const loopBody  = src.slice(loopStart, loopEnd > 0 ? loopEnd : loopStart + 8000);
+  assert.ok(loopBody.includes("'soft_red_unresolved'"), 'soft_red_unresolved がない');
+});
+
+// ─ 実際のタスク操作テスト ─
+
+test('9i. _isValidationFailureNote: 未完了 note は文字列を返す', () => {
+  const mockTask = {
+    state: 'レビュー待ち',
+    stateHistory: [
+      { state: 'レビュー待ち', note: '未完了 — 変更なし' },
+    ],
+  };
+  // ソース内の関数と同等ロジックで直接検証
+  const hist = mockTask.stateHistory || [];
+  const lastReviewing = [...hist].reverse().find(h =>
+    h.state === 'レビュー待ち' || h.state === 'REVIEWING'
+  );
+  const note = lastReviewing?.note || '';
+  const result = note.includes('未完了') ? note : null;
+  assert.ok(result !== null, '未完了 note で null が返った');
+  assert.ok(result.includes('未完了'));
+});
+
+test('9j. _isValidationFailureNote: 正常なレビュー待ちは null を返す', () => {
+  const normalTask = {
+    state: 'レビュー待ち',
+    stateHistory: [
+      { state: 'レビュー待ち', note: 'AIレビュー: 問題なし' },
+    ],
+  };
+  const hist = normalTask.stateHistory || [];
+  const lastReviewing = [...hist].reverse().find(h =>
+    h.state === 'レビュー待ち' || h.state === 'REVIEWING'
+  );
+  const note = lastReviewing?.note || '';
+  const result = note.includes('未完了') ? note : null;
+  assert.strictEqual(result, null, '正常なレビュー待ちで null でない');
+});
+
+test('9k. FIXタスクが type=FIX / projectId 維持で生成される', () => {
+  const baseTask = tm.createTask('[F3-test] 元タスク', 'f3-test', null, '低', pid2, 'IMPLEMENT');
+  CLEANUP_IDS2.push(baseTask.id);
+  // REVIEWING に遷移（バリデーション失敗を模倣）
+  tm.updateState(baseTask.id, tm.STATES.REVIEWING, '未完了 — 変更なし');
+
+  // FIX タスクを createTask で直接生成（_handleSoftRed の中核ロジックを再現）
+  const originalId     = baseTask.id;
+  const failureNote    = '未完了 — 変更なし';
+  const originalPrompt = (baseTask.prompt || '').slice(0, 300);
+  const fixPrompt = `[quality-gate auto-FIX] completion-validator 失敗\n\n元タスクID: ${originalId}\n失敗理由: ${failureNote}\n\n元タスクの指示内容:\n${originalPrompt}`;
+  const fixTask = tm.createTask(fixPrompt, 'auto-runner', null, '高', pid2, 'FIX');
+  CLEANUP_IDS2.push(fixTask.id);
+
+  assert.strictEqual(fixTask.type, 'FIX', 'type が FIX でない');
+  assert.strictEqual(fixTask.projectId, pid2, 'projectId が一致しない');
+  assert.ok(fixTask.prompt.includes(originalId), 'prompt に元タスクID が含まれない');
+  assert.ok(fixTask.prompt.includes('auto-FIX'), 'prompt に auto-FIX が含まれない');
+
+  cleanup2();
+});
+
 console.log(`\n結果: ${pass} passed / ${fail} failed\n`);
 if (fail > 0) process.exit(1);

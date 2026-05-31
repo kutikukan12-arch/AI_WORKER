@@ -1031,6 +1031,89 @@ async function handleProjectRun(message, projectId) {
 }
 
 // ─────────────────────────────────────────────────────
+// _isValidationFailureNote(task)
+//
+// completion-validator 失敗を stateHistory から検出する。
+// quality-gate.js の _isValidationFailure と同じロジック。
+// 最新の REVIEWING エントリの note に「未完了」が含まれる場合を検出。
+//
+// 戻り値: 失敗理由の note 文字列 | null（通常のレビュー待ち）
+// ─────────────────────────────────────────────────────
+function _isValidationFailureNote(task) {
+  const hist = (task && task.stateHistory) || [];
+  const lastReviewing = [...hist].reverse().find(h =>
+    h.state === 'レビュー待ち' || h.state === 'REVIEWING'
+  );
+  const note = lastReviewing?.note || '';
+  return note.includes('未完了') ? note : null;
+}
+
+// ─────────────────────────────────────────────────────
+// _handleSoftRed(ctx, failedTask, failureNote) — Phase F-3 Step6
+//
+// completion-validator 失敗（soft RED）時に FIX タスクを自動生成する。
+// 生成した FIX タスクは次のループで自動実行される。
+//
+// 呼び出し条件:
+//   - finalTask.state === REVIEWING
+//   - 最新 REVIEWING note に「未完了」が含まれる
+//   - ctx.softRedHandled === false（初回のみ）
+//
+// 戻り値: 生成した FIX タスクオブジェクト | null（生成失敗）
+// ─────────────────────────────────────────────────────
+async function _handleSoftRed(ctx, failedTask, failureNote) {
+  const { projectId, message } = ctx;
+  const originalId     = failedTask?.id     || '(不明)';
+  const originalPrompt = (failedTask?.prompt || '').slice(0, 300);
+  const reason         = (failureNote        || '未完了').slice(0, 120);
+
+  const fixPrompt = [
+    `[quality-gate auto-FIX] completion-validator 失敗`,
+    ``,
+    `元タスクID: ${originalId}`,
+    `失敗理由: ${reason}`,
+    ``,
+    `元タスクの指示内容:`,
+    originalPrompt,
+    ``,
+    `対応方針:`,
+    `- 変更が0件だった場合は実装が完了していない可能性があります。続きを実装してください。`,
+    `- 失敗理由を確認し、最小限の修正で完了させてください。`,
+    `- 必ずコード変更を伴う実装を行ってください。`,
+    `- 過剰な変更は禁止。必要な箇所だけ修正すること。`,
+  ].join('\n');
+
+  let fixTask = null;
+  try {
+    fixTask = taskManager.createTask(
+      fixPrompt,
+      'auto-runner',   // requestedBy
+      null,            // taskId（自動生成）
+      '高',            // dangerLevel → priority 高になる
+      projectId,
+      'FIX'
+    );
+    logger.info(`[SoftRed] FIX タスク生成: ${fixTask.id} → 元タスク:${originalId} | ${projectId}`);
+  } catch (createErr) {
+    logger.error(`[SoftRed] FIX タスク生成失敗: ${createErr.message}`);
+    await message.channel.send(
+      `❌ **soft RED auto-FIX 生成失敗**\n\`${originalId}\` の FIX タスクを生成できませんでした。`
+    ).catch(() => {});
+    return null;
+  }
+
+  await message.channel.send(
+    `🔧 **soft RED auto-FIX**\n\n` +
+    `元タスク: \`${originalId}\`\n` +
+    `失敗理由: ${reason}\n\n` +
+    `FIXタスクを生成しました: \`${fixTask.id}\`\n` +
+    `次のループで自動実行します。`
+  ).catch(() => {});
+
+  return fixTask;
+}
+
+// ─────────────────────────────────────────────────────
 // _maybeRunMidQualityGate(ctx) — Phase F-2 Step5 修正
 //
 // MID-RUN Quality Gate 実行ヘルパー。
@@ -1251,9 +1334,30 @@ async function _runProjectLoop(ctx) {
         ctx.tasksDone++;  // 人間確認待ちも「実行済み」としてカウント
         ctx.consecutiveErrors = 0;
       } else if (finalTask.state === taskManager.STATES.REVIEWING) {
-        // バリデーション未通過 → 失敗カウント（tasksDone は増えないため重複防止条件で自動スキップ）
+        // REVIEWING: 通常のレビュー待ち か completion-validator 失敗かを判定
+        const validFailNote = _isValidationFailureNote(finalTask);
         ctx.tasksFailed++;
         ctx.consecutiveErrors++;
+
+        if (validFailNote) {
+          // ── Phase F-3: soft RED auto-FIX ───────────────────
+          if (!ctx.softRedHandled) {
+            // 初回: FIX タスクを自動生成して次ループへ
+            await _handleSoftRed(ctx, finalTask, validFailNote);
+            ctx.softRedHandled = true;
+            // continue しないでループ末尾の MID-RUN チェックも通す
+          } else {
+            // 2回目以降: auto-FIX 後も未解決 → 停止
+            ctx.stopReason = 'soft_red_unresolved';
+            await message.channel.send(
+              `🛑 **soft RED 未解決 — 停止します**\n\n` +
+              `タスク: \`${finalTask.id}\`\n` +
+              `auto-FIX 後も completion-validator が未完了でした。\n\n` +
+              `\`!quality gate\` / \`!task list\` で状況を確認してください。`
+            ).catch(() => {});
+            break;
+          }
+        }
       } else if (finalTask.state === taskManager.STATES.IN_PROGRESS) {
         // タイムアウト → Auto Split 試行
         const splitAction = await handleAutoTimeoutSplit({
