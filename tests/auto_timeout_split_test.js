@@ -384,6 +384,7 @@ test('12a. !task split 由来の child（rootTaskId=null, _s2 suffix）は autoS
   // ID末尾 /_s\d+$/ にマッチする → already_split_child を返すべき
 
   // 実際にtasks.jsonにタスクを作って確認（IDを _s2 で終わらせる）
+  // 注意: fakeId は必ず /_s\d+$/ にマッチする形式にすること（でないと split が実行され汚染が起きる）
   const fakeId = 'task_9999990000001_s2'; // ← _s2 で終わる
   // 直接 JSON 操作でrootTaskId=nullの_s2を作る
   const fpath = require('path').join(__dirname, '..', 'data', 'tasks.json');
@@ -402,11 +403,23 @@ test('12a. !task split 由来の child（rootTaskId=null, _s2 suffix）は autoS
   require('fs').writeFileSync(fpath, JSON.stringify(raw, null, 2));
   CLEANUP_IDS.push(fakeId);
 
-  // _sN suffix → already_split_child
+  // タスク件数をスナップショット（autoSplitOnTimeout が意図せず新タスクを追加しないか確認）
+  const countBefore = tm.listTasks().length;
+
+  // _sN suffix → already_split_child (split は実行されない)
   const result = tm.autoSplitOnTimeout(fakeId);
-  assert.strictEqual(result.ok, false);
+
+  // もし万一 ok=true になっていたら新タスクをクリーンアップ（安全策）
+  if (result.ok && result.newTasks) {
+    result.newTasks.forEach(t => CLEANUP_IDS.push(t.id));
+  }
+
+  const countAfter = tm.listTasks().length;
+  assert.strictEqual(result.ok, false, `split実行されてはいけない (ok=${result.ok})`);
   assert.strictEqual(result.reason, 'already_split_child',
     `expected already_split_child, got ${result.reason}`);
+  assert.strictEqual(countAfter, countBefore,
+    `新タスクが生成されてはいけない (before=${countBefore} after=${countAfter})`);
   info('12a: _sN suffix タスクのsplit禁止 → ' + result.reason);
 });
 
