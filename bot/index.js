@@ -92,6 +92,9 @@ const projectManager     = require('./utils/project-manager');
 const autoProjectRunner  = require('./utils/auto-project-runner');
 const autoPolicy         = require('./utils/auto-policy');
 
+// ─── Phase E-5b: Worker Role ───
+const workerRegistry = require('./utils/worker-registry');
+
 // 承認待ちの実行待機Map: taskId → () => void
 // ※ Bot 再起動で消える設計（意図的割り切り）
 const pendingExecutions = new Map();
@@ -559,6 +562,18 @@ async function handleHelp(message) {
         inline: false,
       },
       {
+        name: '!worker [サブコマンド]',
+        value: [
+          'Worker Role を管理します（Phase E-5b）',
+          '`!worker add <role> [id] [project]` — Worker を登録',
+          '`!worker list` — 登録 Worker 一覧',
+          '`!worker rm <id>` — Worker を削除',
+          '`!worker status` — ワンライナー状況',
+          '役割: IMPLEMENTER / REVIEWER / TESTER / RESEARCHER',
+        ].join('\n'),
+        inline: false,
+      },
+      {
         name: '!doctor',
         value: '⚙️ システム診断（管理者のみ）\n設定・Claude・ログ・タスクの状態を確認します',
         inline: false,
@@ -569,7 +584,7 @@ async function handleHelp(message) {
         inline: false,
       },
     )
-    .setFooter({ text: 'AI_WORKER Phase5 | 半自律AI開発チーム' })
+    .setFooter({ text: 'AI_WORKER Phase E-5b | 半自律AI開発チーム' })
     .setTimestamp();
 
   await message.reply({ embeds: [embed] });
@@ -824,6 +839,97 @@ async function handleApplyReview(message, taskId) {
     await processingMsg.edit(errorText);
     await sendNotification('error', message.channel, errorText);
   }
+}
+
+// ─────────────────────────────────────────────────────
+// !worker コマンド — Phase E-5b Worker Role 管理
+//
+// サブコマンド:
+//   add <role> [workerId] [project]  Worker を登録
+//   list                              一覧表示
+//   rm <workerId>                     Worker を削除
+//   status                            ワンライナー状況
+// ─────────────────────────────────────────────────────
+async function handleWorker(message, content) {
+  const parts = content.trim().split(/\s+/);
+  const sub   = parts[1] || 'list';
+
+  // ── !worker list ─────────────────────────────────
+  if (sub === 'list' || sub === 'ls') {
+    await message.reply(workerRegistry.formatWorkerList());
+    return;
+  }
+
+  // ── !worker status ───────────────────────────────
+  if (sub === 'status') {
+    await message.reply(workerRegistry.formatWorkerStatus());
+    return;
+  }
+
+  // ── !worker add <role> [workerId] [project] ──────
+  if (sub === 'add') {
+    const role      = parts[2] || '';
+    const workerId  = parts[3] || null;
+    const projectId = parts[4] || '*';
+
+    if (!role) {
+      await message.reply(
+        '**使い方**\n```\n!worker add <role> [workerId] [project]\n```\n' +
+        '**role**\n```\nIMPLEMENTER  → IMPLEMENT / FIX / REFACTOR\n' +
+        'REVIEWER     → REVIEW\nTESTER       → TEST\nRESEARCHER   → RESEARCH / DOCS\n```\n' +
+        '**例**\n```\n!worker add IMPLEMENTER\n!worker add REVIEWER rev-1 ai-worker\n```'
+      );
+      return;
+    }
+
+    const result = workerRegistry.addWorker(role, workerId, projectId);
+    if (!result.ok) {
+      await message.reply(`❌ ${result.reason}`);
+      return;
+    }
+
+    const { worker } = result;
+    const roleEmoji  = workerRegistry.ROLE_EMOJI[worker.role] || '🤖';
+    const types      = [...(workerRegistry.ROLE_TYPE_MAP[worker.role] || [])].join(' / ');
+    await message.reply(
+      `✅ **Worker 登録完了**\n\n` +
+      `${roleEmoji} \`${worker.workerId}\`  ${worker.role}\n` +
+      `担当タイプ: \`${types}\`\n` +
+      `プロジェクト: \`${worker.projectId}\`\n\n` +
+      `\`!worker list\` で一覧を確認できます。`
+    );
+    return;
+  }
+
+  // ── !worker rm <workerId> ────────────────────────
+  if (sub === 'rm' || sub === 'remove' || sub === 'del') {
+    const workerId = parts[2] || '';
+    if (!workerId) {
+      await message.reply('**使い方**\n```\n!worker rm <workerId>\n```');
+      return;
+    }
+
+    const result = workerRegistry.removeWorker(workerId);
+    if (!result.ok) {
+      await message.reply(`❌ ${result.reason}`);
+      return;
+    }
+
+    const warn = result.wasBusy
+      ? '\n⚠️ **このWorkerは実行中でした。** タスクの lease が残っている場合は `!task cleanup` で解消してください。'
+      : '';
+    await message.reply(`🗑️ \`${workerId}\` を削除しました。${warn}`);
+    return;
+  }
+
+  // ── 不明なサブコマンド ───────────────────────────
+  await message.reply(
+    '**!worker サブコマンド一覧**\n```\n' +
+    '!worker add <role> [id] [project]  Worker を登録\n' +
+    '!worker list                        一覧表示\n' +
+    '!worker rm <id>                     Worker を削除\n' +
+    '!worker status                      ワンライナー状況\n```'
+  );
 }
 
 // ─────────────────────────────────────────────────────
@@ -2585,6 +2691,16 @@ async function executeClaudeTask({
     taskManager.setTaskError(taskId, maskedErrMsg); // setTaskError内でも maskSecret するが念のため渡す
     logger.info(`[E-4] errorType: ${errorType} | ${taskId}`);
 
+    // Phase E-5a: 失敗時に lease を解除する（IN_PROGRESS のまま固着を防ぐ）
+    // ON_HOLD に遷移させて leaseOwner / leaseExpiresAt をクリアする
+    try {
+      const failTask = taskManager.getTask(taskId);
+      if (failTask && failTask.state === taskManager.STATES.IN_PROGRESS) {
+        taskManager.updateState(taskId, taskManager.STATES.ON_HOLD, `失敗: ${errorType}`);
+        logger.info(`[Lease] 失敗による lease 解除: ${taskId} → ON_HOLD`);
+      }
+    } catch { /* lease 解除失敗は元処理を壊さない */ }
+
     try {
       fs.writeFileSync(
         path.join(taskWorkspace, 'error.md'),
@@ -4199,6 +4315,11 @@ client.on('messageCreate', async (message) => {
   if (content.startsWith('!resume')) {
     const taskId = content.split(/\s+/)[1] || '';
     await handleResume(message, taskId);
+    return;
+  }
+
+  if (content.startsWith('!worker')) {
+    await handleWorker(message, content);
     return;
   }
 

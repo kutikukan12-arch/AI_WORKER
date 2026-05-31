@@ -287,6 +287,92 @@ test('8a. lease 済みタスクは別オーナーに claim されない（有効
 });
 
 // ─────────────────────────────────────────────────────
+// 9. reapExpiredLeases — 期限切れ lease の回収
+// ─────────────────────────────────────────────────────
+console.log('\n[9. reapExpiredLeases]');
+
+cleanup();
+CLEANUP_IDS.length = 0;
+
+// IN_PROGRESS かつ leaseExpiresAt が過去のタスクを手動で作る
+const fpath9   = require('path').join(__dirname, '..', 'data', 'tasks.json');
+const raw9     = JSON.parse(require('fs').readFileSync(fpath9, 'utf8'));
+const expiredId = 'task_9999_expired_lease';
+raw9.tasks.push({
+  id: expiredId, type: 'IMPLEMENT', size: 'SMALL',
+  projectId: pid, prompt: '[E5a] expired lease task',
+  state: tm.STATES.IN_PROGRESS, priority: '低', priorityReason: 'test',
+  dangerLevel: '低', assignee: 'test', requestedBy: '',
+  createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  stateHistory: [], reviewResult: null, codexResult: null, prUrl: null, notes: '',
+  leaseOwner: 'old-worker',
+  leaseExpiresAt: new Date(Date.now() - 60000).toISOString(), // 1分前 = 期限切れ
+  leaseRole: null, rootTaskId: null, childTasks: [], timeoutCount: 0, splitCount: 0,
+});
+require('fs').writeFileSync(fpath9, JSON.stringify(raw9, null, 2));
+CLEANUP_IDS.push(expiredId);
+
+test('9a. reapExpiredLeases が期限切れタスクを ON_HOLD に戻す', () => {
+  const reaped = tm.reapExpiredLeases();
+  assert.ok(reaped >= 1, `reaped=${reaped}`);
+  const task = tm.listTasks().find(t => t.id === expiredId);
+  assert.ok(task, 'reapedタスクが見つからない');
+  assert.strictEqual(task.state, tm.STATES.ON_HOLD);
+  assert.strictEqual(task.leaseOwner, null);
+  assert.strictEqual(task.leaseExpiresAt, null);
+  info('9a: reaped=' + reaped + ' task.state=' + task.state);
+});
+
+test('9b. 有効な lease のタスクは reap されない', () => {
+  // 有効なタスクを作成・claim して reap
+  const tValid = tm.createTask('[E5a] valid lease', 'e5a-test', null, '低', pid, 'IMPLEMENT');
+  CLEANUP_IDS.push(tValid.id);
+  tm.claimNextTask(pid, 'valid-owner'); // leaseExpiresAt は10分後
+  const reaped = tm.reapExpiredLeases();
+  // expiredId は既に ON_HOLD → reap 対象外。tValid は有効期限内 → reap されない
+  const stillInProgress = tm.listTasks().find(t => t.id === tValid.id && t.state === tm.STATES.IN_PROGRESS);
+  assert.ok(stillInProgress, 'valid lease が誤って reap された');
+  info('9b: reaped=' + reaped + ' tValid still IN_PROGRESS');
+  tm.releaseLease(tValid.id);
+});
+
+// ─────────────────────────────────────────────────────
+// 10. autoSplitOnTimeout の ON_HOLD 時に lease がクリアされる
+// ─────────────────────────────────────────────────────
+console.log('\n[10. autoSplitOnTimeout: lease クリア確認]');
+
+cleanup();
+CLEANUP_IDS.length = 0;
+
+const t10 = tm.createTask('[E5a] split lease clear\n- A\n- B', 'e5a-test', null, '低', pid, 'IMPLEMENT');
+CLEANUP_IDS.push(t10.id);
+// claim してから autoSplit
+tm.claimNextTask(pid, 'split-owner');
+assert.ok(tm.listTasks().find(t => t.id === t10.id)?.leaseOwner === 'split-owner', 'claim 前提');
+
+const splitResult10 = tm.autoSplitOnTimeout(t10.id);
+splitResult10.newTasks?.forEach(t => CLEANUP_IDS.push(t.id));
+
+test('10a. autoSplitOnTimeout で元タスクの leaseOwner が null になる', () => {
+  const orig = tm.listTasks().find(t => t.id === t10.id);
+  assert.ok(orig, 'original タスクが消えている');
+  assert.strictEqual(orig.leaseOwner, null, `leaseOwner=${orig.leaseOwner}`);
+  assert.strictEqual(orig.leaseExpiresAt, null);
+  assert.strictEqual(orig.state, tm.STATES.ON_HOLD);
+});
+
+test('10b. split 由来の新規タスクに leaseOwner:null が設定される', () => {
+  if (!splitResult10.ok) { info('10b: split failed, skip'); return; }
+  splitResult10.newTasks.forEach(t => {
+    const child = tm.listTasks().find(x => x.id === t.id);
+    assert.ok(child, `child ${t.id} が見つからない`);
+    assert.strictEqual(child.leaseOwner, null, `${t.id}.leaseOwner=${child.leaseOwner}`);
+    assert.strictEqual(child.leaseExpiresAt, null);
+  });
+  info('10b: ' + splitResult10.newTasks.length + '件の child 全て leaseOwner=null');
+});
+
+// ─────────────────────────────────────────────────────
 // クリーンアップ
 // ─────────────────────────────────────────────────────
 cleanup();

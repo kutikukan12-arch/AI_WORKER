@@ -119,6 +119,11 @@ const STATES = {
   ON_HOLD:     '保留',
 };
 
+// ─── Phase E-5a: Task Lease TTL ───
+// claim 後にクラッシュしたタスクが IN_PROGRESS に固着する時間の上限。
+// reapExpiredLeases() がこの時間を超えた lease を PENDING に戻す（E-5c以降）。
+const LEASE_TTL_MS = 30 * 60 * 1000; // 30 分
+
 // ─── 状態の絵文字 ───
 const STATE_EMOJI = {
   '未着手':       '⬜',
@@ -215,8 +220,10 @@ function createTask(prompt, discordUserId, taskId = null, dangerLevel = '低', p
     lastError:    null,   // 最後のエラーメッセージ（スライス済み）
     errorType:    null,   // エラー分類: TIMEOUT|AUTH|PERMISSION|SYNTAX|UNKNOWN
     // ─── Phase E-5a: Task Lease ───
-    leaseOwner:     null, // claim した実行元識別子（後方互換: 未設定は null 扱い）
-    leaseExpiresAt: null, // lease 有効期限 ISO 文字列
+    leaseOwner:     null, // 占有中の workerId。null = 未占有
+    leaseExpiresAt: null, // ISO文字列。heartbeat で延長。失効で reap 対象（E-5c）
+    // ─── Phase E-5b: Worker Role ───
+    leaseRole:      null, // 占有 Worker の役割: IMPLEMENTER|REVIEWER|TESTER|RESEARCHER
   };
 
   tasks.push(task);
@@ -246,10 +253,11 @@ function updateState(taskId, newState, note = '') {
   task.updatedAt = now;
   task.stateHistory.push({ state: newState, at: now, note });
 
-  // Phase E-5a: DONE / ON_HOLD 遷移時は lease を解除
-  if (newState === STATES.DONE || newState === STATES.ON_HOLD) {
+  // Phase E-5a/E-5b: IN_PROGRESS 以外の状態に遷移するときは lease を全解除
+  if (newState !== STATES.IN_PROGRESS) {
     task.leaseOwner     = null;
     task.leaseExpiresAt = null;
+    task.leaseRole      = null;
   }
 
   // 完了タスクはアーカイブへ
@@ -394,6 +402,7 @@ function releaseLease(taskId) {
     task.state          = STATES.PENDING;
     task.leaseOwner     = null;
     task.leaseExpiresAt = null;
+    task.leaseRole      = null;
     task.updatedAt      = new Date().toISOString();
     task.stateHistory   = task.stateHistory || [];
     task.stateHistory.push({ state: STATES.PENDING, at: task.updatedAt, note: 'lease released' });
@@ -403,10 +412,105 @@ function releaseLease(taskId) {
     // PENDING / ON_HOLD 等: lease フィールドだけクリアする
     task.leaseOwner     = null;
     task.leaseExpiresAt = null;
+    task.leaseRole      = null;
     task.updatedAt      = new Date().toISOString();
     saveTasks(tasks);
   }
   return task;
+}
+
+// ─────────────────────────────────────────────────────
+// Phase E-5a: reapExpiredLeases()
+//
+// IN_PROGRESS かつ leaseExpiresAt < now のタスクを ON_HOLD に戻す。
+// 起動時または auto-run 前に呼ぶ。
+// 単一Bot前提・最小実装。
+//
+// 戻り値: 回収したタスク数
+// ─────────────────────────────────────────────────────
+function reapExpiredLeases() {
+  const tasks  = loadTasks();
+  const now    = Date.now();
+  let   reaped = 0;
+
+  tasks.forEach(task => {
+    if (task.state !== STATES.IN_PROGRESS) return;
+    // leaseExpiresAt が未設定（旧タスク）または有効期限切れ
+    const expired = !task.leaseExpiresAt ||
+      new Date(task.leaseExpiresAt).getTime() < now;
+    if (!expired) return;
+
+    task.state          = STATES.ON_HOLD;
+    task.leaseOwner     = null;
+    task.leaseExpiresAt = null;
+    task.leaseRole      = null;
+    task.updatedAt      = new Date().toISOString();
+    task.stateHistory   = task.stateHistory || [];
+    task.stateHistory.push({
+      state: STATES.ON_HOLD,
+      at:    task.updatedAt,
+      note:  'lease reap: leaseExpiresAt 期限切れ',
+    });
+    reaped++;
+    logger.warn(`[Lease] reap: ${task.id} (leaseExpiresAt=${task.leaseExpiresAt || 'none'})`);
+  });
+
+  if (reaped > 0) {
+    saveTasks(tasks);
+    logger.info(`[Lease] reap 完了: ${reaped}件を ON_HOLD に戻しました`);
+  }
+  return reaped;
+}
+
+// ─────────────────────────────────────────────────────
+// Phase E-5b: claimNextTaskByFilter(filterFn, ownerId, leaseRole)
+//
+// claimNextTask() の拡張版。Worker role フィルタに対応する。
+// filterFn が null の場合は projectId フィルタなしで全タスクを対象にする。
+//
+// 引数:
+//   filterFn  - (task) => boolean  追加フィルタ条件。null = フィルタなし
+//   ownerId   - string             占有主体の workerId
+//   leaseRole - string | null      Worker role（IMPLEMENTER等）。null = 役割なし
+//
+// 戻り値: クレームしたタスクオブジェクト | null（候補なし）
+// ─────────────────────────────────────────────────────
+function claimNextTaskByFilter(filterFn, ownerId, leaseRole = null) {
+  const tasks  = loadTasks();
+  const now    = Date.now();
+
+  // 優先度降順（ON_HOLD は末尾）
+  const sorted = [...tasks].sort((a, b) => {
+    if (a.state === STATES.ON_HOLD && b.state !== STATES.ON_HOLD) return 1;
+    if (b.state === STATES.ON_HOLD && a.state !== STATES.ON_HOLD) return -1;
+    return priority.toNumber(b.priority) - priority.toNumber(a.priority);
+  });
+
+  const target = sorted.find(t => {
+    if (t.state !== STATES.PENDING) return false;
+    // 未期限の lease がある場合はスキップ
+    if (t.leaseOwner && t.leaseExpiresAt && new Date(t.leaseExpiresAt).getTime() >= now) return false;
+    if (filterFn && !filterFn(t)) return false;
+    return true;
+  });
+  if (!target) return null;
+
+  const expires       = new Date(now + LEASE_TTL_MS).toISOString();
+  target.state        = STATES.IN_PROGRESS;
+  target.leaseOwner   = ownerId;
+  target.leaseExpiresAt = expires;
+  target.leaseRole    = leaseRole;
+  target.updatedAt    = new Date().toISOString();
+  target.stateHistory = target.stateHistory || [];
+  target.stateHistory.push({
+    state: STATES.IN_PROGRESS,
+    at:    target.updatedAt,
+    note:  `claim by ${ownerId}${leaseRole ? ` [${leaseRole}]` : ''}`,
+  });
+
+  saveTasks(tasks);
+  logger.info(`[Lease] claimByFilter: ${target.id} | owner:${ownerId} | role:${leaseRole || 'none'}`);
+  return target;
 }
 
 // ─────────────────────────────────────────────────────
@@ -893,12 +997,20 @@ function autoSplitOnTimeout(taskId) {
       childTasks:     [],
       timeoutCount:   0,        // 子は持たない（rootが管理）
       splitCount:     0,
+      // lease フィールドは常に null で初期化（未クレーム状態）
+      leaseOwner:     null,
+      leaseExpiresAt: null,
+      leaseRole:      null,
     };
   });
 
   // 元タスク → ON_HOLD（DONE にしない）
-  original2.state     = STATES.ON_HOLD;
-  original2.updatedAt = now;
+  // lease フィールドを明示クリア（IN_PROGRESS のまま残らないよう）
+  original2.state         = STATES.ON_HOLD;
+  original2.leaseOwner    = null;
+  original2.leaseExpiresAt = null;
+  original2.leaseRole     = null;
+  original2.updatedAt     = now;
   original2.stateHistory.push({ state: STATES.ON_HOLD, at: now, note: 'auto-split: タイムアウト' });
   original2.splitCount = (original2.splitCount || 0) + 1;
 
@@ -967,10 +1079,14 @@ function splitTask(taskId) {
     createdAt:    now,
     updatedAt:    now,
     stateHistory: [{ state: STATES.PENDING, at: now, note: `${taskId} から分割` }],
-    reviewResult: null,
-    codexResult:  null,
-    prUrl:        null,
-    notes:        `元タスク: ${taskId}`,
+    reviewResult:   null,
+    codexResult:    null,
+    prUrl:          null,
+    notes:          `元タスク: ${taskId}`,
+    // lease フィールドは常に null で初期化
+    leaseOwner:     null,
+    leaseExpiresAt: null,
+    leaseRole:      null,
   };
   });
 
@@ -1234,7 +1350,10 @@ module.exports = {
   classifyErrorType,
   setTaskError,
   claimNextTask,
+  claimNextTaskByFilter,
   releaseLease,
+  reapExpiredLeases,
+  LEASE_TTL_MS,
   buildTypeGuard,
   createFixTaskFromReview,
   findFixTasksFromReview,
