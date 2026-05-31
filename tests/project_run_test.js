@@ -40,12 +40,12 @@ test('5. enableRunner が呼ばれている', () =>
 test('6. setAutoApplyPlanning(true) が呼ばれている', () =>
   assert.ok(fnBody.includes('setAutoApplyPlanning(projectId, true)'), 'setAutoApplyPlanning がない'));
 
-test('7. handleAutoOn が fire-and-forget で呼ばれている（await なし）', () => {
-  // "handleAutoOn(message)" が存在し、その前に await がないことを確認
-  const idx = fnBody.indexOf('handleAutoOn(message)');
-  assert.ok(idx >= 0, 'handleAutoOn(message) がない');
+test('7. _runProjectLoop が fire-and-forget で呼ばれている（Step4以降）', () => {
+  // Step4: handleAutoOn → _runProjectLoop に切り替え
+  const idx = fnBody.indexOf('_runProjectLoop(ctx)');
+  assert.ok(idx >= 0, '_runProjectLoop(ctx) がない（Step4 未実装 or handleAutoOn のまま？）');
   const before = fnBody.slice(Math.max(0, idx - 20), idx);
-  assert.ok(!before.includes('await'), '`await handleAutoOn` になっている（fire-and-forgetでない）');
+  assert.ok(!before.includes('await'), '`await _runProjectLoop` になっている（fire-and-forgetでない）');
 });
 
 test('8. .catch() で handleAutoOn のエラーを捕捉している', () =>

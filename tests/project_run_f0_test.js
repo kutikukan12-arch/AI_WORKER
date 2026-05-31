@@ -129,5 +129,82 @@ console.log('\n[4. help テキスト]');
 test('4a. !project stop が help に含まれる', () =>
   assert.ok(src.includes('!project stop'), '!project stop がヘルプにない'));
 
+// ─────────────────────────────────────────────────────
+// 5. _runProjectLoop (Step4)
+// ─────────────────────────────────────────────────────
+console.log('\n[5. _runProjectLoop (Step4)]');
+
+const loopFnStart = src.indexOf('async function _runProjectLoop(');
+const loopFnEnd   = src.indexOf('\n// ─', loopFnStart + 1);
+const loopBody    = src.slice(loopFnStart, loopFnEnd > 0 ? loopFnEnd : loopFnStart + 5000);
+
+test('5a. _runProjectLoop が定義されている', () =>
+  assert.ok(loopFnStart >= 0, '_runProjectLoop がない'));
+
+test('5b. ループ先頭で stopRequested をチェックしている', () =>
+  assert.ok(loopBody.includes('ctx.stopRequested'), 'stopRequested チェックがない'));
+
+test('5c. stopped_by_user を stopReason に設定する', () =>
+  assert.ok(loopBody.includes("'stopped_by_user'"), 'stopped_by_user がない'));
+
+test('5d. project_done を stopReason に設定する', () =>
+  assert.ok(loopBody.includes("'project_done'"), 'project_done がない'));
+
+test('5e. no_pending_tasks を stopReason に設定する', () =>
+  assert.ok(loopBody.includes("'no_pending_tasks'"), 'no_pending_tasks がない'));
+
+test('5f. ctx.tasksDone を更新している', () =>
+  assert.ok(loopBody.includes('ctx.tasksDone++'), 'tasksDone++ がない'));
+
+test('5g. ctx.tasksFailed を更新している', () =>
+  assert.ok(loopBody.includes('ctx.tasksFailed++'), 'tasksFailed++ がない'));
+
+test('5h. ctx.consecutiveErrors を更新している', () =>
+  assert.ok(loopBody.includes('ctx.consecutiveErrors'), 'consecutiveErrors がない'));
+
+test('5i. 連続エラー上限で停止する', () =>
+  assert.ok(loopBody.includes('consecutiveErrors >= PROJ_RUN_MAX_CONSEC_ERRORS') ||
+            loopBody.includes('PROJ_RUN_MAX_CONSEC_ERRORS'), '連続エラー上限チェックがない'));
+
+test('5j. handleAutoTimeoutSplit を呼んでいる', () =>
+  assert.ok(loopBody.includes('handleAutoTimeoutSplit'), 'timeout split が呼ばれない'));
+
+test('5k. handleProjectRun が _runProjectLoop を呼ぶ（handleAutoOn ではない）', () => {
+  const runFnStart = src.indexOf('async function handleProjectRun(');
+  const runFnEnd   = src.indexOf('\nasync function ', runFnStart + 1);
+  const runBody    = src.slice(runFnStart, runFnEnd);
+  assert.ok(runBody.includes('_runProjectLoop(ctx)'), '_runProjectLoop が呼ばれていない');
+  // handleAutoOn は !auto on 専用のまま
+  const autoOnDirect = runBody.includes('handleAutoOn(message)') &&
+                       !runBody.includes('_runProjectLoop');
+  assert.ok(!autoOnDirect, 'handleAutoOn が直接呼ばれたまま');
+});
+
+test('5l. _runProjectLoop は handleAutoOn を内部で呼ばない', () =>
+  assert.ok(!loopBody.includes('handleAutoOn('), '_runProjectLoop から handleAutoOn が呼ばれている'));
+
+// ─────────────────────────────────────────────────────
+// 6. !project stop が ctx に作用する
+// ─────────────────────────────────────────────────────
+console.log('\n[6. stopRequested フロー]');
+
+test('6a. !project stop で ctx.stopRequested が true になる', () => {
+  // activeRuns への get/set が行われることをソースで確認
+  const stopIdx  = src.indexOf("sub === 'stop'");
+  const stopBody = src.slice(stopIdx, stopIdx + 600);
+  assert.ok(stopBody.includes('ctx.stopRequested = true'));
+  assert.ok(stopBody.includes("ctx.stopReason    = 'stopped_by_user'") ||
+            stopBody.includes("ctx.stopReason = 'stopped_by_user'"));
+});
+
+test('6b. stopRequested が立った次のループで停止する', () => {
+  // _runProjectLoop のループ先頭に ctx.stopRequested チェックがある
+  assert.ok(loopBody.includes('ctx.stopRequested'));
+  // break が続く
+  const stopCheckIdx = loopBody.indexOf('ctx.stopRequested');
+  const nearBreak    = loopBody.slice(stopCheckIdx, stopCheckIdx + 200);
+  assert.ok(nearBreak.includes('break'), 'stopRequested 後の break がない');
+});
+
 console.log(`\n結果: ${pass} passed / ${fail} failed\n`);
 if (fail > 0) process.exit(1);

@@ -1020,12 +1020,200 @@ async function handleProjectRun(message, projectId) {
     `停止: \`!project stop ${projectId}\` | 状態: \`!project runner status\``
   ).catch(() => {});
 
-  // handleAutoOn fire-and-forget（Discord ハンドラをブロックしない）
-  handleAutoOn(message)
-    .catch(err => logger.error(`[ProjectRun] handleAutoOn エラー: ${err.message}`))
+  // Step4: _runProjectLoop fire-and-forget（Discord ハンドラをブロックしない）
+  // handleAutoOn は !auto on 専用のまま維持。
+  _runProjectLoop(ctx)
+    .catch(err => logger.error(`[ProjectRun] _runProjectLoop エラー: ${err.message}`))
     .finally(() => {
       _teardown(ctx, prevPid);
     });
+}
+
+// ─────────────────────────────────────────────────────
+// _runProjectLoop(ctx) — Phase F-1 Step4
+//
+// !project run 専用の実行ループ。handleAutoOn を使わず独立実装。
+//
+// ループ先頭で ctx.stopRequested を確認し、
+// ユーザーが !project stop を打てば次の区切りで停止する。
+//
+// 今回未実装（Step5以降）:
+//   - MID-RUN Quality Gate
+//   - soft RED auto-FIX / hard RED
+//   - HUMAN_CHECK / approve / deny resume
+//   - progress report / restart recovery
+// ─────────────────────────────────────────────────────
+const PROJ_RUN_MAX_TASKS         = 200; // 暴走防止の絶対上限
+const PROJ_RUN_MAX_CONSEC_ERRORS = 3;   // 連続エラー上限
+
+async function _runProjectLoop(ctx) {
+  const { projectId, message } = ctx;
+
+  logger.info(`[ProjectLoop] 開始 runId:${ctx.runId} | ${projectId}`);
+
+  for (let i = 0; i < PROJ_RUN_MAX_TASKS; i++) {
+    // ─ 停止チェック（!project stop で即反映）─
+    if (ctx.stopRequested) {
+      ctx.stopReason = ctx.stopReason || 'stopped_by_user';
+      logger.info(`[ProjectLoop] stopRequested: ${projectId} | reason:${ctx.stopReason}`);
+      break;
+    }
+
+    // ─ 連続エラー上限チェック ─
+    if (ctx.consecutiveErrors >= PROJ_RUN_MAX_CONSEC_ERRORS) {
+      ctx.stopReason = `consecutive_errors_${ctx.consecutiveErrors}`;
+      logger.warn(`[ProjectLoop] 連続エラー ${ctx.consecutiveErrors}回 → 停止: ${projectId}`);
+      await message.channel.send(
+        `🛑 **連続エラー ${ctx.consecutiveErrors}回のため停止しました**\n` +
+        `\`!project run\` で再開できます。`
+      ).catch(() => {});
+      break;
+    }
+
+    // ─ 次タスク準備 ─
+    const prepared = await prepareNextTask(message, 'project-run');
+
+    if (!prepared) {
+      // PENDING タスクなし → Auto Resume または project_done 判定
+      const runnerState = autoProjectRunner.getRunnerState(projectId);
+      if (!runnerState.enabled) {
+        ctx.stopReason = 'no_pending_tasks';
+        break;
+      }
+
+      // project_done チェック
+      const activeTasks = taskManager.listTasks().filter(t =>
+        t.projectId === projectId &&
+        (t.state === taskManager.STATES.PENDING || t.state === taskManager.STATES.IN_PROGRESS)
+      );
+      if (activeTasks.length === 0) {
+        // Auto Resume 候補確認
+        const resumeCandidates = autoProjectRunner.getResumeCandidates(projectId, { maxCount: 1 });
+        if (resumeCandidates.length === 0) {
+          ctx.stopReason = 'project_done';
+          logger.info(`[ProjectLoop] project_done: ${projectId}`);
+          await message.channel.send(
+            `🎉 **Project Runner: 全タスク完了**\n\`${projectId}\``
+          ).catch(() => {});
+          break;
+        }
+        // Resume 候補あり → PENDING に戻してループ継続
+        const toResume = resumeCandidates[0];
+        taskManager.updateState(toResume.id, taskManager.STATES.PENDING, 'auto-resume');
+        logger.info(`[ProjectLoop] Auto Resume: ${toResume.id} [${toResume.type}] | ${projectId}`);
+        await message.channel.send(
+          `♻️ **Auto Resume** | \`${projectId}\`\n` +
+          `\`${toResume.id}\` [${toResume.type}] を復帰しました。`
+        ).catch(() => {});
+        continue;
+      }
+
+      ctx.stopReason = 'no_pending_tasks';
+      break;
+    }
+
+    if (prepared.blocked) {
+      ctx.stopReason = 'blocked_by_policy';
+      break;
+    }
+
+    const { task: next, prompt, taskType, taskSizeResult, taskWorkspace } = prepared;
+    const storedType = next.type || taskManager.TASK_TYPES.IMPLEMENT;
+    const storedSize = next.size || taskManager.TASK_SIZES.MEDIUM;
+    const typeEmoji  = taskManager.TYPE_EMOJI[storedType] || '📋';
+    const sizeEmoji  = taskManager.SIZE_EMOJI[storedSize] || '🟡';
+
+    // ─ Auto Policy チェック ─
+    const prePolicy = autoPolicy.classifyTask(next, {});
+    if (prePolicy === autoPolicy.AUTO_POLICY.BLOCKED) {
+      ctx.stopReason = `blocked_${storedType}`;
+      await message.channel.send(
+        `🚫 **自動実行ブロック** \`${next.id}\` [${storedType}/${storedSize}]`
+      ).catch(() => {});
+      break;
+    }
+    if (prePolicy === autoPolicy.AUTO_POLICY.HUMAN_APPROVAL_REQUIRED) {
+      ctx.stopReason = 'human_approval_required';
+      await message.channel.send(
+        `⚠️ **人間確認が必要** \`${next.id}\` [${storedType}/${storedSize}]\n` +
+        `\`!approve ${next.id}\` または \`!deny ${next.id}\` してください。`
+      ).catch(() => {});
+      break;
+    }
+
+    // ─ タイプ別振り分け ─
+    logger.info(`[ProjectLoop] [${i + 1}] ${next.id} [${storedType}/${storedSize}] policy=${prePolicy}`);
+    await message.channel.send(
+      `▶ **[${ctx.tasksDone + ctx.tasksFailed + 1}]** \`${next.id}\` [${storedType}/${storedSize}] ${typeEmoji}${sizeEmoji}`
+    ).catch(() => {});
+
+    try {
+      if (storedType === taskManager.TASK_TYPES.REVIEW) {
+        await executeReviewTask({ message, task: next, projectId });
+        ctx.tasksDone++;
+        ctx.consecutiveErrors = 0;
+        continue;
+      }
+
+      if (storedType === taskManager.TASK_TYPES.RESEARCH) {
+        await executeResearchTask({ message, task: next, projectId });
+        ctx.tasksDone++;
+        ctx.consecutiveErrors = 0;
+        continue;
+      }
+
+      // IMPLEMENT / FIX / REFACTOR / TEST / DOCS 等
+      const typeGuard     = taskManager.buildTypeGuard(storedType);
+      const guardedPrompt = prompt + typeGuard;
+
+      await enqueueAndWait(next.id, () => executeClaudeTask({
+        message, prompt: guardedPrompt, taskId: next.id, projectId,
+        taskType, taskSizeResult, taskWorkspace, refTaskId: null, source: 'project-run',
+      }));
+
+      // 完了後の状態確認
+      const finalTask = taskManager.getTask(next.id);
+      if (!finalTask) {
+        // DONE（アーカイブ済み）
+        ctx.tasksDone++;
+        ctx.consecutiveErrors = 0;
+      } else if (finalTask.state === taskManager.STATES.AWAITING) {
+        ctx.tasksDone++;  // 人間確認待ちも「実行済み」としてカウント
+        ctx.consecutiveErrors = 0;
+      } else if (finalTask.state === taskManager.STATES.REVIEWING) {
+        // バリデーション未通過 → 失敗カウント
+        ctx.tasksFailed++;
+        ctx.consecutiveErrors++;
+      } else if (finalTask.state === taskManager.STATES.IN_PROGRESS) {
+        // タイムアウト → Auto Split 試行
+        const splitAction = await handleAutoTimeoutSplit({
+          message, task: finalTask, contextLabel: 'PROJ-RUN',
+        });
+        if (splitAction === 'split_ok') {
+          ctx.consecutiveErrors = 0;
+          continue;
+        }
+        if (splitAction === 'timeout_limit') {
+          ctx.tasksFailed++;
+          ctx.consecutiveErrors++;
+          ctx.stopReason = 'timeout_limit';
+          break;
+        }
+        ctx.tasksFailed++;
+        ctx.consecutiveErrors++;
+      } else {
+        ctx.tasksFailed++;
+        ctx.consecutiveErrors++;
+      }
+    } catch (taskErr) {
+      logger.error(`[ProjectLoop] タスクエラー: ${next.id} | ${taskErr.message}`);
+      ctx.tasksFailed++;
+      ctx.consecutiveErrors++;
+    }
+  }
+
+  if (!ctx.stopReason) ctx.stopReason = 'max_tasks_reached';
+  logger.info(`[ProjectLoop] 終了 ${projectId} | done:${ctx.tasksDone} failed:${ctx.tasksFailed} reason:${ctx.stopReason}`);
 }
 
 // ─────────────────────────────────────────────────────
