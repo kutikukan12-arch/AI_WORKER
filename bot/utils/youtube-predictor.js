@@ -155,7 +155,10 @@ function _estimateBenchmark(video) {
 // 戻り値:
 //   { probability, label, confidence, buzzRatio, usedML, mlSamples }
 function predict(video) {
-  const { score: ruleScore, buzzRatio } = _ruleScore(video);
+  const isPrePub = _isPrePublication(video);
+  const { score: ruleScore, buzzRatio } = isPrePub
+    ? _ruleScorePrePub(video)
+    : _ruleScore(video);
   const modelData = _loadModel();
 
   let mlScore  = null;
