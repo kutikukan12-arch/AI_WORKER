@@ -2842,6 +2842,104 @@ async function handleResearch(message, sub) {
 async function handleReview(message, sub) {
   const reviewsDir = path.join(AI_WORKER_ROOT, 'reviews');
 
+  // ─── !review backfill <id> — codex_task_*.md から result_task_*.md を生成 ───
+  if (sub === 'backfill') {
+    const rawId = message.content.split(/\s+/)[2] || '';
+    if (!rawId) {
+      await message.reply(
+        '**使い方**\n```\n!review backfill <タスクID>\n```\n' +
+        '`codex_task_<id>.md` が存在する場合に `result_task_<id>.md` を生成します。\n' +
+        '例: `!review backfill task_1780317028048`'
+      ).catch(() => {});
+      return;
+    }
+
+    const codexPath  = path.join(reviewsDir, `codex_${rawId}.md`);
+    const resultPath = path.join(reviewsDir, `result_${rawId}.md`);
+
+    if (!fs.existsSync(codexPath)) {
+      await message.reply(
+        `❌ **codex_${rawId}.md が見つかりません**\n\nCodex 依頼ファイルが存在しないため backfill できません。`
+      ).catch(() => {});
+      return;
+    }
+    if (fs.existsSync(resultPath)) {
+      await message.reply(
+        `⏭️ **result_${rawId}.md は既に存在します**\n\n上書きは行いません。\n` +
+        `確認: \`!review show ${rawId}\``
+      ).catch(() => {});
+      return;
+    }
+
+    try {
+      const content = fs.readFileSync(codexPath, 'utf8');
+
+      // API 回答セクションを抽出
+      const markerMatch = content.match(/^## Codex API 回答（自動取得:[^）]*）\s*\n/m)
+                       || content.match(/^## Codex 回答（自動取得）\s*\n/m);
+      const apiText = markerMatch
+        ? content.slice(markerMatch.index + markerMatch[0].length).trim()
+        : null;
+
+      if (!apiText) {
+        await message.reply(
+          `❌ **Codex API 回答セクションが見つかりません**\n\n` +
+          `\`codex_${rawId}.md\` に \`## Codex API 回答（自動取得:...）\` ヘッダーがありません。`
+        ).catch(() => {});
+        return;
+      }
+
+      // ヘッダーの危険度を抽出（フォールバック: '低'）
+      const dangerMatch = content.match(/\| 危険度\s+\|\s*(高|中|低)/);
+      const headerDanger = dangerMatch ? dangerMatch[1] : '低';
+
+      // parseCodexResult で構造化マーカーを試みる（なければフリーテキストをそのまま）
+      const parsed = codex.parseCodexResult(apiText);
+      const finalDanger = (parsed.danger && parsed.danger !== '低')
+        ? parsed.danger
+        : headerDanger;
+      const problem    = parsed.problem || apiText;
+      const suggestion = parsed.suggestion || '（なし）';
+      const dangerEmoji = { '高': '🔴', '中': '🟡', '低': '🟢' }[finalDanger] || '⬜';
+
+      fs.writeFileSync(resultPath, [
+        `# Codex レビュー結果: ${rawId}`,
+        ``,
+        `| 項目 | 内容 |`,
+        `|------|------|`,
+        `| 作成日時 | ${new Date().toLocaleString('ja-JP')} |`,
+        `| タスクID | ${rawId} |`,
+        `| 危険度   | ${dangerEmoji} ${finalDanger} |`,
+        ``,
+        `## 問題点`,
+        ``,
+        problem,
+        ``,
+        `## 改善案`,
+        ``,
+        suggestion,
+        ``,
+        `## フィードバック適用コマンド`,
+        ``,
+        `\`!apply-review ${rawId}\``,
+      ].join('\n'), 'utf8');
+
+      logger.info(`[Review] backfill 完了: result_${rawId}.md | 危険度: ${finalDanger}`);
+      await message.reply(
+        `✅ **backfill 完了**\n\n` +
+        `タスク: \`${rawId}\`\n` +
+        `危険度: ${dangerEmoji} ${finalDanger}\n\n` +
+        `確認: \`!review show ${rawId}\``
+      ).catch(() => {});
+    } catch (bfErr) {
+      logger.error(`[Review] backfill エラー: ${bfErr.message}`);
+      await message.reply(
+        `❌ **backfill 失敗**\n\n${bfErr.message.slice(0, 100)}`
+      ).catch(() => {});
+    }
+    return;
+  }
+
   // ─── !review show <id> — レビュー結果全文を表示 ───
   if (sub === 'show') {
     const rawId = message.content.split(/\s+/)[2] || '';
