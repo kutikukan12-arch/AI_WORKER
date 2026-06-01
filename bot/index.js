@@ -108,6 +108,9 @@ const pendingPlans = require('./utils/pending-plans');
 // ─── !project refine: Gap 分析（優先順位付き）───
 const refineGapAnalyzer = require('./utils/refine-gap-analyzer');
 
+// ─── Project Insights（Human feedback / Audit / Requirements）───
+const projectInsights = require('./utils/project-insights');
+
 // ─── AI Board Report ───
 const aiBoardReport = require('./utils/ai-board-report');
 
@@ -207,6 +210,8 @@ const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || '';
 const AI_BOARD_CHANNEL_ID = process.env.AI_BOARD_CHANNEL_ID || '';
 // CEO Report チャンネル（未設定時はコマンドチャンネルにフォールバック）
 const CEO_REPORT_CHANNEL_ID = process.env.CEO_REPORT_CHANNEL_ID || '';
+// HUMAN_CHECK（承認）通知の集約先（#承認-確認）。設定時は全承認依頼をここへ
+const HUMAN_CHECK_CHANNEL_ID = process.env.HUMAN_CHECK_CHANNEL_ID || '';
 
 const NOTIFICATION_CHANNELS = Object.freeze({
   history:     HISTORY_CHANNEL_ID,
@@ -218,6 +223,7 @@ const NOTIFICATION_CHANNELS = Object.freeze({
   pr:          PR_CHANNEL_ID,
   boardReport: AI_BOARD_CHANNEL_ID,
   ceoReport:   CEO_REPORT_CHANNEL_ID,
+  humanCheck:  HUMAN_CHECK_CHANNEL_ID,
 });
 
 // workspace パス
@@ -437,7 +443,9 @@ async function sendHumanMention(channel, taskId, title, detail, danger = '中', 
 
   const dangerEmoji = { '高': '🔴', '中': '🟡', '低': '🟢' }[danger] || '🟡';
   const recommended = options.recommended ?? 'はい';
-  const targetChannelId = options.channelType ? NOTIFICATION_CHANNELS[options.channelType] : '';
+  // 承認依頼は #承認-確認 に集約する。未設定時のみ従来の channelType を使う
+  const targetChannelId = NOTIFICATION_CHANNELS.humanCheck
+    || (options.channelType ? NOTIFICATION_CHANNELS[options.channelType] : '');
 
   // 履歴に記録
   reviewHistory.recordHumanConfirm(taskId, title, danger);
@@ -463,7 +471,10 @@ async function sendHumanMention(channel, taskId, title, detail, danger = '中', 
     `✅ 承認: \`!approve ${taskId}\`　❌ 却下: \`!deny ${taskId}\``;
 
   try {
-    if (options.channelType) {
+    if (NOTIFICATION_CHANNELS.humanCheck) {
+      // 承認依頼を #承認-確認 に集約
+      await sendNotification('humanCheck', channel, mentionMessage);
+    } else if (options.channelType) {
       await sendNotification(options.channelType, channel, mentionMessage);
     } else {
       await channel.send(mentionMessage);
@@ -2567,6 +2578,11 @@ async function handleProjectRefine(message, args) {
       } catch { return 'NEEDS_REFINEMENT'; }
     })();
     const reviewsDirForRefine = path.join(AI_WORKER_ROOT, 'reviews');
+    // Insights（Human feedback / Product/PM Audit / Requirements）を取得して最優先で反映
+    const insightsForRefine = projectInsights.getInsights(pid);
+    if (insightsForRefine.length > 0) {
+      logger.info(`[Refine] Insights 参照: ${pid} | ${insightsForRefine.length}件（${insightsForRefine.map(i => i.type).join(',')}）`);
+    }
 
     const gapResult = refineGapAnalyzer.analyzeGaps({
       projectId:      pid,
@@ -2577,8 +2593,9 @@ async function handleProjectRefine(message, args) {
       taskManager,
       projectManager,
       reviewsDir:     reviewsDirForRefine,
+      insights:       insightsForRefine,
     });
-    logger.info(`[Refine] Gap分析: ${pid} | P1:${gapResult.gaps.filter(g=>g.category==='P1').length} P2:${gapResult.gaps.filter(g=>g.category==='P2').length} P3:${gapResult.gaps.filter(g=>g.category==='P3').length} sources:${gapResult.sources.join(',')}`);
+    logger.info(`[Refine] Gap分析: ${pid} | P1:${gapResult.gaps.filter(g=>g.category==='P1').length} P2:${gapResult.gaps.filter(g=>g.category==='P2').length} P3:${gapResult.gaps.filter(g=>g.category==='P3').length} insight:${gapResult.insightGaps?.length||0} sources:${gapResult.sources.join(',')}`);
 
     // Planner の nextCandidates を P3〜P5 として後ろに追加（gap analyzer が優先）
     const planner = require('./utils/project-planner.js');
@@ -2749,6 +2766,127 @@ async function handleProject(message, args) {
   // ─── !project refine — 不足機能分析 → タスク案生成 ───────────
   if (sub === 'refine') {
     await handleProjectRefine(message, args);
+    return;
+  }
+
+  // ─── !project insight — Human feedback / Audit / Requirements 管理 ───
+  if (sub === 'insight') {
+    const insightSub = args[1] || 'list';
+    const insightPid = args[2] || projectManager.getCurrentProject(message.channelId) || 'default';
+
+    // !project insight list [pid]
+    if (insightSub === 'list') {
+      const list = projectInsights.getInsights(insightPid);
+      if (list.length === 0) {
+        await message.reply(
+          `📋 \`${insightPid}\` に登録済み Insight はありません。\n` +
+          `\`!project insight add ${insightPid} <type> <text>\` で追加できます。\n` +
+          `type: feedback / product / pm / req`
+        ).catch(() => {});
+        return;
+      }
+      const lines = list.map((ins, i) =>
+        `${i + 1}. [${ins.type}/${ins.severity}] ${ins.text.slice(0, 60)}\n   ID: \`${ins.id}\` | ${ins.addedAt.slice(0, 10)}`
+      ).join('\n');
+      await message.reply(
+        `📋 **Project Insights** — \`${insightPid}\`\n\n${lines.slice(0, 1700)}\n\n` +
+        `\`!project refine ${insightPid}\` でこれらを優先した改善案を生成できます。`
+      ).catch(() => {});
+      return;
+    }
+
+    // !project insight add <pid> <type> <text...>
+    // type aliases: feedback/f → human_feedback, product/p → product_audit, pm → pm_audit, req/r → requirement
+    if (insightSub === 'add') {
+      // Owner のみ
+      if (DISCORD_OWNER_ID && message.author.id !== DISCORD_OWNER_ID) {
+        await message.reply('🚫 `!project insight add` は Owner のみ実行できます。').catch(() => {});
+        return;
+      }
+      const rawType = args[3] || '';
+      const text    = args.slice(4).join(' ').trim();
+      if (!rawType || !text) {
+        await message.reply(
+          '**使い方**\n```\n!project insight add <pid> <type> <内容>\n```\n' +
+          'type: `feedback`（CEO指摘）/ `product`（Product監査）/ `pm`（PM監査）/ `req`（要件）\n' +
+          '例: `!project insight add youtube予測ai product viewCount依存で投稿前予測不可`'
+        ).catch(() => {});
+        return;
+      }
+      const typeMap = {
+        feedback: 'human_feedback', f:       'human_feedback',
+        product:  'product_audit',  p:       'product_audit',
+        pm:       'pm_audit',
+        req:      'requirement',    r:       'requirement',
+        // フルネームもそのまま受け付ける
+        human_feedback: 'human_feedback',
+        product_audit:  'product_audit',
+        pm_audit:       'pm_audit',
+        requirement:    'requirement',
+      };
+      const insType = typeMap[rawType.toLowerCase()] || 'human_feedback';
+      const sec = security.checkPrompt(text);
+      if (!sec.safe) {
+        await message.reply(`🚫 セキュリティチェックで拒否: ${sec.reason}`).catch(() => {});
+        return;
+      }
+      const ins = projectInsights.addInsight(insightPid, insType, text, {
+        addedBy: message.author.id,
+        source:  'discord_command',
+      });
+      const typeLabel = projectInsights.typeLabel(insType);
+      await message.reply(
+        `✅ **Insight 追加** — \`${insightPid}\`\n\n` +
+        `種別: ${typeLabel} | 優先度: ${ins.category}\n` +
+        `内容: ${text.slice(0, 100)}\n` +
+        `ID: \`${ins.id}\`\n\n` +
+        `\`!project refine ${insightPid}\` で P${ins.category.slice(1)} 優先の改善案を生成できます。`
+      ).catch(() => {});
+      logger.info(`[Insight] 追加: ${insightPid} | ${insType} | ${text.slice(0, 50)} | by:${message.author.id}`);
+      return;
+    }
+
+    // !project insight resolve <pid> <insightId>
+    if (insightSub === 'resolve') {
+      if (DISCORD_OWNER_ID && message.author.id !== DISCORD_OWNER_ID) {
+        await message.reply('🚫 `!project insight resolve` は Owner のみ実行できます。').catch(() => {});
+        return;
+      }
+      const insId = args[3] || '';
+      if (!insId) {
+        await message.reply('使い方: `!project insight resolve <pid> <insightId>`').catch(() => {});
+        return;
+      }
+      const result = projectInsights.resolveInsight(insightPid, insId);
+      if (!result) {
+        await message.reply(`❌ Insight \`${insId}\` が見つかりません。`).catch(() => {});
+        return;
+      }
+      await message.reply(`✅ Insight \`${insId}\` を解決済みにしました。`).catch(() => {});
+      return;
+    }
+
+    // !project insight clear <pid>
+    if (insightSub === 'clear') {
+      if (DISCORD_OWNER_ID && message.author.id !== DISCORD_OWNER_ID) {
+        await message.reply('🚫 `!project insight clear` は Owner のみ実行できます。').catch(() => {});
+        return;
+      }
+      const count = projectInsights.clearInsights(insightPid);
+      await message.reply(`🗑️ \`${insightPid}\` の Insight ${count}件 を削除しました。`).catch(() => {});
+      return;
+    }
+
+    // ヘルプ
+    await message.reply(
+      '**!project insight コマンド:**\n```\n' +
+      '!project insight list [pid]                  → 一覧\n' +
+      '!project insight add <pid> <type> <内容>     → 追加（Owner のみ）\n' +
+      '!project insight resolve <pid> <id>          → 解決済みに（Owner のみ）\n' +
+      '!project insight clear <pid>                 → 全削除（Owner のみ）\n' +
+      '```\n' +
+      'type: `feedback`（CEO指摘）/ `product`（Product監査）/ `pm`（PM監査）/ `req`（要件）'
+    ).catch(() => {});
     return;
   }
 

@@ -6,18 +6,20 @@
 //   !project refine で「一般的な次ステップ」ではなく
 //   「PM/Product監査で発覚した重大欠陥」を優先する。
 //
-// 参照データ:
-//   - AI Board Report（Board Status / exec status）
-//   - CEO Report（ロール評価）
-//   - Quality indicators（エラー率・REVIEW失敗）
-//   - reviews/result_*.md（Codex REVIEW 結果）
-//   - 完了タスク履歴（何が終わったか）
-//   - プロジェクト説明・目的
+// 参照データ（優先度順）:
+//   1. Human feedback（CEO指摘）    ← project-insights.json
+//   2. Product Audit                ← project-insights.json
+//   3. PM Audit                     ← project-insights.json
+//   4. Original requirements        ← project-insights.json
+//   5. AI Board Report（Board Status）
+//   6. Quality indicators（エラー率・REVIEW失敗）
+//   7. reviews/result_*.md（Codex REVIEW 結果）
+//   8. 完了タスク履歴・プロジェクト目的
 //
 // 優先順位:
-//   P1 コア価値未達    — プロジェクト目的が達成されていない
-//   P2 致命的不具合    — 失敗タスク・品質RED・REVIEW高危険度
-//   P3 受け入れ条件不足 — TEST/DOCS/REVIEW が欠けている
+//   P1 コア価値未達    — Human feedback / Product/PM Audit の critical
+//   P2 致命的不具合    — 失敗タスク・品質RED・REVIEW高危険度・blocker insight
+//   P3 受け入れ条件不足 — Requirements / TEST/DOCS/REVIEW が欠けている
 //   P4 UX              — UI・ユーザー向け機能の欠如
 //   P5 Docs            — ドキュメント・README 不足
 //
@@ -346,12 +348,13 @@ function analyzeP5Docs(doneTypes, donePrompts) {
 function analyzeGaps({
   projectId,
   project,
-  boardStatus   = 'NEEDS_REFINEMENT',
-  indicators    = {},
-  qualityLevel  = 'GREEN',
+  boardStatus    = 'NEEDS_REFINEMENT',
+  indicators     = {},
+  qualityLevel   = 'GREEN',
   taskManager,
   projectManager,
   reviewsDir,
+  insights       = [],  // project-insights.js の getInsights() 結果
 }) {
   const { doneTypes, donePrompts } = collectDoneTaskTypes(
     projectId, taskManager, projectManager
@@ -365,6 +368,9 @@ function analyzeGaps({
     project.goal || ''
   );
 
+  // ─ 優先度0: Human feedback / Product/PM Audit / Requirements（最高優先）
+  const p0 = analyzeInsights(insights);
+
   // 各優先度の gap を収集
   const p1 = analyzeP1CoreValue(projectId, project, doneTypes, donePrompts, boardStatus, indicators);
   const p2 = analyzeP2Blockers(indicators, reviewIssues, qualityLevel);
@@ -372,9 +378,9 @@ function analyzeGaps({
   const p4 = analyzeP4UX(doneTypes, donePrompts, keywords);
   const p5 = analyzeP5Docs(doneTypes, donePrompts);
 
-  // 重複除去してマージ（同じ type+category の重複は最初だけ）
+  // 重複除去してマージ（insights を先頭に置いて P1〜P5 を後ろに）
   const seen  = new Set();
-  const allGaps = [...p1, ...p2, ...p3, ...p4, ...p5].filter(g => {
+  const allGaps = [...p0, ...p1, ...p2, ...p3, ...p4, ...p5].filter(g => {
     const key = `${g.category}:${g.type}:${g.prompt.slice(0, 30)}`;
     if (seen.has(key)) return false;
     seen.add(key);
@@ -382,32 +388,76 @@ function analyzeGaps({
   });
 
   // カテゴリ情報を付与してソート
-  const enriched = allGaps.map(g => ({
-    ...g,
-    priority:      PRIORITY_CATEGORY[g.category].priority,
-    categoryRank:  PRIORITY_CATEGORY[g.category].rank,
-    categoryLabel: PRIORITY_CATEGORY[g.category].label,
-    dangerLevel:   g.category === 'P1' || g.category === 'P2' ? '中' : '低',
-    securityOk:    true, // security.checkPrompt は呼び出し元で実施
-  }));
+  const enriched = allGaps.map(g => {
+    const catInfo = PRIORITY_CATEGORY[g.category] || PRIORITY_CATEGORY.P5;
+    return {
+      ...g,
+      priority:      catInfo.priority,
+      categoryRank:  catInfo.rank,
+      categoryLabel: catInfo.label,
+      dangerLevel:   g.category === 'P1' || g.category === 'P2' ? '中' : '低',
+      securityOk:    true, // security.checkPrompt は呼び出し元で実施
+    };
+  });
 
   enriched.sort((a, b) => a.categoryRank - b.categoryRank);
 
   // 使用したデータソースの説明
   const sources = [];
+  if (p0.length > 0) sources.push(`Insights (HumanFeedback/Audit): ${p0.length}件`);
   if (boardStatus !== 'NEEDS_REFINEMENT') sources.push(`Board Report: ${boardStatus}`);
   if (reviewIssues.length > 0) sources.push(`Codex REVIEW 問題: ${reviewIssues.length}件`);
   if (indicators.failedCount > 0) sources.push(`失敗タスク: ${indicators.failedCount}件`);
   if (qualityLevel !== 'GREEN') sources.push(`品質: ${qualityLevel}`);
-  sources.push(`完了タスク種別: ${[...doneTypes].join('/')|| 'なし'}`);
+  sources.push(`完了タスク種別: ${[...doneTypes].join('/') || 'なし'}`);
   if (keywords.length > 0) sources.push(`プロジェクト種別: ${keywords.join('/')}`);
 
-  return { gaps: enriched, sources, doneTypes, donePrompts, reviewIssues };
+  return { gaps: enriched, sources, doneTypes, donePrompts, reviewIssues, insightGaps: p0 };
+}
+
+// ─────────────────────────────────────────────────────
+// Project Insights（Human feedback / Product/PM Audit / Requirements）
+// を gap に変換する。
+//
+// insights は project-insights.js の getInsights() が返す配列。
+// 各 insight の severity → P カテゴリにマッピング。
+//
+// Human feedback / Product / PM Audit の critical は P1（最優先）
+// ─────────────────────────────────────────────────────
+function analyzeInsights(insights) {
+  const gaps = [];
+  for (const ins of insights) {
+    if (ins.resolved) continue;
+
+    // type からタスク種別を推定
+    let taskType = 'IMPLEMENT';
+    const text = ins.text.toLowerCase();
+    if (/バグ|不具合|bug|broken|破綻|動かない|失敗/.test(text)) taskType = 'FIX';
+    if (/テスト|test|検証/.test(text)) taskType = 'TEST';
+    if (/ドキュメント|readme|docs/.test(text)) taskType = 'DOCS';
+    if (/レビュー|review/.test(text)) taskType = 'REVIEW';
+
+    // プロンプト: insight テキストをそのままタスク指示に変換
+    const prompt = `[${ins.type === 'human_feedback' ? 'CEO指摘' : ins.type === 'product_audit' ? 'Product Audit' : ins.type === 'pm_audit' ? 'PM Audit' : '要件'}] ${ins.text}`;
+
+    gaps.push({
+      type:     taskType,
+      category: ins.category || 'P1',
+      prompt:   prompt.slice(0, 500),
+      reason:   `${ins.type} (severity: ${ins.severity}) — ${(ins.addedAt || '').slice(0, 10)}`,
+      source:   'project_insights',
+      insightId: ins.id,
+      insightType: ins.type,
+      fromLarge: false,
+    });
+  }
+  return gaps;
 }
 
 module.exports = {
   analyzeGaps,
   PRIORITY_CATEGORY,
+  analyzeInsights,
   // テスト用
   _collectReviewIssues:          collectReviewIssues,
   _collectDoneTaskTypes:         collectDoneTaskTypes,
