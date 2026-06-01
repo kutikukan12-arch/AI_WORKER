@@ -184,6 +184,7 @@ function predict(video) {
 
   const viewRange = _estimateViewRange(video, probability, confidence);
   const benchmark = _estimateBenchmark(video);
+  const reasons   = _buildReasons(video, isPrePub, buzzRatio);
 
   logger.debug(
     `[YouTubePredictor] ${video.videoId || '?'} ` +
@@ -199,6 +200,7 @@ function predict(video) {
     mlSamples,
     viewRange,
     benchmark,
+    reasons,
   };
 }
 
@@ -252,6 +254,117 @@ function getModelStatus() {
   };
 }
 
+// ── スコア説明（主要因） ──────────────────────────────────
+
+const _fmtNum = n => n >= 10000 ? `${(n / 10000).toFixed(1)}万` : `${n}`;
+
+// 各特徴量の影響度スコア(0..1)と説明を算出し、偏差の大きい上位3件を返す
+function _buildReasons(video, isPrePub, buzzRatio) {
+  const factors = [];
+
+  if (isPrePub) {
+    const subs     = video.subscriberCount || 0;
+    const title    = video.title           || '';
+    const tags     = Array.isArray(video.tags) ? video.tags : [];
+    const duration = video.duration        || 0;
+
+    // チャンネル規模
+    let subScore;
+    let subDetail;
+    if      (subs >= 100000) { subScore = 0.80; subDetail = `登録者${_fmtNum(subs)}人（大規模、初動に有利）`; }
+    else if (subs >=  10000) { subScore = 0.65; subDetail = `登録者${_fmtNum(subs)}人（中規模）`; }
+    else if (subs >=   1000) { subScore = 0.52; subDetail = `登録者${_fmtNum(subs)}人（小規模）`; }
+    else if (subs >       0) { subScore = 0.38; subDetail = `登録者${_fmtNum(subs)}人（超小規模）`; }
+    else                     { subScore = 0.45; subDetail = `登録者数不明`; }
+    factors.push({ name: 'チャンネル規模', score: subScore, detail: subDetail });
+
+    // タイトル品質（複合）
+    let titleScore = 0.45;
+    const titleHints = [];
+    if (title.length >= 8 && title.length <= 70) { titleScore += 0.12; titleHints.push('長さ適切'); }
+    if (/[!！]/.test(title))                      { titleScore += 0.10; titleHints.push('感嘆符あり'); }
+    if (/[?？]/.test(title))                      { titleScore += 0.04; titleHints.push('疑問符あり'); }
+    const titlePreview = title.length > 20 ? `${title.slice(0, 20)}…` : (title || '（タイトル不明）');
+    const titleDetail  = `「${titlePreview}」${titleHints.length ? `（${titleHints.join('・')}）` : '（該当なし）'}`;
+    factors.push({ name: 'タイトル品質', score: Math.min(titleScore, 0.90), detail: titleDetail });
+
+    // タグ数
+    let tagScore;
+    let tagDetail;
+    if      (tags.length >= 15) { tagScore = 0.75; tagDetail = `${tags.length}個（SEO露出が高い）`; }
+    else if (tags.length >=  5) { tagScore = 0.60; tagDetail = `${tags.length}個（標準的）`; }
+    else if (tags.length >   0) { tagScore = 0.38; tagDetail = `${tags.length}個（少なめ、SEO弱）`; }
+    else                        { tagScore = 0.28; tagDetail = `タグなし（SEO不利）`; }
+    factors.push({ name: 'タグ数（SEO）', score: tagScore, detail: tagDetail });
+
+    // 動画尺
+    const durMin = duration > 0 ? Math.round(duration / 60) : null;
+    let durScore;
+    let durDetail;
+    if      (duration >= 300 && duration <= 1200) { durScore = 0.65; durDetail = `${durMin}分（VOD最適帯 5〜20分）`; }
+    else if (durMin !== null)                      { durScore = 0.40; durDetail = `${durMin}分（最適帯外）`; }
+    else                                           { durScore = 0.45; durDetail = `動画尺不明`; }
+    factors.push({ name: '動画尺', score: durScore, detail: durDetail });
+
+  } else {
+    const subs     = video.subscriberCount || 0;
+    const views    = video.viewCount       || 0;
+    const likes    = video.likeCount       || 0;
+    const comments = video.commentCount    || 0;
+
+    // buzz_ratio（最重要）
+    if (buzzRatio !== null) {
+      let buzzScore;
+      let buzzDetail;
+      if      (buzzRatio >= HIT_THRESHOLD)  { buzzScore = 0.90; buzzDetail = `${buzzRatio.toFixed(2)}（閾値 ${HIT_THRESHOLD} 超え → 高伸長）`; }
+      else if (buzzRatio <= MISS_THRESHOLD) { buzzScore = 0.10; buzzDetail = `${buzzRatio.toFixed(2)}（閾値 ${MISS_THRESHOLD} 以下 → 低伸長）`; }
+      else {
+        buzzScore  = 0.1 + (buzzRatio - MISS_THRESHOLD) / (HIT_THRESHOLD - MISS_THRESHOLD) * 0.8;
+        buzzDetail = `${buzzRatio.toFixed(2)}（中間帯、目安: 伸び中）`;
+      }
+      factors.push({ name: '視聴数/登録者比(buzz)', score: buzzScore, detail: buzzDetail });
+    }
+
+    // いいね率
+    const likeRatio = views > 0 ? likes / views : 0;
+    let likeScore;
+    let likeDetail;
+    if      (likeRatio >= 0.05) { likeScore = 0.80; likeDetail = `${(likeRatio * 100).toFixed(1)}%（高エンゲージ）`; }
+    else if (likeRatio >= 0.02) { likeScore = 0.60; likeDetail = `${(likeRatio * 100).toFixed(1)}%（標準）`; }
+    else if (likeRatio >  0)    { likeScore = 0.33; likeDetail = `${(likeRatio * 100).toFixed(1)}%（低め）`; }
+    else                        { likeScore = 0.45; likeDetail = `いいね数不明`; }
+    factors.push({ name: 'いいね率', score: likeScore, detail: likeDetail });
+
+    // コメント率
+    const commentRatio = views > 0 ? comments / views : 0;
+    let commScore;
+    let commDetail;
+    if      (commentRatio >= 0.005) { commScore = 0.75; commDetail = `${(commentRatio * 100).toFixed(2)}%（活発）`; }
+    else if (commentRatio >= 0.001) { commScore = 0.55; commDetail = `${(commentRatio * 100).toFixed(2)}%（標準）`; }
+    else if (commentRatio >  0)     { commScore = 0.36; commDetail = `${(commentRatio * 100).toFixed(2)}%（低め）`; }
+    else                            { commScore = 0.45; commDetail = `コメント数不明`; }
+    factors.push({ name: 'コメント率', score: commScore, detail: commDetail });
+
+    // チャンネル規模
+    let subScore;
+    let subDetail;
+    if      (subs >= 100000) { subScore = 0.70; subDetail = `${_fmtNum(subs)}人（大規模）`; }
+    else if (subs >=  10000) { subScore = 0.60; subDetail = `${_fmtNum(subs)}人（中規模）`; }
+    else if (subs >=   1000) { subScore = 0.50; subDetail = `${_fmtNum(subs)}人`; }
+    else if (subs >       0) { subScore = 0.38; subDetail = `${_fmtNum(subs)}人（超小規模）`; }
+    else                     { subScore = 0.45; subDetail = `登録者数不明`; }
+    factors.push({ name: 'チャンネル規模', score: subScore, detail: subDetail });
+  }
+
+  // 中立(0.5)からの偏差が大きい順に並べ、上位3件を返す
+  factors.sort((a, b) => Math.abs(b.score - 0.5) - Math.abs(a.score - 0.5));
+  return factors.slice(0, 3).map(f => ({
+    factor: f.name,
+    impact: f.score >= 0.5 ? 'positive' : 'negative',
+    detail: f.detail,
+  }));
+}
+
 // ── Discord 表示用サマリー ─────────────────────────────────
 
 const LABEL_JP = { hit: '伸びやすい', miss: '伸びにくい', unknown: '判定保留' };
@@ -259,7 +372,6 @@ const CONF_JP  = { high: '高', medium: '中', low: '低（参考値）' };
 
 function buildSummary(video, result) {
   const pEmoji  = result.probability >= 60 ? '🟢' : result.probability <= 40 ? '🔴' : '🟡';
-  const fmt     = n => n >= 10000 ? `${(n / 10000).toFixed(1)}万` : `${n}`;
   const labelJp = LABEL_JP[result.label] ?? result.label;
   const confJp  = CONF_JP[result.confidence]  ?? result.confidence;
   const lines  = [
@@ -268,14 +380,24 @@ function buildSummary(video, result) {
     `${pEmoji} **確率:** ${result.probability}%  \`${result.label}\`（${labelJp}）  (信頼度: ${result.confidence}／${confJp})`,
   ];
 
+  // 主要因（上位3件）
+  if (result.reasons && result.reasons.length > 0) {
+    lines.push(``);
+    lines.push(`🔍 **このスコアの主要因（上位${result.reasons.length}件）**`);
+    for (const r of result.reasons) {
+      const icon = r.impact === 'positive' ? '✅' : '⚠️';
+      lines.push(`  ${icon} **${r.factor}:** ${r.detail}`);
+    }
+  }
+
   // 予測再生数レンジ
   if (result.viewRange) {
     const { low, median, high } = result.viewRange;
     lines.push(``);
     lines.push(`📊 **予測再生数レンジ** (7日間目安)`);
-    lines.push(`  LOW    ${fmt(low)}回`);
-    lines.push(`  MEDIAN ${fmt(median)}回 ← 中央値予測`);
-    lines.push(`  HIGH   ${fmt(high)}回`);
+    lines.push(`  LOW    ${_fmtNum(low)}回`);
+    lines.push(`  MEDIAN ${_fmtNum(median)}回 ← 中央値予測`);
+    lines.push(`  HIGH   ${_fmtNum(high)}回`);
     lines.push(`  ※ 統計的確率レンジ（確定値ではなく見込みによる予測）`);
   } else {
     lines.push(``);
@@ -287,13 +409,13 @@ function buildSummary(video, result) {
     const { genreMedian } = result.benchmark;
     lines.push(``);
     lines.push(`📈 **比較ベンチマーク（類似チャンネル推定中央値）**`);
-    lines.push(`  同ジャンル推定中央値: ${fmt(genreMedian)}回`);
+    lines.push(`  同ジャンル推定中央値: ${_fmtNum(genreMedian)}回`);
     if (result.viewRange) {
-      const diff  = result.viewRange.median - genreMedian;
-      const sign  = diff >= 0 ? '+' : '-';
-      const pct   = Math.round(Math.abs(diff) / genreMedian * 100);
-      const label = diff >= 0 ? '上回る' : '下回る';
-      lines.push(`  あなたの予測中央値:   ${fmt(result.viewRange.median)}回 (中央値比 ${sign}${pct}% ${label}見込み)`);
+      const diff      = result.viewRange.median - genreMedian;
+      const sign      = diff >= 0 ? '+' : '-';
+      const pct       = Math.round(Math.abs(diff) / genreMedian * 100);
+      const diffLabel = diff >= 0 ? '上回る' : '下回る';
+      lines.push(`  あなたの予測中央値:   ${_fmtNum(result.viewRange.median)}回 (中央値比 ${sign}${pct}% ${diffLabel}見込み)`);
     }
   }
 
