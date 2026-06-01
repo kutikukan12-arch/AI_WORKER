@@ -353,5 +353,78 @@ test('6e. Codex 高危険ブロックで customMessage に formatCodexHighDanger
   assert.ok(!claudeTaskBody.includes("taskId.includes('_s')"), 'split task 専用の分岐が存在する（想定外）');
 });
 
+// ─────────────────────────────────────────────────────
+// 7. CEO フォーマット改善（新フォーマット詳細検証）
+// ─────────────────────────────────────────────────────
+console.log('\n[7. CEO フォーマット改善 — 新セクション構成]');
+
+test('7a. formatHumanCheck が 📌 状況 / 🛑 理由 / ✅ 承認 / ❌ 却下 / ⏸ 放置 / 🤖 AI判断 を含む', () => {
+  const text = fmt.formatHumanCheck({
+    taskId: 'task_x', projectId: 'proj', reason: 'soft RED 未解決', details: '', task: null
+  });
+  assert.ok(text.includes('📌') || text.includes('状況'), '状況セクションがない');
+  assert.ok(text.includes('🛑') || text.includes('止めた理由'), '止めた理由がない');
+  assert.ok(text.includes('✅') || text.includes('承認した場合'), '承認セクションがない');
+  assert.ok(text.includes('❌') || text.includes('却下した場合'), '却下セクションがない');
+  assert.ok(text.includes('⏸') || text.includes('放置した場合'), '放置セクションがない');
+  assert.ok(text.includes('🤖') || text.includes('AI 判断'), 'AI判断セクションがない');
+});
+
+test('7b. formatHumanCheck に危険度と AI おすすめが含まれる', () => {
+  const text = fmt.formatHumanCheck({
+    taskId: 'task_x', projectId: 'proj', reason: 'AIレビュー却下推奨', details: '', task: null
+  });
+  assert.ok(text.includes('危険度'), '危険度表示がない');
+  assert.ok(text.includes('おすすめ') || text.includes('推奨'), 'AIおすすめがない');
+  assert.ok(text.includes('理由'), 'おすすめ理由がない');
+});
+
+test('7c. formatHumanCheck の AUTH 理由で「内容確認推奨」または同等のおすすめが出る', () => {
+  const text = fmt.formatHumanCheck({
+    taskId: 'task_x', projectId: 'proj', reason: 'AUTH エラー', details: '', task: null
+  });
+  assert.ok(text.includes('確認') || text.includes('推奨'), 'AUTH でおすすめが出ない');
+});
+
+test('7d. formatHumanCheck に再実行方法（!project run）が含まれる', () => {
+  const text = fmt.formatHumanCheck({
+    taskId: 'task_x', projectId: 'proj-abc', reason: 'soft RED 未解決', details: '', task: null
+  });
+  assert.ok(text.includes('!project run') || text.includes('再実行'), '再実行方法がない');
+});
+
+test('7e. formatCodexHighDanger に「別AIがコードを確認」の平易な説明がある', () => {
+  const text = fmt.formatCodexHighDanger({ taskId: 'task_x', codexFile: 'f.md' });
+  assert.ok(
+    text.includes('別のAI') || text.includes('Codex/GPT') || text.includes('別AI'),
+    'Codex の平易な説明がない'
+  );
+  assert.ok(text.includes('確認'), 'コード確認の説明がない');
+});
+
+test('7f. formatCodexHighDanger に「承認した場合」危険度と「内容確認推奨」が含まれる', () => {
+  const text = fmt.formatCodexHighDanger({ taskId: 'task_x', codexFile: 'f.md' });
+  assert.ok(text.includes('危険度'), '危険度がない');
+  assert.ok(text.includes('内容確認') || text.includes('確認推奨'), '内容確認推奨がない');
+});
+
+test('7g. formatCodexHighDanger に AI_WORKER が待機する放置説明がある', () => {
+  const text = fmt.formatCodexHighDanger({ taskId: 'task_x', codexFile: 'f.md' });
+  assert.ok(
+    text.includes('AI_WORKER') || text.includes('待機'),
+    'AI_WORKER 待機説明がない'
+  );
+});
+
+test('7h. formatHumanCheck の却下後に「再実行できる」旨がある', () => {
+  const text = fmt.formatHumanCheck({
+    taskId: 'task_x', projectId: 'proj', reason: 'timeout_limit', details: '', task: null
+  });
+  assert.ok(
+    text.includes('再実行') || text.includes('再開') || text.includes('いつでも'),
+    '却下後に再実行できることが説明されていない'
+  );
+});
+
 console.log(`\n結果: ${pass} passed / ${fail} failed\n`);
 if (fail > 0) process.exit(1);
