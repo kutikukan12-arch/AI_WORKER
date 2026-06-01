@@ -1024,9 +1024,10 @@ async function _handleHumanCheck(ctx, task, reason, details) {
   ctx.stopReason      = 'awaiting_human';
 
   // C-1修正: approval record を作成して !approve / !deny が機能するようにする
-  // AWAITING と同方式（type='post'）で登録。重複は createApproval 内で自動スキップ。
+  // M-2修正: ensurePending で「必ず PENDING」を保証する。
+  //   過去に APPROVED/DENIED 済みの taskId でも再 HUMAN_CHECK を承認可能にする。
   try {
-    approvalManager.createApproval(taskId, {
+    approvalManager.ensurePending(taskId, {
       type:      'post',
       projectId,
       reason:    reason.slice(0, 200),

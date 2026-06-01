@@ -128,6 +128,52 @@ function createApproval(taskId, options = {}) {
 }
 
 // ─────────────────────────────────────────────────────
+// HUMAN_CHECK 用: 必ず PENDING な Approval を保証する
+//
+// createApproval は重複時に既存（APPROVED/DENIED 等）をそのまま返すため、
+// 過去に承認/却下済みの taskId では再 HUMAN_CHECK が承認不能になる（M-2）。
+// この関数は:
+//   - record が無ければ新規 PENDING で作成（createApproval）
+//   - record があり PENDING 以外なら PENDING に戻し、理由等を最新化
+//   - 既に PENDING ならそのまま返す
+//
+// 戻り値: 必ず state=PENDING の approval オブジェクト | null（失敗時）
+// ─────────────────────────────────────────────────────
+function ensurePending(taskId, options = {}) {
+  const existing = getApproval(taskId);
+  if (!existing) {
+    return createApproval(taskId, options);
+  }
+
+  if (existing.state === STATES.PENDING) {
+    return existing;
+  }
+
+  // PENDING 以外（APPROVED/DENIED/PAUSED）→ PENDING に再オープンし内容を最新化
+  const data = load();
+  const idx  = data.approvals.findIndex(a => a.taskId === taskId);
+  if (idx === -1) return createApproval(taskId, options);
+
+  const now = new Date().toISOString();
+  const a   = data.approvals[idx];
+  a.state      = STATES.PENDING;
+  a.updatedAt  = now;
+  a.resolvedBy = null;
+  a.resolvedAt = null;
+  // 新しい HUMAN_CHECK の文脈で上書き（指定があるもののみ）
+  if (options.type      !== undefined) a.type      = options.type;
+  if (options.reason    !== undefined) a.reason     = String(options.reason).slice(0, 200);
+  if (options.danger    !== undefined) a.danger     = options.danger;
+  if (options.prompt    !== undefined) a.prompt     = String(options.prompt).slice(0, 1000);
+  if (options.projectId !== undefined) a.projectId  = options.projectId;
+  if (options.channelId !== undefined) a.channelId  = options.channelId;
+
+  save(data);
+  logger.info(`Approval 再オープン（HUMAN_CHECK）: ${taskId} | ${existing.state} → PENDING`);
+  return a;
+}
+
+// ─────────────────────────────────────────────────────
 // 状態更新（内部共通処理）
 // ─────────────────────────────────────────────────────
 function updateState(taskId, newState, resolvedBy) {
@@ -289,6 +335,7 @@ module.exports = {
   STATES,
   STATE_EMOJI,
   createApproval,
+  ensurePending,
   approve,
   deny,
   pause,

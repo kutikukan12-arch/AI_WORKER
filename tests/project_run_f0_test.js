@@ -662,11 +662,13 @@ test('11l. 初回 validator失敗は HUMAN_CHECKではなく soft RED', () => {
 // ─────────────────────────────────────────────────────
 console.log('\n[12. C-1/H-1 修正テスト]');
 
-test('12a. _handleHumanCheck が approvalManager.createApproval を呼ぶ', () => {
+test('12a. _handleHumanCheck が approval record を保証する（M-2: ensurePending）', () => {
   const fn = src.indexOf('async function _handleHumanCheck(');
   const fe  = src.indexOf('\n// ─', fn + 1);
   const fb  = src.slice(fn, fe > 0 ? fe : fn + 2000);
-  assert.ok(fb.includes('createApproval'), 'createApproval 呼び出しがない');
+  // M-2修正: createApproval 直呼び（重複時 APPROVED 据え置き）から
+  //          ensurePending（必ず PENDING）へ変更済み。
+  assert.ok(fb.includes('ensurePending'), 'ensurePending 呼び出しがない');
 });
 
 test('12b. createApproval に type="post" を渡している', () => {
@@ -742,6 +744,184 @@ test('12h. handleApprove が approval 処理後に activeRuns を確認する順
   assert.ok(resumeIdx  >= 0, 'pendingApproval チェックがない');
   assert.ok(approveIdx < resumeIdx, 'approve より先に resume チェックが来ている');
 });
+
+// ─────────────────────────────────────────────────────
+// 13. M-2/M-1: HUMAN_CHECK approval lifecycle 統合テスト
+//
+// index.js は Discord クライアント起動を伴い in-process ロードできないため、
+// 根因コンポーネントである approval-manager を「実コード実行」し、
+// _handleHumanCheck → !approve → _runProjectLoop resume → activeRuns 解放
+// の契約をモック ctx / activeRuns Map で駆動して検証する。
+// （index.js 側の結線はソース順序チェック 12h 等で別途担保）
+// ─────────────────────────────────────────────────────
+console.log('\n[13. M-2/M-1 HUMAN_CHECK approval lifecycle]');
+
+const approvalManager = require('../bot/utils/approval-manager');
+
+const TEST_PREFIX = 'f4m_test_';
+function _cleanupApprovals() {
+  try {
+    const fpath = path.join(__dirname, '..', 'data', 'approvals.json');
+    if (!fs.existsSync(fpath)) return;
+    const data = JSON.parse(fs.readFileSync(fpath, 'utf8'));
+    data.approvals = (data.approvals || []).filter(a => !String(a.taskId).startsWith(TEST_PREFIX));
+    fs.writeFileSync(fpath, JSON.stringify(data, null, 2), 'utf8');
+  } catch { /* ignore */ }
+}
+_cleanupApprovals();
+
+// _handleHumanCheck が approval を作る方式を模倣（ensurePending 経由）
+function _simHumanCheck(ctx, taskId, reason) {
+  ctx.pendingApproval = taskId;
+  ctx.stopReason      = 'awaiting_human';
+  return approvalManager.ensurePending(taskId, {
+    type: 'post', projectId: ctx.projectId, reason, danger: '中',
+    prompt: 'dummy', channelId: 'chan-test',
+  });
+}
+
+// handleApprove の resume 契約を模倣（実 approval-manager を使用）
+function _simApprove(activeRuns, taskId) {
+  const approval = approvalManager.getApproval(taskId);
+  if (!approval || approval.state !== approvalManager.STATES.PENDING) {
+    return { resumed: false, reason: 'not-pending' };
+  }
+  approvalManager.approve(taskId, 'owner-test');           // 既存 approval 処理
+  for (const [, ctx] of activeRuns.entries()) {            // F-4 resume
+    if (ctx && ctx.pendingApproval === taskId) {
+      if (ctx.stopReason !== 'awaiting_human') return { resumed: false, reason: 'already' };
+      ctx.pendingApproval = null;
+      ctx.stopReason      = null;
+      return { resumed: true };
+    }
+  }
+  return { resumed: false, reason: 'no-ctx' };
+}
+
+// _teardown の activeRuns 解放を模倣
+function _simTeardown(activeRuns, ctx) {
+  if (ctx.stopReason === 'awaiting_human') return; // スキップ条件
+  activeRuns.delete(ctx.projectId);
+}
+
+// ── M-2: ensurePending が「必ず PENDING」を保証する ──────
+test('13a. ensurePending: record 無し → PENDING 新規作成', () => {
+  const id = TEST_PREFIX + 'a';
+  const a  = approvalManager.ensurePending(id, { type: 'post', reason: 'r' });
+  assert.ok(a, 'null');
+  assert.strictEqual(a.state, approvalManager.STATES.PENDING);
+  assert.strictEqual(a.type, 'post');
+});
+
+test('13b. ensurePending: APPROVED record → PENDING に再オープン（M-2核心）', () => {
+  const id = TEST_PREFIX + 'b';
+  approvalManager.createApproval(id, { type: 'post', reason: 'r' });
+  approvalManager.approve(id, 'owner');
+  assert.strictEqual(approvalManager.getApproval(id).state, approvalManager.STATES.APPROVED);
+  const a = approvalManager.ensurePending(id, { type: 'post', reason: 'r2' });
+  assert.strictEqual(a.state, approvalManager.STATES.PENDING, 'PENDING に戻っていない');
+  assert.strictEqual(a.resolvedBy, null, 'resolvedBy がクリアされていない');
+});
+
+test('13c. ensurePending: DENIED record → PENDING に再オープン（M-2核心）', () => {
+  const id = TEST_PREFIX + 'c';
+  approvalManager.createApproval(id, { type: 'post', reason: 'r' });
+  approvalManager.deny(id, 'owner');
+  assert.strictEqual(approvalManager.getApproval(id).state, approvalManager.STATES.DENIED);
+  const a = approvalManager.ensurePending(id, { type: 'post', reason: 'r2' });
+  assert.strictEqual(a.state, approvalManager.STATES.PENDING);
+});
+
+test('13d. ensurePending: 既存 PENDING はそのまま（重複作成しない）', () => {
+  const id = TEST_PREFIX + 'd';
+  const a1 = approvalManager.ensurePending(id, { type: 'post', reason: 'r' });
+  const a2 = approvalManager.ensurePending(id, { type: 'post', reason: 'r2' });
+  assert.strictEqual(a1.taskId, a2.taskId);
+  assert.strictEqual(a2.state, approvalManager.STATES.PENDING);
+  const all = approvalManager.listPending().filter(x => x.taskId === id);
+  assert.strictEqual(all.length, 1, '重複 PENDING が生成された');
+});
+
+// ── M-1: _handleHumanCheck → approve → resume → teardown 統合 ──
+test('13e. 統合: HUMAN_CHECK → approve で pendingApproval 解除 & 再開フラグ', () => {
+  const id = TEST_PREFIX + 'e';
+  const activeRuns = new Map();
+  const ctx = { projectId: 'proj-e', pendingApproval: null, stopReason: null };
+  activeRuns.set(ctx.projectId, ctx);
+
+  _simHumanCheck(ctx, id, 'AUTH エラー');
+  assert.strictEqual(ctx.stopReason, 'awaiting_human');
+  assert.strictEqual(approvalManager.getApproval(id).state, approvalManager.STATES.PENDING);
+
+  const res = _simApprove(activeRuns, id);
+  assert.ok(res.resumed, `resume されない: ${res.reason}`);
+  assert.strictEqual(ctx.pendingApproval, null, 'pendingApproval が解除されていない');
+  assert.strictEqual(ctx.stopReason, null, 'stopReason が解除されていない');
+  assert.strictEqual(approvalManager.getApproval(id).state, approvalManager.STATES.APPROVED);
+
+  // resume 後 run 完了 → teardown で activeRuns 解放
+  ctx.stopReason = 'project_done';
+  _simTeardown(activeRuns, ctx);
+  assert.ok(!activeRuns.has('proj-e'), 'activeRuns が解放されていない');
+});
+
+test('13f. 統合: 過去 APPROVED 済タスクの再 HUMAN_CHECK → 再 approve 可能（M-2回帰）', () => {
+  const id = TEST_PREFIX + 'f';
+  const activeRuns = new Map();
+  const ctx = { projectId: 'proj-f', pendingApproval: null, stopReason: null };
+  activeRuns.set(ctx.projectId, ctx);
+
+  // 1回目 HUMAN_CHECK → approve
+  _simHumanCheck(ctx, id, '1回目');
+  assert.ok(_simApprove(activeRuns, id).resumed, '1回目 resume 失敗');
+  assert.strictEqual(approvalManager.getApproval(id).state, approvalManager.STATES.APPROVED);
+
+  // 2回目 HUMAN_CHECK（同一 taskId）→ ensurePending で再 PENDING → 再 approve できる
+  _simHumanCheck(ctx, id, '2回目');
+  assert.strictEqual(approvalManager.getApproval(id).state, approvalManager.STATES.PENDING,
+    '2回目で PENDING に戻っていない（M-2 未修正なら APPROVED のまま）');
+  const res2 = _simApprove(activeRuns, id);
+  assert.ok(res2.resumed, `2回目 resume 失敗: ${res2.reason}`);
+});
+
+test('13g. 統合: deny → denied_by_human → teardown で activeRuns 解放', () => {
+  const id = TEST_PREFIX + 'g';
+  const activeRuns = new Map();
+  const ctx = { projectId: 'proj-g', pendingApproval: null, stopReason: null };
+  activeRuns.set(ctx.projectId, ctx);
+
+  _simHumanCheck(ctx, id, 'soft RED 未解決');
+  // deny 契約: record があるので deny 経路に到達
+  const approval = approvalManager.getApproval(id);
+  assert.ok(approval && approval.state === approvalManager.STATES.PENDING);
+  approvalManager.deny(id, 'owner-test');
+  ctx.stopRequested   = true;
+  ctx.stopReason      = 'denied_by_human';
+  ctx.pendingApproval = null;
+  _simTeardown(activeRuns, ctx);
+  assert.ok(!activeRuns.has('proj-g'), 'deny 後 activeRuns 解放されていない');
+  assert.strictEqual(approvalManager.getApproval(id).state, approvalManager.STATES.DENIED);
+});
+
+test('13h. 二重 approve しても二重 resume しない', () => {
+  const id = TEST_PREFIX + 'h';
+  const activeRuns = new Map();
+  const ctx = { projectId: 'proj-h', pendingApproval: null, stopReason: null };
+  activeRuns.set(ctx.projectId, ctx);
+  _simHumanCheck(ctx, id, 'x');
+  assert.ok(_simApprove(activeRuns, id).resumed, '1回目 resume 失敗');
+  const second = _simApprove(activeRuns, id); // 2回目
+  assert.ok(!second.resumed, '二重 resume された');
+});
+
+test('13i. index.js: _handleHumanCheck が ensurePending を使う（createApproval 直呼びでない）', () => {
+  const fn = src.indexOf('async function _handleHumanCheck(');
+  const fb = src.slice(fn, src.indexOf('\n}', fn) + 2);
+  assert.ok(fb.includes('ensurePending'), 'ensurePending を使っていない');
+});
+
+// クリーンアップ
+_cleanupApprovals();
 
 console.log(`\n結果: ${pass} passed / ${fail} failed\n`);
 if (fail > 0) process.exit(1);
