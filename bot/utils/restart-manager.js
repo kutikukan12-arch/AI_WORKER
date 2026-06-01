@@ -87,18 +87,64 @@ function acquireStartupLock() {
   if (fs.existsSync(LOCK_FILE)) {
     try {
       const lockData = JSON.parse(fs.readFileSync(LOCK_FILE, 'utf8'));
-      const isAllowed = lockData.pid === process.pid || lockData.pid === prevPid;
-      if (!isAllowed) {
-        try {
-          process.kill(lockData.pid, 0); // 存在確認のみ
-          logger.error(`[LOCK] 既存Botプロセスが稼働中 (PID: ${lockData.pid}). 起動を中止します。`);
-          return { ok: false, existingPid: lockData.pid };
-        } catch {
-          // PID が存在しない → bot.lock は古い残骸
-          logger.warn(`[LOCK] 古い bot.lock (PID: ${lockData.pid}) を上書きします`);
-        }
+
+      // ─── PID 有効性チェック（0・null・非正整数は stale として扱う）───
+      // PID=0 は Windows のシステムアイドルプロセス。
+      // PID=null/undefined/非数値 は壊れたロック。
+      // 以上は全て「古い残骸」として無視して上書きする。
+      const lockedPid = Number(lockData.pid);
+      if (!lockedPid || lockedPid < 1 || !Number.isInteger(lockedPid)) {
+        logger.warn(`[LOCK] 無効PID (${lockData.pid}) の bot.lock を上書きします`);
       } else {
-        logger.info(`[LOCK] bot.lock PID=${lockData.pid} は許可対象 (prevPid or self)`);
+        const isAllowed = lockedPid === process.pid || lockedPid === prevPid;
+        if (!isAllowed) {
+          // ─── プロセス存在確認 ─────────────────────────
+          let processExists = false;
+          try {
+            process.kill(lockedPid, 0);
+            processExists = true;
+          } catch {
+            // PID が存在しない → stale lock
+          }
+
+          if (processExists) {
+            // ─── Windows: commandLine で AI_WORKER か確認 ──
+            // 同じ PID を別の Node.js プロセスが使っている場合を検出する。
+            // wmic が使えない環境ではスキップして PID 一致だけで判定する。
+            let isOurBot = true; // デフォルト: PID 一致 → ブロック
+            if (process.platform === 'win32') {
+              try {
+                const { execFileSync } = require('child_process');
+                const wmicOut = execFileSync(
+                  'wmic',
+                  ['process', 'where', `ProcessId=${lockedPid}`, 'get', 'CommandLine', '/format:value'],
+                  { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }
+                );
+                // CommandLine に bot/index.js が含まれていない → AI_WORKER でない
+                if (wmicOut && !wmicOut.includes('index.js')) {
+                  isOurBot = false;
+                  logger.warn(
+                    `[LOCK] PID ${lockedPid} は AI_WORKER でないプロセス（PID再利用検出）→ stale 扱い`
+                  );
+                }
+              } catch {
+                // wmic 取得失敗 → 安全のため PID 一致でブロック（既存動作を維持）
+                logger.debug(`[LOCK] wmic 確認スキップ（PID: ${lockedPid}）`);
+              }
+            }
+
+            if (isOurBot) {
+              logger.error(`[LOCK] 既存Botプロセスが稼働中 (PID: ${lockedPid}). 起動を中止します。`);
+              return { ok: false, existingPid: lockedPid };
+            }
+            // isOurBot=false → stale として上書き
+          } else {
+            // PID が存在しない → stale lock
+            logger.warn(`[LOCK] 古い bot.lock (PID: ${lockedPid}) を上書きします`);
+          }
+        } else {
+          logger.info(`[LOCK] bot.lock PID=${lockedPid} は許可対象 (prevPid or self)`);
+        }
       }
     } catch {
       logger.warn(`[LOCK] bot.lock が破損しています。上書きします。`);
