@@ -284,11 +284,12 @@ function message(text, refPath = '') {
 
 // ─── エラー種別 → 日本語翻訳 ───────────────────────────
 const ERROR_TYPE_TRANSLATION = {
-  TIMEOUT:    { label: '作業時間超過',     desc: 'AI がタスクを時間内に完了できませんでした。' },
-  AUTH:       { label: 'アクセス権問題',   desc: 'GitHub や外部サービスへのアクセスが拒否されました。' },
-  PERMISSION: { label: '操作禁止',         desc: '許可されていない操作が実行されようとしました。' },
-  SYNTAX:     { label: 'コード形式の問題', desc: '生成されたコードに文法エラーが含まれています。' },
-  UNKNOWN:    { label: '原因調査必要',     desc: '予期しない問題が発生しました。ログで詳細を確認してください。' },
+  TIMEOUT:    { label: '作業時間超過',         desc: 'AI がタスクを時間内に完了できませんでした。' },
+  AUTH:       { label: 'アクセス権問題',       desc: 'GitHub や外部サービスへのアクセスが拒否されました。' },
+  PERMISSION: { label: '操作禁止',             desc: '許可されていない操作が実行されようとしました。' },
+  SYNTAX:     { label: 'コード形式の問題',     desc: '生成されたコードに文法エラーが含まれています。' },
+  NETWORK:    { label: 'ネットワーク接続エラー', desc: '外部サービスへの接続に失敗しました。ネットワークまたは DNS を確認してください。' },
+  UNKNOWN:    { label: '原因調査必要',         desc: '予期しない問題が発生しました。ログで詳細を確認してください。' },
 };
 
 function translateErrorType(errorType) {
@@ -355,18 +356,24 @@ function formatTaskError({ taskId = '', errorType = 'UNKNOWN', maskedErrMsg = ''
     ? '認証情報を修正後、`!project run` または `!auto run 1` で再実行してください。'
     : errorType === 'SYNTAX'
     ? 'AI が次回実行時に修正タスクを自動生成します。'
+    : errorType === 'NETWORK'
+    ? 'ネットワーク回復後、`!project run` で再実行してください。'
     : '内容を確認してから手動で再実行してください。';
 
   const humanNeeded = (errorType === 'AUTH' || errorType === 'PERMISSION')
     ? '⚠️ **人間の対応が必要** — 認証情報を確認してください。'
     : errorType === 'TIMEOUT'
     ? 'AI が自動で対処します（次回実行時に小タスクへ分割）。'
+    : errorType === 'NETWORK'
+    ? '⚠️ **人間の確認推奨** — インターネット接続・DNS・VPN を確認してください。'
     : '状況を確認してから判断してください。';
 
   const nextCmd = errorType === 'AUTH' || errorType === 'PERMISSION'
     ? `\`!doctor\` → 認証情報を確認・修正 → \`!restart\``
     : errorType === 'TIMEOUT'
     ? `\`!task list\` → タスク分割状況を確認 → \`!project run\``
+    : errorType === 'NETWORK'
+    ? `\`!doctor\` → ネットワーク状態を確認 → \`!project run\` で再実行`
     : `\`!task list\` → タスク状況を確認 → \`!project run\` で再実行`;
 
   return (

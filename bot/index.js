@@ -5840,7 +5840,10 @@ async function handleYoutube(message, args) {
       );
     } catch (err) {
       logger.error(`!youtube status エラー: ${err.message}`);
-      await message.reply(`❌ ステータス取得失敗: ${err.message.slice(0, 200)}`);
+      const errMsg = err.message || '';
+      await message.reply(
+        `❌ **ステータス取得に失敗しました**\n\n${_classifyYtDiscordError(errMsg)}\n\n詳細: \`${errMsg.slice(0, 150)}\``
+      );
     }
     return;
   }

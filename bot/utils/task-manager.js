@@ -302,6 +302,7 @@ const ERROR_TYPE_PATTERNS = [
   { type: 'AUTH',       re: /authentication|unauthorized|api.?key|credential|token.*invalid|invalid.*token/i },
   { type: 'PERMISSION', re: /permission|denied|access.?denied|EACCES|EPERM|forbidden/i },
   { type: 'SYNTAX',     re: /SyntaxError|syntax.?error|parse.?error|unexpected.?token|invalid.?json/i },
+  { type: 'NETWORK',    re: /ENOTFOUND|ECONNREFUSED|ECONNRESET|network.?error|connection.?refused|connect.?timeout|getaddrinfo/i },
 ];
 
 function classifyErrorType(message) {
