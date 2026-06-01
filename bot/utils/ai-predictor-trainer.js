@@ -94,15 +94,20 @@ function _collectStats(historyFiles) {
         const type = t.type || 'IMPLEMENT';
         if (!stats[type]) {
           stats[type] = {
-            count: 0, totalWeight: 0, weightedSuccessSum: 0,
+            count: 0, totalWeight: 0,
+            weightedSuccessSum: 0, successTotalWeight: 0,  // reviewResult あり分のみ
             durWeightedSum: 0, durTotalWeight: 0, durCount: 0,
           };
         }
         const w = _recencyWeight(t);
-        stats[type].totalWeight        += w;
+        stats[type].totalWeight += w;
         stats[type].count++;
         totalTasks++;
-        if (_isFirstPassOk(t)) stats[type].weightedSuccessSum += w;
+        const passResult = _isFirstPassOk(t);
+        if (passResult !== null) {
+          stats[type].successTotalWeight += w;
+          if (passResult) stats[type].weightedSuccessSum += w;
+        }
         const dur = _computeDuration(t);
         if (dur !== null) {
           stats[type].durWeightedSum  += dur * w;
@@ -135,11 +140,12 @@ function _computeDuration(task) {
 // ─────────────────────────────────────────────────────
 // 内部: タスクの初回レビュー通過判定
 //
-// reviewResult が null（未レビュー）または '問題なし' を含む場合 = 通過
+// 戻り値: true=通過, false=要修正, null=未レビュー（ラベル不明）
 // '修正推奨' や '却下推奨' を含む場合 = 要修正
+// reviewResult がない場合は null を返し、呼び出し元でラベル集計から除外する。
 // ─────────────────────────────────────────────────────
 function _isFirstPassOk(task) {
-  if (!task.reviewResult) return true; // レビューなし = 完了 = 通過とみなす
+  if (!task.reviewResult) return null;  // 未レビュー = ラベル不明
   const r = String(task.reviewResult);
   if (r.includes('修正推奨') || r.includes('却下推奨')) return false;
   return true;
@@ -221,9 +227,9 @@ function train() {
   const typeReport    = {};
 
   for (const [type, s] of Object.entries(stats)) {
-    // ── 成功確率補正 ──
-    if (s.count >= MIN_SAMPLES) {
-      const actualRate    = (s.weightedSuccessSum / s.totalWeight) * 100;
+    // ── 成功確率補正（reviewResult ありのタスクのみ使用）──
+    if (s.count >= MIN_SAMPLES && s.successTotalWeight > 0) {
+      const actualRate    = (s.weightedSuccessSum / s.successTotalWeight) * 100;
       const baseRate      = TYPE_BASE_SUCCESS[type] || 75;
       const curAdj        = current.typeSuccessAdjustments[type] || 0;
       const targetAdj     = actualRate - baseRate;
@@ -265,9 +271,10 @@ function train() {
     }
 
     typeReport[type] = {
-      samples:     s.count,
-      timeSamples: s.durCount,
-      successAdj:  newSuccessAdj[type] ?? 0,
+      samples:        s.count,
+      reviewedSamples: Math.round(s.successTotalWeight),  // レビュー済みタスク重み合計
+      timeSamples:    s.durCount,
+      successAdj:     newSuccessAdj[type] ?? 0,
       timeMult,
     };
   }
@@ -385,8 +392,9 @@ function trainIncremental() {
   const typeReport    = {};
 
   for (const [type, s] of Object.entries(stats)) {
-    if (s.count >= MIN_SAMPLES) {
-      const actualRate    = (s.weightedSuccessSum / s.totalWeight) * 100;
+    // ── 成功確率補正（reviewResult ありのタスクのみ使用）──
+    if (s.count >= MIN_SAMPLES && s.successTotalWeight > 0) {
+      const actualRate    = (s.weightedSuccessSum / s.successTotalWeight) * 100;
       const baseRate      = TYPE_BASE_SUCCESS[type] || 75;
       const curAdj        = current.typeSuccessAdjustments[type] || 0;
       const targetAdj     = actualRate - baseRate;
@@ -423,9 +431,10 @@ function trainIncremental() {
     }
 
     typeReport[type] = {
-      samples:     s.count,
-      timeSamples: s.durCount,
-      successAdj:  newSuccessAdj[type] ?? 0,
+      samples:         s.count,
+      reviewedSamples: Math.round(s.successTotalWeight),
+      timeSamples:     s.durCount,
+      successAdj:      newSuccessAdj[type] ?? 0,
       timeMult,
     };
   }

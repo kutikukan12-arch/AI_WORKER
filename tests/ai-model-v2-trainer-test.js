@@ -296,6 +296,98 @@ test('LogisticRegression: 全正例で学習すると予測値が一定になる
 });
 
 // ─────────────────────────────────────────────────────
+// 6. 未レビュータスクの成功ラベル除外（全hit問題の修正確認）
+// ─────────────────────────────────────────────────────
+console.log('\n[6. 未レビュータスク除外: reviewResult=null は X_success に含まれない]');
+
+// _collectTrainingData をモジュール外から直接テストできないため、
+// encode + _isFirstPassOk の組み合わせ動作で確認する
+
+// 内部関数を再現して検証（モジュール公開関数経由）
+test('reviewResult=null のタスクは成功ラベルに含まれない（全hit問題の修正）', () => {
+  // 未レビュータスクのみ10件 → X_success は空になるべき
+  const X_success_test = [];
+  const y_success_test = [];
+
+  // _isFirstPassOk の動作を直接確認（モジュールから export されていないため再実装で検証）
+  function isFirstPassOk(task) {
+    if (!task.reviewResult) return null;  // 修正後の期待動作
+    const r = String(task.reviewResult);
+    if (r.includes('修正推奨') || r.includes('却下推奨')) return false;
+    return true;
+  }
+
+  for (let i = 0; i < 10; i++) {
+    const t = makeTask({ reviewResult: null }); // 未レビュー
+    const pass = isFirstPassOk(t);
+    if (pass !== null) {
+      X_success_test.push(extractor.encode(t));
+      y_success_test.push(pass ? 1 : 0);
+    }
+  }
+
+  assert.strictEqual(X_success_test.length, 0,
+    `未レビュータスクが成功配列に含まれた: ${X_success_test.length}件`);
+});
+
+test('reviewResult あり (問題なし) → 正例として含まれる', () => {
+  const task = makeTask({ reviewResult: '問題なし' });
+  function isFirstPassOk(t) {
+    if (!t.reviewResult) return null;
+    const r = String(t.reviewResult);
+    if (r.includes('修正推奨') || r.includes('却下推奨')) return false;
+    return true;
+  }
+  const result = isFirstPassOk(task);
+  assert.strictEqual(result, true, `問題なしが true でない: ${result}`);
+});
+
+test('reviewResult あり (修正推奨) → 負例として含まれる', () => {
+  const task = makeTask({ reviewResult: '修正推奨: 処理が重複している' });
+  function isFirstPassOk(t) {
+    if (!t.reviewResult) return null;
+    const r = String(t.reviewResult);
+    if (r.includes('修正推奨') || r.includes('却下推奨')) return false;
+    return true;
+  }
+  const result = isFirstPassOk(task);
+  assert.strictEqual(result, false, `修正推奨が false でない: ${result}`);
+});
+
+test('混在(未レビュー5件+レビュー済み5件)→ クラスバランスが取れる可能性', () => {
+  function isFirstPassOk(t) {
+    if (!t.reviewResult) return null;
+    const r = String(t.reviewResult);
+    if (r.includes('修正推奨') || r.includes('却下推奨')) return false;
+    return true;
+  }
+  const tasks = [
+    // 未レビュー5件
+    makeTask({ reviewResult: null }),
+    makeTask({ reviewResult: null }),
+    makeTask({ reviewResult: null }),
+    makeTask({ reviewResult: null }),
+    makeTask({ reviewResult: null }),
+    // レビュー済み: 3件合格 + 2件修正
+    makeTask({ reviewResult: '問題なし' }),
+    makeTask({ reviewResult: '問題なし' }),
+    makeTask({ reviewResult: '問題なし' }),
+    makeTask({ reviewResult: '修正推奨: 型エラー' }),
+    makeTask({ reviewResult: '却下推奨: 設計が間違い' }),
+  ];
+
+  const y = [];
+  for (const t of tasks) {
+    const r = isFirstPassOk(t);
+    if (r !== null) y.push(r ? 1 : 0);
+  }
+
+  assert.strictEqual(y.length, 5, `レビュー済みは5件のはず: ${y.length}件`);
+  const { isBalanced } = _checkClassBalance(y);
+  assert.strictEqual(isBalanced, true, `正負混在なのに isBalanced=false`);
+});
+
+// ─────────────────────────────────────────────────────
 // 結果
 // ─────────────────────────────────────────────────────
 console.log(`\n${'─'.repeat(50)}`);

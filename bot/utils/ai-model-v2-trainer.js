@@ -54,9 +54,13 @@ function _checkClassBalance(y) {
 
 // ─────────────────────────────────────────────────────
 // 内部: タスクの初回レビュー通過判定（v1 trainer と同じロジック）
+//
+// 戻り値: true=通過, false=要修正, null=未レビュー（ラベル不明 — 学習から除外）
+// reviewResult がないタスクを正例として扱うと全サンプルが単一クラスになり
+// LogisticRegression が判別不能になるため、null で除外する。
 // ─────────────────────────────────────────────────────
 function _isFirstPassOk(task) {
-  if (!task.reviewResult) return true;
+  if (!task.reviewResult) return null;  // 未レビュー = ラベル不明
   const r = String(task.reviewResult);
   if (r.includes('修正推奨') || r.includes('却下推奨')) return false;
   return true;
@@ -112,9 +116,13 @@ function _collectTrainingData(historyFiles) {
         totalTasks++;
         const vec = encode(t);
 
-        // 成功率ラベル（全タスク対象）
-        X_success.push(vec);
-        y_success.push(_isFirstPassOk(t) ? 1 : 0);
+        // 成功率ラベル（reviewResult が明示的にある場合のみ）
+        // null=未レビューは単一クラス偏りを防ぐため除外する
+        const passResult = _isFirstPassOk(t);
+        if (passResult !== null) {
+          X_success.push(vec);
+          y_success.push(passResult ? 1 : 0);
+        }
 
         // 時間ラベル（実測値がある場合のみ）
         const dur = _computeDuration(t);
