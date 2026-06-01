@@ -24,8 +24,10 @@ const { spawn, execFileSync } = require('child_process');
 const fs   = require('fs');
 const path = require('path');
 const logger = require('./logger');
+const costTracker = require('./cost-tracker');
 
 // タイムアウト設定（環境変数から取得、デフォルト5分）
+// 呼び出し側が options.timeoutMs を渡せばタスクサイズ別に上書き可能。
 const TIMEOUT_MS = (parseInt(process.env.TASK_TIMEOUT_SECONDS) || 300) * 1000;
 
 // ─────────────────────────────────────────────────────
@@ -99,10 +101,16 @@ function stripAnsi(str) {
 //   projectRoot   - Claude Code の cwd（省略時は workspacePath）
 //                   AI_WORKER ルートを渡すと本体ファイルを編集可能になる
 //
-// 戻り値: Promise<{ output: string, duration: number, exitCode: number }>
+//   options       - { timeoutMs }（省略時は TIMEOUT_MS）
+//                   タスクサイズ別にタイムアウトを変えたい場合に使用
+//
+// 戻り値: Promise<{ output, duration, exitCode, costUsd, numTurns }>
+//   costUsd  - 当該実行の総コスト($)。取得できなければ null
+//   numTurns - モデルの応答ターン数。取得できなければ null
 // ─────────────────────────────────────────────────────
-async function run(prompt, workspacePath, projectRoot = null) {
+async function run(prompt, workspacePath, projectRoot = null, options = {}) {
   const startTime = Date.now();
+  const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : TIMEOUT_MS;
 
   // projectRoot が指定されていれば AI_WORKER ルートを cwd にする
   // 未指定なら従来どおり workspacePath（後方互換）
@@ -120,6 +128,7 @@ async function run(prompt, workspacePath, projectRoot = null) {
     const args = [
       '-p',                             // 非インタラクティブモード（必須）
       prompt,                           // Claude への指示
+      '--output-format', 'json',        // 結果+コスト(total_cost_usd)をJSONで取得
       '--dangerously-skip-permissions', // 自動実行用（Bot運用では必要）
       '--allowedTools', 'Read,Write,Edit,Bash', // 許可するツール
     ];
@@ -155,22 +164,49 @@ async function run(prompt, workspacePath, projectRoot = null) {
     // タイムアウト処理（指定時間内に完了しない場合は強制終了）
     const timeoutTimer = setTimeout(() => {
       proc.kill('SIGTERM');
-      const minutes = Math.floor(TIMEOUT_MS / 60000);
+      const minutes = Math.floor(timeoutMs / 60000);
       reject(new Error(
         `⏱️ タイムアウト: ${minutes}分以内に完了しませんでした\n` +
         `タスクが複雑すぎる可能性があります。指示を分割してお試しください。`
       ));
-    }, TIMEOUT_MS);
+    }, timeoutMs);
 
     // プロセス終了時の処理
     proc.on('close', (exitCode) => {
       clearTimeout(timeoutTimer);
 
       const duration = Math.floor((Date.now() - startTime) / 1000);
-      const output = stripAnsi(stdout).trim();
+      const rawOutput = stripAnsi(stdout).trim();
       const errorText = stripAnsi(stderr).trim();
 
-      logger.info(`Claude Code 終了 | 終了コード: ${exitCode} | 実行時間: ${duration}秒`);
+      // --output-format json の結果をパースして本文とコストを取り出す。
+      // パースに失敗した場合は生出力をそのまま本文として使う（後方互換）。
+      let output  = rawOutput;
+      let costUsd = null;
+      let numTurns = null;
+      try {
+        const parsed = JSON.parse(rawOutput);
+        if (parsed && typeof parsed === 'object') {
+          if (typeof parsed.result === 'string') output = parsed.result.trim();
+          if (typeof parsed.total_cost_usd === 'number') costUsd = parsed.total_cost_usd;
+          if (typeof parsed.num_turns === 'number') numTurns = parsed.num_turns;
+        }
+      } catch { /* JSONでない＝旧形式/エラー出力。rawOutput をそのまま使う */ }
+
+      logger.info(
+        `Claude Code 終了 | 終了コード: ${exitCode} | 実行時間: ${duration}秒` +
+        (costUsd != null ? ` | 💰$${costUsd.toFixed(4)} | ターン:${numTurns ?? '?'}` : '')
+      );
+
+      // コストを日次台帳に記録（workspace名から taskId を推定）
+      if (costUsd != null) {
+        costTracker.record({
+          taskId:      path.basename(workspacePath),
+          costUsd,
+          durationSec: duration,
+          numTurns,
+        });
+      }
 
       if (exitCode === 0 || (exitCode !== 0 && output)) {
         // 正常終了、または出力がある場合は成功として扱う
@@ -178,6 +214,8 @@ async function run(prompt, workspacePath, projectRoot = null) {
           output: output || '（出力なし）',
           duration,
           exitCode,
+          costUsd,
+          numTurns,
         });
       } else {
         // 出力がなくエラーの場合

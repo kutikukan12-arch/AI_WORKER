@@ -14,6 +14,9 @@ const MODEL_FILE    = path.join(__dirname, '..', '..', 'data', 'youtube-model.js
 const MIN_ML_SAMPLES = 20;
 const MAX_ML_WEIGHT  = 0.7;  // ML の最大混合比率（残りはルールベース）
 
+// 信頼度ごとの確率レンジ幅（仕様書 §11 スコア設計）
+const CONFIDENCE_INTERVALS = { high: 0.30, medium: 0.60, low: 1.00 };
+
 // ── 軽量ロジスティック回帰（全バッチ SGD） ─────────────────
 
 function _sigmoid(x) {
@@ -77,6 +80,38 @@ function _ruleScore(video) {
   return { score, buzzRatio };
 }
 
+// ── 再生数レンジ推定 ──────────────────────────────────────
+
+// rawProbability (0..1) と confidence から再生数レンジ { low, median, high } を算出。
+// subscriberCount が未知の場合は null を返す（データ不足）。
+function _estimateViewRange(video, rawProbability, confidence) {
+  const subs = video.subscriberCount || 0;
+  if (!subs) return null;
+
+  // rawProbability → expectedBuzzRatio（_ruleScore 線形補間の逆算）
+  // ruleScore = 0.1 + (ratio - MISS) / (HIT - MISS) * 0.8
+  // → ratio = (p - 0.1) / 0.8 * (HIT - MISS) + MISS
+  const p = Math.max(0.1, Math.min(0.9, rawProbability));
+  const expectedBuzzRatio = (p - 0.1) / 0.8 * (HIT_THRESHOLD - MISS_THRESHOLD) + MISS_THRESHOLD;
+  const medianViews = Math.max(0, Math.round(subs * expectedBuzzRatio));
+
+  const ci = CONFIDENCE_INTERVALS[confidence] ?? 1.00;
+  return {
+    low:    Math.max(0, Math.round(medianViews * (1 - ci))),
+    median: medianViews,
+    high:   Math.round(medianViews * (1 + ci)),
+  };
+}
+
+// ジャンル推定中央値（HIT/MISS 中点 buzz_ratio を基準とした簡易ベンチマーク）
+function _estimateBenchmark(video) {
+  const subs = video.subscriberCount || 0;
+  if (!subs) return null;
+
+  const genreMedian = Math.round(subs * (HIT_THRESHOLD + MISS_THRESHOLD) / 2);
+  return { genreMedian };
+}
+
 // ── 予測 API ─────────────────────────────────────────────
 
 // video: { viewCount, likeCount, commentCount, title, description,
@@ -107,6 +142,9 @@ function predict(video) {
   const label = probability >= 0.6 ? 'hit' : probability <= 0.4 ? 'miss' : 'unknown';
   const confidence = mlSamples >= MIN_ML_SAMPLES ? 'medium' : 'low';
 
+  const viewRange = _estimateViewRange(video, probability, confidence);
+  const benchmark = _estimateBenchmark(video);
+
   logger.debug(
     `[YouTubePredictor] ${video.videoId || '?'} ` +
     `p=${probability.toFixed(3)} label=${label} buzz=${buzzRatio?.toFixed(2) ?? 'n/a'}`
@@ -119,6 +157,8 @@ function predict(video) {
     buzzRatio,
     usedML:    mlSamples >= MIN_ML_SAMPLES,
     mlSamples,
+    viewRange,
+    benchmark,
   };
 }
 
@@ -174,15 +214,51 @@ function getModelStatus() {
 
 // ── Discord 表示用サマリー ─────────────────────────────────
 
+const LABEL_JP = { hit: '伸びやすい', miss: '伸びにくい', unknown: '判定保留' };
+const CONF_JP  = { high: '高', medium: '中', low: '低（参考値）' };
+
 function buildSummary(video, result) {
-  const pEmoji = result.probability >= 60 ? '🟢' : result.probability <= 40 ? '🔴' : '🟡';
+  const pEmoji  = result.probability >= 60 ? '🟢' : result.probability <= 40 ? '🔴' : '🟡';
+  const fmt     = n => n >= 10000 ? `${(n / 10000).toFixed(1)}万` : `${n}`;
+  const labelJp = LABEL_JP[result.label] ?? result.label;
+  const confJp  = CONF_JP[result.confidence]  ?? result.confidence;
   const lines  = [
     `🎬 **YouTube ヒット予測**`,
     ``,
-    `${pEmoji} **確率:** ${result.probability}%  \`${result.label}\`  (信頼度: ${result.confidence})`,
+    `${pEmoji} **確率:** ${result.probability}%  \`${result.label}\`（${labelJp}）  (信頼度: ${result.confidence}／${confJp})`,
   ];
+
+  // 予測再生数レンジ
+  if (result.viewRange) {
+    const { low, median, high } = result.viewRange;
+    lines.push(``);
+    lines.push(`📊 **予測再生数レンジ** (7日間目安)`);
+    lines.push(`  LOW    ${fmt(low)}回`);
+    lines.push(`  MEDIAN ${fmt(median)}回 ← 中央値予測`);
+    lines.push(`  HIGH   ${fmt(high)}回`);
+    lines.push(`  ※ 統計的確率レンジ（確定値ではなく見込みによる予測）`);
+  } else {
+    lines.push(``);
+    lines.push(`📊 **予測再生数レンジ:** 未確定（チャンネル登録者数の情報が必要です）`);
+  }
+
+  // 比較ベンチマーク
+  if (result.benchmark) {
+    const { genreMedian } = result.benchmark;
+    lines.push(``);
+    lines.push(`📈 **比較ベンチマーク（類似チャンネル推定中央値）**`);
+    lines.push(`  同ジャンル推定中央値: ${fmt(genreMedian)}回`);
+    if (result.viewRange) {
+      const diff  = result.viewRange.median - genreMedian;
+      const sign  = diff >= 0 ? '+' : '-';
+      const pct   = Math.round(Math.abs(diff) / genreMedian * 100);
+      const label = diff >= 0 ? '上回る' : '下回る';
+      lines.push(`  あなたの予測中央値:   ${fmt(result.viewRange.median)}回 (中央値比 ${sign}${pct}% ${label}見込み)`);
+    }
+  }
+
   if (result.buzzRatio !== null) {
-    lines.push(`📊 **buzz_ratio:** ${result.buzzRatio.toFixed(2)}  (hit>5.0 / miss<0.3)`);
+    lines.push(`📊 **buzz_ratio（登録者比の伸び）:** ${result.buzzRatio.toFixed(2)}  (目安: 5.0超→伸びやすい / 0.3未満→伸びにくい)`);
   }
   if (result.usedML) {
     lines.push(`🤖 ML モデル使用 (学習数: ${result.mlSamples}件)`);

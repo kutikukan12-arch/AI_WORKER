@@ -52,6 +52,59 @@ function maskSecret(str) {
 }
 
 // ─────────────────────────────────────────────────────
+// sleepSyncMs(ms) — execSync 系の同期処理内で使えるブロッキング待機
+// ─────────────────────────────────────────────────────
+function sleepSyncMs(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+// ─────────────────────────────────────────────────────
+// runGit(command, options, opts) — git コマンドの堅牢化ラッパ
+//
+// 背景: タスク実行用の Claude Code 子プロセスと push 処理が同一リポジトリの
+//   git を同時に触ると、一時的に .git/index.lock 競合や rev-parse/status/add の
+//   "Command failed" が発生する（手動では成功するが自動実行で散発）。
+//   これにより isGitRepo() が誤って false を返し、不要な git init が走るなど
+//   連鎖障害を起こしていた。
+//
+// 対策:
+//   1. 実行前に index.lock が残っていれば短時間待つ（他プロセスの git 完了待ち）
+//   2. 一時的失敗パターンに限り指数バックオフでリトライ
+// ─────────────────────────────────────────────────────
+function runGit(command, options = {}, { retries = 3, waitMs = 400 } = {}) {
+  const repoPath = options.cwd;
+  let lastErr;
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    // index.lock が残っていれば最大 waitMs*3 まで待機
+    if (repoPath) {
+      const lock = path.join(repoPath, '.git', 'index.lock');
+      let waited = 0;
+      while (fs.existsSync(lock) && waited < waitMs * 3) {
+        sleepSyncMs(150);
+        waited += 150;
+      }
+    }
+    try {
+      return execSync(command, options);
+    } catch (err) {
+      lastErr = err;
+      const transient =
+        /index\.lock|another git process|cannot lock ref|unable to create|Command failed/i
+          .test(err.message || '');
+      if (attempt < retries && transient) {
+        logger.warn(
+          `git 一時失敗 (${attempt}/${retries}) 再試行: ${command.split(' ').slice(0, 3).join(' ')}`
+        );
+        sleepSyncMs(waitMs * attempt);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
+}
+
+// ─────────────────────────────────────────────────────
 // 現在の git branch 名を取得（main/master 固定しない）
 // ─────────────────────────────────────────────────────
 function getCurrentBranch(repoPath) {
@@ -81,7 +134,8 @@ function checkGitAvailable() {
 // ─────────────────────────────────────────────────────
 function isGitRepo(dir) {
   try {
-    execSync('git rev-parse --git-dir', { cwd: dir, stdio: 'pipe' });
+    // rev-parse の一時失敗で false を返すと不要な git init が走るためリトライする
+    runGit('git rev-parse --git-dir', { cwd: dir, stdio: 'pipe' });
     return true;
   } catch {
     return false;
@@ -126,7 +180,7 @@ function ensureGitConfig(repoPath) {
 // ─────────────────────────────────────────────────────
 function getChangedFiles(repoPath) {
   try {
-    const raw = execSync('git status --porcelain', {
+    const raw = runGit('git status --porcelain', {
       cwd: repoPath,
       stdio: 'pipe',
       encoding: 'utf8',
@@ -273,7 +327,7 @@ async function commitAndPush(prompt, taskId) {
 
   // git add
   logger.info(`git add: ${changedFiles.length}件の変更をステージング`);
-  execSync('git add .', { cwd: repoPath, stdio: 'pipe' });
+  runGit('git add .', { cwd: repoPath, stdio: 'pipe' });
 
   // コミットメッセージを一時ファイル経由で渡す（日本語文字化け防止）
   const { subject, body } = generateCommitMessage(prompt, taskId, changedFiles);

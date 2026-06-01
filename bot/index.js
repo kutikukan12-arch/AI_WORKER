@@ -88,6 +88,7 @@ const aiPredictor  = require('./utils/ai-predictor');
 const YouTubeApiClient    = require('./utils/youtube-api-client');
 const youtubeCollector    = require('./utils/youtube-data-collector');
 const youtubePredictor    = require('./utils/youtube-predictor');
+const { GENRE_PRESETS, estimateQuotaForGenre } = require('./utils/youtube-seed-presets');
 
 // ─── Approval（承認管理）───
 const approvalManager = require('./utils/approval-manager');
@@ -599,7 +600,8 @@ async function handleHelp(message) {
       {
         name: '🎬 !youtube — YouTube 視聴予測 AI',
         value: [
-          '`!youtube predict <URL>` — 動画URLのヒット/ミス予測',
+          '`!youtube predict <URL>` — 投稿済み動画URLのヒット/ミス予測',
+          '`!youtube predict title="..." subs=5000` — 投稿前メタデータで予測',
           '`!youtube status` — APIクォータ・モデル状態確認',
           '`!youtube collect <genre> <query>` — シードデータ収集（管理者・API Key必須）',
           '`!youtube train` — 収集データでモデル訓練（管理者）',
@@ -3510,7 +3512,7 @@ async function executeClaudeTask({
       ? `\n---\n【DOCSタスク出力要件】\n必ず以下のMarkdownファイルを新規作成または更新すること:\ndocs/${taskId}.md\n\nファイルを作成せずに会話応答だけで終わることは禁止。`
       : '';
 
-    const augmentedPrompt  = prompt + explorationRules + docsOutputGuard;
+    const augmentedPrompt  = prompt + explorationRules + docsOutputGuard + taskManager.buildCommonLessons();
 
     // 探索対象をログに記録
     const explorationTargets = taskSizeResult.fileMatches.length > 0
@@ -5122,10 +5124,22 @@ async function handleTrain(message) {
 }
 
 // ─────────────────────────────────────────────────────
+// キーワード引数パーサー: key=value または key="quoted value"
+function _parseYtKwargs(str) {
+  const result = {};
+  const re = /(\w+)=(?:"([^"]*)"|((?:[^\s]+)))/g;
+  let m;
+  while ((m = re.exec(str)) !== null) {
+    result[m[1]] = m[2] !== undefined ? m[2] : m[3];
+  }
+  return result;
+}
+
 // !youtube コマンド — YouTube 視聴予測 AI
 //
 // サブコマンド:
 //   predict <URL>              動画URLの視聴ヒット予測
+//   predict title="..." ...    投稿前メタデータで予測
 //   status                     クォータ・モデル状態確認
 //   collect <genre> <query>    シードデータ収集（管理者のみ・API Key必須）
 //   train                      収集データでモデル訓練（管理者のみ）
@@ -5135,15 +5149,68 @@ async function handleYoutube(message, args) {
 
   // ── predict ──────────────────────────────────────────
   if (sub === 'predict') {
-    const urlOrId = args[1] || '';
-    if (!urlOrId) {
+    const urlOrId  = args[1] || '';
+    const argStr   = args.slice(1).join(' ');
+    const hasKwarg = argStr && /\w+=/.test(argStr);
+
+    if (!argStr) {
       await message.reply(
-        '**使い方**\n```\n!youtube predict <YouTube URL or videoId>\n```\n' +
-        '例: `!youtube predict https://www.youtube.com/watch?v=XXXXXXXXXXX`'
+        '**使い方**\n```\n' +
+        '!youtube predict <YouTube URL or videoId>\n' +
+        '!youtube predict title="タイトル" tags="タグ1,タグ2" sec=600 subs=5000\n' +
+        '```\n' +
+        '例（URL）: `!youtube predict https://www.youtube.com/watch?v=XXXXXXXXXXX`\n' +
+        '例（投稿前）: `!youtube predict title="新曲歌ってみた！" tags="歌ってみた,vtuber" sec=300 subs=10000`'
       );
       return;
     }
 
+    // ── 投稿前メタデータ入力モード ────────────────────
+    if (hasKwarg) {
+      const kw = _parseYtKwargs(argStr);
+      if (Object.keys(kw).length === 0) {
+        await message.reply(
+          '❌ **引数を解析できませんでした**\n' +
+          '入力例: `!youtube predict title="新曲歌ってみた！" tags="歌ってみた,vtuber" sec=300 subs=10000`'
+        );
+        return;
+      }
+
+      const tagsArr = kw.tags
+        ? kw.tags.split(',').map(t => t.trim()).filter(Boolean)
+        : [];
+      const video = {
+        videoId:         null,
+        viewCount:       0,
+        likeCount:       0,
+        commentCount:    0,
+        title:           kw.title || '',
+        description:     kw.desc  || '',
+        tags:            tagsArr,
+        duration:        kw.sec  ? parseInt(kw.sec,  10) : 0,
+        publishedAt:     null,
+        subscriberCount: kw.subs ? parseInt(kw.subs, 10) : 0,
+      };
+
+      const result  = youtubePredictor.predict(video);
+      const summary = youtubePredictor.buildSummary(video, result);
+      const durStr  = video.duration
+        ? `${Math.floor(video.duration / 60)}分${video.duration % 60}秒`
+        : '未指定';
+
+      await message.reply(
+        summary + '\n\n' +
+        `📝 **投稿前予測モード** (再生数・エンゲージメントなし)\n` +
+        `🏷️ タイトル: ${video.title || '（未入力）'}\n` +
+        `🏷️ タグ: ${tagsArr.length}個  ` +
+        `⏱️ 長さ: ${durStr}  ` +
+        `👥 登録者: ${video.subscriberCount.toLocaleString()}` +
+        (kw.genre ? `\n🎮 ジャンル: \`${kw.genre}\`` : '')
+      );
+      return;
+    }
+
+    // ── URL / videoId モード（従来処理） ──────────────
     const videoIdMatch = urlOrId.match(/(?:v=|youtu\.be\/|embed\/)([A-Za-z0-9_-]{11})/);
     const videoId      = videoIdMatch ? videoIdMatch[1] : urlOrId;
 
@@ -5204,9 +5271,11 @@ async function handleYoutube(message, args) {
         : { used: 0, date: '(API Key 未設定)' };
 
       const keyStatus   = YOUTUBE_API_KEY ? '✅ 設定済み' : '❌ 未設定';
+      const mlStatus    = modelStatus.trained && modelStatus.sampleCount >= 20
+        ? `🤖 ML有効 (usedML=true)` : `📏 ルールベース (MLデータ不足)`;
       const modelLine   = modelStatus.trained
-        ? `✅ 訓練済み (${modelStatus.sampleCount}件: hit=${modelStatus.hitCount} miss=${modelStatus.missCount})`
-        : '⭕ 未訓練（`!youtube collect` でデータを収集してください）';
+        ? `✅ 訓練済み (${modelStatus.sampleCount}件: hit=${modelStatus.hitCount} miss=${modelStatus.missCount})  ${mlStatus}`
+        : '⭕ 未訓練（シードデータを収集してください）';
 
       await message.reply(
         `📊 **YouTube 予測 AI ステータス**\n\n` +
@@ -5215,9 +5284,11 @@ async function handleYoutube(message, args) {
         `🤖 モデル: ${modelLine}\n\n` +
         `次のステップ:\n` +
         (YOUTUBE_API_KEY
-          ? `\`!youtube collect <genre> <query>\` — データ収集\n` +
+          ? `\`!youtube bulk-collect <genre>\` — 数百件一括収集（推奨）\n` +
+            `\`!youtube collect <genre> <query>\` — 1クエリ収集\n` +
             `\`!youtube train\` — モデル訓練\n` +
-            `\`!youtube predict <URL>\` — 予測`
+            `\`!youtube predict <URL>\` — 予測\n\n` +
+            `利用可能ジャンル: ${Object.keys(GENRE_PRESETS).join(', ')}`
           : `.env に \`YOUTUBE_API_KEY=\` を設定してください`)
       );
     } catch (err) {
@@ -5262,7 +5333,7 @@ async function handleYoutube(message, args) {
 
       const hitChannelIds = [...new Set(hits.map(v => v.channelId).filter(Boolean))];
       const misses = await youtubeCollector.collectMissFromChannels(
-        ytClient, hitChannelIds, { maxChannels: 5, limitPerChannel: 20 }
+        ytClient, hitChannelIds, { maxChannels: 10, limitPerChannel: 30 }
       );
 
       youtubeCollector.saveSeedData(genre, hits, misses);
@@ -5277,6 +5348,96 @@ async function handleYoutube(message, args) {
       );
     } catch (err) {
       logger.error(`!youtube collect エラー: ${err.message}`);
+      await processingMsg.edit(`❌ **収集に失敗しました**\n${err.message.slice(0, 300)}`);
+    }
+    return;
+  }
+
+  // ── bulk-collect（管理者のみ）───────────────────────
+  // プリセットに登録された複数クエリを順番に実行して数百件規模のシードを収集
+  if (sub === 'bulk-collect') {
+    if (DISCORD_OWNER_ID && message.author.id !== DISCORD_OWNER_ID) {
+      await message.reply('管理者専用コマンドです');
+      return;
+    }
+    if (!YOUTUBE_API_KEY) {
+      await message.reply('❌ `YOUTUBE_API_KEY` が未設定です');
+      return;
+    }
+
+    const genreKey = args[1] || '';
+    if (!genreKey) {
+      const genreList = Object.entries(GENRE_PRESETS)
+        .map(([k, p]) => `\`${k}\` (${p.label})`)
+        .join('\n');
+      await message.reply(
+        '**使い方**\n```\n!youtube bulk-collect <genre>\n```\n\n' +
+        '**利用可能なジャンル:**\n' + genreList + '\n\n' +
+        '各ジャンルで複数クエリを自動実行し、数百件規模のシードを収集します。\n' +
+        '`!youtube collect <genre> <query>` の一括版です。'
+      );
+      return;
+    }
+
+    const preset = GENRE_PRESETS[genreKey];
+    if (!preset) {
+      const keys = Object.keys(GENRE_PRESETS).join(', ');
+      await message.reply(`❌ 未知のジャンル: \`${genreKey}\`\n利用可能: ${keys}`);
+      return;
+    }
+
+    const estimatedUnits = estimateQuotaForGenre(preset);
+    const processingMsg  = await message.reply(
+      `⏳ **一括シードデータ収集中...**\n` +
+      `ジャンル: \`${genreKey}\` (${preset.label})\n` +
+      `クエリ: ${preset.queries.length}件 × hit${preset.hitLimitPerQuery}件 + miss収集\n` +
+      `推定クォータ: ≈${estimatedUnits} units\n` +
+      `（完了まで数分かかります）`
+    );
+
+    try {
+      const ytClient = new YouTubeApiClient(YOUTUBE_API_KEY);
+      const allHits  = [];
+      const allMissChIds = [];
+      const queryResults = [];
+
+      for (let i = 0; i < preset.queries.length; i++) {
+        const query = preset.queries[i];
+        try {
+          const hits = await youtubeCollector.collectHitVideos(ytClient, query, {
+            limit: preset.hitLimitPerQuery,
+          });
+          allHits.push(...hits);
+          for (const h of hits) {
+            if (h.channelId && !allMissChIds.includes(h.channelId)) {
+              allMissChIds.push(h.channelId);
+            }
+          }
+          queryResults.push(`[${i + 1}] "${query}" → hit ${hits.length}件`);
+        } catch (qErr) {
+          queryResults.push(`[${i + 1}] "${query}" → ⚠ ${qErr.message.slice(0, 60)}`);
+        }
+      }
+
+      const misses = await youtubeCollector.collectMissFromChannels(
+        ytClient, allMissChIds,
+        { maxChannels: preset.missChannelsMax, limitPerChannel: preset.missPerChannel }
+      );
+
+      const saved = youtubeCollector.saveSeedData(genreKey, allHits, misses);
+      const quota = ytClient.getQuotaStatus();
+
+      await processingMsg.edit(
+        `✅ **一括収集完了**\n\n` +
+        `ジャンル: \`${genreKey}\` (${preset.label})\n\n` +
+        `**クエリ結果:**\n${queryResults.join('\n')}\n\n` +
+        `**累計保存:**\n` +
+        `🟢 hit: ${saved.hits.length}件  🔴 miss: ${saved.misses.length}件\n` +
+        `📡 クォータ消費: ${quota.used} / 10,000 units\n\n` +
+        `次のステップ: \`!youtube train\` でモデルを訓練してください`
+      );
+    } catch (err) {
+      logger.error(`!youtube bulk-collect エラー: ${err.message}`);
       await processingMsg.edit(`❌ **収集に失敗しました**\n${err.message.slice(0, 300)}`);
     }
     return;
@@ -5322,11 +5483,20 @@ async function handleYoutube(message, args) {
   // ── ヘルプ ────────────────────────────────────────────
   await message.reply(
     '**YouTube 視聴予測 AI コマンド**\n```\n' +
-    '!youtube predict <URL>              → 動画ヒット予測\n' +
-    '!youtube status                     → クォータ・モデル状態\n' +
-    '!youtube collect <genre> <query>    → シードデータ収集（管理者）\n' +
-    '!youtube train                      → モデル訓練（管理者）\n' +
+    '!youtube predict <URL>                      → 投稿済み動画のヒット予測\n' +
+    '!youtube predict title="..." tags="a,b"\n' +
+    '         sec=600 subs=5000 genre=vtuber     → 投稿前メタデータで予測\n' +
+    '!youtube status                             → クォータ・モデル状態\n' +
+    '!youtube collect <genre> <query>            → シードデータ収集（1クエリ）\n' +
+    '!youtube bulk-collect <genre>               → シードデータ一括収集（管理者）\n' +
+    '!youtube train                              → モデル訓練（管理者）\n' +
     '```\n' +
+    '**シード収集の流れ (MLを有効にするには)**\n' +
+    '1. `!youtube bulk-collect vtuber` — プリセットクエリで数百件収集\n' +
+    '2. `!youtube train` — シードデータでモデル訓練\n' +
+    '3. `!youtube status` — sampleCount と `usedML=true` を確認\n\n' +
+    '**投稿前予測の引数** (1つ以上指定)\n' +
+    '`title="..."` タイトル  `tags="a,b"` タグ  `sec=600` 長さ(秒)  `subs=5000` 登録者数  `genre=xxx` ジャンル\n\n' +
     '**予測の見方**\n' +
     '`hit` (確率60%以上) — 平均より5倍以上再生が付く可能性\n' +
     '`miss` (確率40%以下) — 再生数が登録者の0.3倍未満になる可能性\n' +

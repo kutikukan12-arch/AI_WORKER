@@ -826,6 +826,184 @@ describe('predict() — ML 混合精度', () => {
 });
 
 // ─────────────────────────────────────────────────────
+// encode() — title_caps_ratio の精密検証
+// ─────────────────────────────────────────────────────
+
+describe('encode() — title_caps_ratio の精密検証', () => {
+
+  test('TitleCase ("Hello World") → title_caps_ratio = 0.0（先頭大文字のみはカウントしない）', () => {
+    // "Hello" は /[A-Z]/ に一致するが 'Hello' !== 'HELLO' なので caps 単語ではない
+    const vec = encode(makeVideo({ title: 'Hello World' }));
+    assert.equal(vec[6], 0.0);
+  });
+
+  test('半数が全大文字 ("HELLO world") → title_caps_ratio = 0.5', () => {
+    const vec = encode(makeVideo({ title: 'HELLO world' }));
+    assert.ok(Math.abs(vec[6] - 0.5) < 0.001, `caps_ratio=${vec[6]} (期待: 0.5)`);
+  });
+
+  test('数字含む全大文字単語 ("ABC123") → caps として計上され title_caps_ratio = 1.0', () => {
+    // /[A-Z]/.test("ABC123") = true かつ "ABC123" === "ABC123".toUpperCase() → caps
+    const vec = encode(makeVideo({ title: 'ABC123' }));
+    assert.equal(vec[6], 1.0);
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// train() — all-miss 訓練
+// ─────────────────────────────────────────────────────
+
+describe('train() — all-miss 訓練', () => {
+
+  test('miss のみ 10件 → 訓練成功、hitCount=0, missCount=10', () => {
+    const samples = Array(10).fill(null).map(() => makeSample('miss'));
+    const result = train(samples);
+    assert.ok(result !== null, 'null が返された');
+    if (!result) return;
+    assert.equal(result.hitCount,    0);
+    assert.equal(result.missCount,   10);
+    assert.equal(result.sampleCount, 10);
+  });
+
+  test('all-miss 訓練後も weights の全要素が有限数', () => {
+    const samples = Array(10).fill(null).map(() => makeSample('miss'));
+    const result = train(samples);
+    if (!result) return;
+    for (let i = 0; i < result.weights.length; i++) {
+      assert.ok(isFinite(result.weights[i]), `weights[${i}] が有限数でない: ${result.weights[i]}`);
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// predict() — ルールベース線形補間の精密点 (1/4 · 3/4)
+// ─────────────────────────────────────────────────────
+
+describe('predict() — ルールベース線形補間の精密点', () => {
+  const MODEL_FILE = path.join(__dirname, '..', 'data', 'youtube-model.json');
+  const MODEL_BAK  = MODEL_FILE + '.test-bak6';
+
+  before(() => {
+    if (fs.existsSync(MODEL_FILE)) fs.renameSync(MODEL_FILE, MODEL_BAK);
+  });
+  after(() => {
+    if (fs.existsSync(MODEL_FILE)) fs.unlinkSync(MODEL_FILE);
+    if (fs.existsSync(MODEL_BAK)) fs.renameSync(MODEL_BAK, MODEL_FILE);
+  });
+
+  test('buzz_ratio = 1.475 (補間 1/4 点) → probability = 30', () => {
+    // score = 0.1 + (1.475-0.3)/(5.0-0.3)*0.8 = 0.1 + 1.175/4.7*0.8 = 0.1 + 0.25*0.8 = 0.30
+    const { probability } = predict(makeVideo({ viewCount: 1475, subscriberCount: 1000 }));
+    assert.equal(probability, 30, `probability=${probability} (期待: 30)`);
+  });
+
+  test('buzz_ratio = 3.825 (補間 3/4 点) → probability = 70', () => {
+    // score = 0.1 + (3.825-0.3)/(5.0-0.3)*0.8 = 0.1 + 3.525/4.7*0.8 = 0.1 + 0.75*0.8 = 0.70
+    const { probability } = predict(makeVideo({ viewCount: 3825, subscriberCount: 1000 }));
+    assert.equal(probability, 70, `probability=${probability} (期待: 70)`);
+  });
+
+  test('1/4 点 (probability=30) → label=miss', () => {
+    const { label } = predict(makeVideo({ viewCount: 1475, subscriberCount: 1000 }));
+    assert.equal(label, 'miss');
+  });
+
+  test('3/4 点 (probability=70) → label=hit', () => {
+    const { label } = predict(makeVideo({ viewCount: 3825, subscriberCount: 1000 }));
+    assert.equal(label, 'hit');
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// predict() — mlSamples の精密検証
+// ─────────────────────────────────────────────────────
+
+describe('predict() — mlSamples の精密検証', () => {
+  const MODEL_FILE = path.join(__dirname, '..', 'data', 'youtube-model.json');
+  const MODEL_BAK  = MODEL_FILE + '.test-bak7';
+
+  before(() => {
+    if (fs.existsSync(MODEL_FILE)) fs.renameSync(MODEL_FILE, MODEL_BAK);
+  });
+  after(() => {
+    if (fs.existsSync(MODEL_FILE)) fs.unlinkSync(MODEL_FILE);
+    if (fs.existsSync(MODEL_BAK)) fs.renameSync(MODEL_BAK, MODEL_FILE);
+  });
+
+  test('モデルなし → mlSamples = 0', () => {
+    assert.equal(predict(makeVideo()).mlSamples, 0);
+  });
+
+  test('30件訓練後 → mlSamples = 30', () => {
+    const samples = [
+      ...Array(15).fill(null).map(() => makeSample('hit',  { viewCount: 50000, subscriberCount: 1000 })),
+      ...Array(15).fill(null).map(() => makeSample('miss', { viewCount: 100,   subscriberCount: 1000 })),
+    ];
+    train(samples);
+    assert.equal(predict(makeVideo()).mlSamples, 30);
+  });
+
+  test('50件訓練後 → mlSamples = 50, usedML = true', () => {
+    const samples = [
+      ...Array(25).fill(null).map(() => makeSample('hit',  { viewCount: 50000, subscriberCount: 1000 })),
+      ...Array(25).fill(null).map(() => makeSample('miss', { viewCount: 100,   subscriberCount: 1000 })),
+    ];
+    train(samples);
+    const result = predict(makeVideo());
+    assert.equal(result.mlSamples, 50);
+    assert.equal(result.usedML,    true);
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// getModelStatus() — train 直後の整合性
+// ─────────────────────────────────────────────────────
+
+describe('getModelStatus() — train 直後の整合性', () => {
+  const MODEL_FILE = path.join(__dirname, '..', 'data', 'youtube-model.json');
+  const MODEL_BAK  = MODEL_FILE + '.test-bak8';
+
+  before(() => {
+    if (fs.existsSync(MODEL_FILE)) fs.renameSync(MODEL_FILE, MODEL_BAK);
+  });
+  after(() => {
+    if (fs.existsSync(MODEL_FILE)) fs.unlinkSync(MODEL_FILE);
+    if (fs.existsSync(MODEL_BAK)) fs.renameSync(MODEL_BAK, MODEL_FILE);
+  });
+
+  test('train 前 → trained=false', () => {
+    assert.equal(getModelStatus().trained, false);
+  });
+
+  test('train 後 → trained=true, hitCount/missCount が一致', () => {
+    const samples = [
+      ...Array(8).fill(null).map(() => makeSample('hit',  { viewCount: 50000, subscriberCount: 1000 })),
+      ...Array(7).fill(null).map(() => makeSample('miss', { viewCount: 100,   subscriberCount: 1000 })),
+    ];
+    train(samples);
+    const status = getModelStatus();
+    assert.equal(status.trained,     true);
+    assert.equal(status.sampleCount, 15);
+    assert.equal(status.hitCount,    8);
+    assert.equal(status.missCount,   7);
+  });
+
+  test('train 後の getModelStatus().sampleCount と predict().mlSamples が一致', () => {
+    const samples = [
+      ...Array(12).fill(null).map(() => makeSample('hit',  { viewCount: 50000, subscriberCount: 1000 })),
+      ...Array(8).fill(null).map(()  => makeSample('miss', { viewCount: 100,   subscriberCount: 1000 })),
+    ];
+    train(samples);
+    const { sampleCount } = getModelStatus();
+    const { mlSamples }   = predict(makeVideo());
+    assert.equal(
+      sampleCount, mlSamples,
+      `getModelStatus.sampleCount(${sampleCount}) ≠ predict.mlSamples(${mlSamples})`
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────
 // train() — 予測方向の整合性テスト
 // ─────────────────────────────────────────────────────
 
@@ -865,5 +1043,464 @@ describe('train() — 予測方向の整合性', () => {
     const missResult = predict(makeVideo({ viewCount: 100,   subscriberCount: 1000 }));
     assert.equal(hitResult.label,  'hit',  `hit動画のlabel=${hitResult.label}`);
     assert.equal(missResult.label, 'miss', `miss動画のlabel=${missResult.label}`);
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// train() — 最小有効サンプル数境界（ちょうど 10 件）
+// ─────────────────────────────────────────────────────
+
+describe('train() — 最小有効サンプル数境界（10件）', () => {
+
+  test('ちょうど 10 件 (hit:5 miss:5) → 訓練成功', () => {
+    const samples = [
+      ...Array(5).fill(null).map(() => makeSample('hit')),
+      ...Array(5).fill(null).map(() => makeSample('miss')),
+    ];
+    const result = train(samples);
+    assert.ok(result !== null, '10件ちょうどで null が返された');
+    assert.equal(result.sampleCount, 10);
+    assert.equal(result.hitCount,    5);
+    assert.equal(result.missCount,   5);
+  });
+
+  test('ちょうど 10 件 (hit のみ) → 訓練成功, hitCount=10', () => {
+    const result = train(Array(10).fill(null).map(() => makeSample('hit')));
+    assert.ok(result !== null, '10件(hit only)で null が返された');
+    if (!result) return;
+    assert.equal(result.hitCount,    10);
+    assert.equal(result.missCount,   0);
+    assert.equal(result.sampleCount, 10);
+  });
+
+  test('9件 + 無効ラベル 1件 = 有効 9件 → null (境界を超えない)', () => {
+    const samples = [
+      ...Array(9).fill(null).map(() => makeSample('hit')),
+      makeSample('unknown'),
+    ];
+    assert.equal(train(samples), null);
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// predict() — in-sample accuracy（精度検証）
+// ─────────────────────────────────────────────────────
+
+describe('predict() — in-sample accuracy（精度検証）', () => {
+  const MODEL_FILE = path.join(__dirname, '..', 'data', 'youtube-model.json');
+  const MODEL_BAK  = MODEL_FILE + '.test-bak9';
+
+  before(() => {
+    if (fs.existsSync(MODEL_FILE)) fs.renameSync(MODEL_FILE, MODEL_BAK);
+  });
+  after(() => {
+    if (fs.existsSync(MODEL_FILE)) fs.unlinkSync(MODEL_FILE);
+    if (fs.existsSync(MODEL_BAK)) fs.renameSync(MODEL_BAK, MODEL_FILE);
+  });
+
+  test('明確分離 30件学習後: in-sample accuracy >= 80%（モデル収束確認）', () => {
+    const hitVids  = Array(15).fill(null).map(() => makeVideo({ viewCount: 50000, subscriberCount: 1000 }));
+    const missVids = Array(15).fill(null).map(() => makeVideo({ viewCount: 100,   subscriberCount: 1000 }));
+
+    train([
+      ...hitVids.map(v  => ({ ...v, label: 'hit'  })),
+      ...missVids.map(v => ({ ...v, label: 'miss' })),
+    ]);
+
+    let correct = 0;
+    for (const v of hitVids)  { if (predict(v).label === 'hit')  correct++; }
+    for (const v of missVids) { if (predict(v).label === 'miss') correct++; }
+
+    const total    = hitVids.length + missVids.length;
+    const accuracy = correct / total;
+    assert.ok(
+      accuracy >= 0.8,
+      `in-sample accuracy = ${(accuracy * 100).toFixed(0)}% (${correct}/${total}) (期待: >= 80%)`
+    );
+  });
+
+  test('明確分離 20件学習後: hit動画→label=hit, miss動画→label=miss が 90% 以上', () => {
+    const hitVids  = Array(10).fill(null).map(() => makeVideo({ viewCount: 80000, subscriberCount: 1000 }));
+    const missVids = Array(10).fill(null).map(() => makeVideo({ viewCount: 50,    subscriberCount: 1000 }));
+
+    train([
+      ...hitVids.map(v  => ({ ...v, label: 'hit'  })),
+      ...missVids.map(v => ({ ...v, label: 'miss' })),
+    ]);
+
+    const hitCorrect  = hitVids.filter(v  => predict(v).label === 'hit').length;
+    const missCorrect = missVids.filter(v => predict(v).label === 'miss').length;
+    const accuracy    = (hitCorrect + missCorrect) / (hitVids.length + missVids.length);
+
+    assert.ok(
+      accuracy >= 0.9,
+      `accuracy=${(accuracy*100).toFixed(0)}% hit(${hitCorrect}/10) miss(${missCorrect}/10) (期待: >= 90%)`
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// predict() — 投稿前メタデータ入力（viewCount=0・URL なし）
+// ─────────────────────────────────────────────────────
+
+describe('predict() — 投稿前メタデータ入力', () => {
+  const MODEL_FILE = path.join(__dirname, '..', 'data', 'youtube-model.json');
+  const MODEL_BAK  = MODEL_FILE + '.test-bak-pre';
+
+  before(() => {
+    if (fs.existsSync(MODEL_FILE)) fs.renameSync(MODEL_FILE, MODEL_BAK);
+  });
+  after(() => {
+    if (fs.existsSync(MODEL_FILE)) fs.unlinkSync(MODEL_FILE);
+    if (fs.existsSync(MODEL_BAK)) fs.renameSync(MODEL_BAK, MODEL_FILE);
+  });
+
+  test('viewCount=0 で predict() がエラーなく結果を返す', () => {
+    const video = {
+      videoId: null, viewCount: 0, likeCount: 0, commentCount: 0,
+      title: '新曲歌ってみた！', description: '',
+      tags: ['歌ってみた', 'vtuber'],
+      duration: 300, publishedAt: null, subscriberCount: 10000,
+    };
+    assert.doesNotThrow(() => predict(video));
+  });
+
+  test('投稿前入力 → probability が 0〜100 の整数', () => {
+    const video = {
+      videoId: null, viewCount: 0, likeCount: 0, commentCount: 0,
+      title: 'テスト動画タイトル！', description: '',
+      tags: ['tag1', 'tag2'],
+      duration: 600, publishedAt: null, subscriberCount: 5000,
+    };
+    const { probability } = predict(video);
+    assert.ok(
+      Number.isInteger(probability) && probability >= 0 && probability <= 100,
+      `probability=${probability}`
+    );
+  });
+
+  test('投稿前入力 → label が hit / miss / unknown のいずれか', () => {
+    const video = {
+      videoId: null, viewCount: 0, likeCount: 0, commentCount: 0,
+      title: 'タイトル', tags: ['tag'], duration: 600, subscriberCount: 5000,
+    };
+    const { label } = predict(video);
+    assert.ok(['hit', 'miss', 'unknown'].includes(label), `不正な label: ${label}`);
+  });
+
+  test('viewCount=0, subs=0 → buzzRatio=null, probability=50', () => {
+    const video = {
+      viewCount: 0, likeCount: 0, commentCount: 0,
+      title: 'タイトル', tags: [], duration: 0, subscriberCount: 0,
+    };
+    const result = predict(video);
+    assert.equal(result.buzzRatio, null);
+    assert.equal(result.probability, 50);
+  });
+
+  test('viewCount=0, subs=1000 → buzz_ratio=0 → probability=10, label=miss', () => {
+    const video = {
+      viewCount: 0, likeCount: 0, commentCount: 0,
+      title: 'タイトル', tags: [], duration: 0, subscriberCount: 1000,
+    };
+    const result = predict(video);
+    assert.equal(result.probability, 10);
+    assert.equal(result.label, 'miss');
+  });
+
+  test('投稿前入力 → buildSummary() が文字列を返し "YouTube ヒット予測" を含む', () => {
+    const video = {
+      videoId: null, viewCount: 0, likeCount: 0, commentCount: 0,
+      title: '新曲！', tags: ['vtuber'], duration: 300, subscriberCount: 5000,
+    };
+    const result  = predict(video);
+    const summary = buildSummary(video, result);
+    assert.ok(typeof summary === 'string' && summary.length > 0);
+    assert.ok(summary.includes('YouTube ヒット予測'), 'ヘッダーが含まれない');
+  });
+
+  test('タグ多め・尺長め → encode() がエラーなく動作する', () => {
+    const video = {
+      videoId: null, viewCount: 0, likeCount: 0, commentCount: 0,
+      title: '長い動画タイトル！？🎬🎬🎬🎬🎬',
+      tags: Array(30).fill('tag'),
+      duration: 3600, publishedAt: null, subscriberCount: 100000,
+    };
+    assert.doesNotThrow(() => predict(video));
+    const { probability } = predict(video);
+    assert.ok(probability >= 0 && probability <= 100);
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// predict() / buildSummary() — 再生数レンジ表示 (AC確認)
+// ─────────────────────────────────────────────────────
+
+describe('predict() + buildSummary() — 再生数レンジ・ベンチマーク表示', () => {
+
+  describe('predict() 戻り値: viewRange フィールド', () => {
+    test('subscriberCount > 0 → viewRange が存在する', () => {
+      const result = predict(makeVideo({ subscriberCount: 1000 }));
+      assert.ok('viewRange' in result, 'viewRange フィールドがない');
+      assert.ok(result.viewRange !== null, 'viewRange が null');
+    });
+
+    test('viewRange は low / median / high を持つ', () => {
+      const { viewRange } = predict(makeVideo({ subscriberCount: 1000 }));
+      assert.ok('low'    in viewRange, 'low がない');
+      assert.ok('median' in viewRange, 'median がない');
+      assert.ok('high'   in viewRange, 'high がない');
+    });
+
+    test('viewRange.low <= viewRange.median <= viewRange.high', () => {
+      const { viewRange } = predict(makeVideo({ subscriberCount: 1000 }));
+      const { low, median, high } = viewRange;
+      assert.ok(low <= median, `low(${low}) > median(${median})`);
+      assert.ok(median <= high, `median(${median}) > high(${high})`);
+    });
+
+    test('viewRange の各値が 0 以上の整数', () => {
+      const { viewRange } = predict(makeVideo({ subscriberCount: 1000 }));
+      for (const [k, v] of Object.entries(viewRange)) {
+        assert.ok(Number.isInteger(v) && v >= 0, `viewRange.${k}=${v} が 0 以上の整数でない`);
+      }
+    });
+
+    test('subscriberCount = 0 → viewRange = null（データ不足）', () => {
+      const result = predict(makeVideo({ subscriberCount: 0 }));
+      assert.equal(result.viewRange, null);
+    });
+
+    test('hit 圏 (probability 高) の median が miss 圏より大きい', () => {
+      const hitResult  = predict(makeVideo({ viewCount: 10000, subscriberCount: 1000 }));
+      const missResult = predict(makeVideo({ viewCount: 100,   subscriberCount: 1000 }));
+      assert.ok(
+        hitResult.viewRange.median > missResult.viewRange.median,
+        `hit median(${hitResult.viewRange.median}) <= miss median(${missResult.viewRange.median})`
+      );
+    });
+  });
+
+  describe('predict() 戻り値: benchmark フィールド', () => {
+    test('subscriberCount > 0 → benchmark が存在する', () => {
+      const result = predict(makeVideo({ subscriberCount: 1000 }));
+      assert.ok('benchmark' in result, 'benchmark フィールドがない');
+      assert.ok(result.benchmark !== null, 'benchmark が null');
+    });
+
+    test('benchmark.genreMedian が 0 より大きい整数', () => {
+      const { benchmark } = predict(makeVideo({ subscriberCount: 1000 }));
+      assert.ok(Number.isInteger(benchmark.genreMedian) && benchmark.genreMedian > 0,
+        `genreMedian=${benchmark.genreMedian}`);
+    });
+
+    test('subscriberCount = 0 → benchmark = null', () => {
+      const result = predict(makeVideo({ subscriberCount: 0 }));
+      assert.equal(result.benchmark, null);
+    });
+
+    test('subscriberCount が大きいほど genreMedian が大きい', () => {
+      const small = predict(makeVideo({ subscriberCount: 1000 }));
+      const large = predict(makeVideo({ subscriberCount: 100000 }));
+      assert.ok(
+        large.benchmark.genreMedian > small.benchmark.genreMedian,
+        `large(${large.benchmark.genreMedian}) <= small(${small.benchmark.genreMedian})`
+      );
+    });
+  });
+
+  describe('buildSummary() — レンジ形式の出力確認', () => {
+    test('subscriberCount > 0 → "予測再生数レンジ" を含む', () => {
+      const video  = makeVideo({ subscriberCount: 1000 });
+      const result = predict(video);
+      assert.ok(buildSummary(video, result).includes('予測再生数レンジ'), '"予測再生数レンジ" がない');
+    });
+
+    test('subscriberCount > 0 → LOW / MEDIAN / HIGH のラベルを含む', () => {
+      const video   = makeVideo({ subscriberCount: 1000 });
+      const result  = predict(video);
+      const summary = buildSummary(video, result);
+      assert.ok(summary.includes('LOW'),    'LOW がない');
+      assert.ok(summary.includes('MEDIAN'), 'MEDIAN がない');
+      assert.ok(summary.includes('HIGH'),   'HIGH がない');
+    });
+
+    test('subscriberCount > 0 → "回" の単位を含む', () => {
+      const video  = makeVideo({ subscriberCount: 1000 });
+      const result = predict(video);
+      assert.ok(buildSummary(video, result).includes('回'), '単位 "回" がない');
+    });
+
+    test('subscriberCount = 0 → "未確定" を含む（データ不足の明示）', () => {
+      const video  = makeVideo({ subscriberCount: 0 });
+      const result = predict(video);
+      assert.ok(buildSummary(video, result).includes('未確定'), '"未確定" がない');
+    });
+
+    test('subscriberCount = 0 → LOW / MEDIAN / HIGH のラベルがない', () => {
+      const video   = makeVideo({ subscriberCount: 0 });
+      const result  = predict(video);
+      const summary = buildSummary(video, result);
+      assert.ok(!summary.includes('LOW'),    'subs=0 なのに LOW がある');
+      assert.ok(!summary.includes('MEDIAN'), 'subs=0 なのに MEDIAN がある');
+      assert.ok(!summary.includes('HIGH'),   'subs=0 なのに HIGH がある');
+    });
+
+    test('subscriberCount > 0 → "ベンチマーク" または "中央値" を含む', () => {
+      const video  = makeVideo({ subscriberCount: 1000 });
+      const result = predict(video);
+      const summary = buildSummary(video, result);
+      assert.ok(
+        summary.includes('ベンチマーク') || summary.includes('中央値'),
+        '"ベンチマーク" も "中央値" もない'
+      );
+    });
+
+    test('確率レンジ表現を維持 — "確率" または "レンジ" を含む', () => {
+      const video  = makeVideo({ subscriberCount: 1000 });
+      const result = predict(video);
+      const summary = buildSummary(video, result);
+      assert.ok(
+        summary.includes('確率') || summary.includes('レンジ'),
+        '"確率" も "レンジ" も含まれない'
+      );
+    });
+
+    test('断定表現ではなく確率レンジ表現 — "断定" という文字を含まない', () => {
+      const video  = makeVideo({ subscriberCount: 1000 });
+      const result = predict(video);
+      assert.ok(!buildSummary(video, result).includes('断定'), '"断定" が含まれている');
+    });
+
+    test('10万超えのチャンネル → 万単位フォーマット ("万") を含む', () => {
+      const video  = makeVideo({ viewCount: 500000, subscriberCount: 100000 });
+      const result = predict(video);
+      assert.ok(buildSummary(video, result).includes('万'), '"万" 単位が含まれない');
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// predict() — ML 混合比率: MAX_ML_WEIGHT 飽和の挙動確認
+// ─────────────────────────────────────────────────────
+
+describe('predict() — ML 混合比率: MAX_ML_WEIGHT 飽和', () => {
+  const MODEL_FILE = path.join(__dirname, '..', 'data', 'youtube-model.json');
+  const MODEL_BAK  = MODEL_FILE + '.test-bak10';
+
+  before(() => {
+    if (fs.existsSync(MODEL_FILE)) fs.renameSync(MODEL_FILE, MODEL_BAK);
+  });
+  after(() => {
+    if (fs.existsSync(MODEL_FILE)) fs.unlinkSync(MODEL_FILE);
+    if (fs.existsSync(MODEL_BAK)) fs.renameSync(MODEL_BAK, MODEL_FILE);
+  });
+
+  test('sampleCount=70 → usedML=true, mlSamples=70', () => {
+    const samples = [
+      ...Array(35).fill(null).map(() => makeSample('hit',  { viewCount: 50000, subscriberCount: 1000 })),
+      ...Array(35).fill(null).map(() => makeSample('miss', { viewCount: 100,   subscriberCount: 1000 })),
+    ];
+    train(samples);
+    const { usedML, mlSamples } = predict(makeVideo());
+    assert.equal(usedML,    true, `sampleCount=70 で usedML=false`);
+    assert.equal(mlSamples, 70);
+    // mlWeight = min(70/100, 0.7) = 0.7 → MAX_ML_WEIGHT に到達済み
+  });
+
+  test('[改善候補] sampleCount >= 70 で mlWeight が MAX_ML_WEIGHT(0.7) に飽和: 追加サンプルの ML 比率への効果なし', () => {
+    // mlWeight = min(sampleCount / 100, MAX_ML_WEIGHT=0.7)
+    // → sampleCount=70 で 0.7 に到達し、それ以上サンプルを増やしても ML 混合比率は不変
+    // 改善案: saturation_point を 200 前後に引き上げるか、MAX_ML_WEIGHT を 0.9 程度に拡大すべき
+    const make70  = [
+      ...Array(35).fill(null).map(() => makeSample('hit',  { viewCount: 50000, subscriberCount: 1000 })),
+      ...Array(35).fill(null).map(() => makeSample('miss', { viewCount: 100,   subscriberCount: 1000 })),
+    ];
+    const make100 = [
+      ...Array(50).fill(null).map(() => makeSample('hit',  { viewCount: 50000, subscriberCount: 1000 })),
+      ...Array(50).fill(null).map(() => makeSample('miss', { viewCount: 100,   subscriberCount: 1000 })),
+    ];
+
+    train(make70);
+    const { mlSamples: s70 } = predict(makeVideo());
+    train(make100);
+    const { mlSamples: s100 } = predict(makeVideo());
+
+    assert.equal(s70,  70);
+    assert.equal(s100, 100);
+    // mlWeight(70)=0.7 == mlWeight(100)=0.7 → 100件でも追加分の ML 比率貢献はゼロ
+    // これはドキュメント目的のテスト: 現状動作を確認しつつ改善余地を記録する
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// encode() — title_caps_ratio: 数字・記号を含む単語の挙動
+// ─────────────────────────────────────────────────────
+
+describe('encode() — title_caps_ratio: 数字・記号を含む単語の挙動', () => {
+
+  test('数字のみ ("123") → title_caps_ratio = 0.0 (/[A-Z]/ に不一致)', () => {
+    const vec = encode(makeVideo({ title: '123' }));
+    assert.equal(vec[6], 0.0);
+  });
+
+  test('数字と大文字混在 ("123 ABC") → title_caps_ratio = 0.5 (ABC のみ caps)', () => {
+    // "123" は /[A-Z]/ に不一致 → caps 扱いにならない
+    // "ABC" は /[A-Z]/ に一致 かつ toUpperCase() と同一 → caps
+    const vec = encode(makeVideo({ title: '123 ABC' }));
+    assert.ok(Math.abs(vec[6] - 0.5) < 0.001, `caps_ratio=${vec[6]} (期待: 0.5)`);
+  });
+
+  test('空白のみのタイトル ("   ") → title_caps_ratio = 0.0 (words.length=0)', () => {
+    const vec = encode(makeVideo({ title: '   ' }));
+    assert.equal(vec[6], 0.0);
+  });
+
+  test('単一大文字単語 ("A") → title_caps_ratio = 1.0', () => {
+    const vec = encode(makeVideo({ title: 'A' }));
+    assert.equal(vec[6], 1.0);
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// buildSummary() — usedML=true ブランチの確定テスト
+// ─────────────────────────────────────────────────────
+
+describe('buildSummary() — usedML=true ブランチ（20件学習後）', () => {
+  const MODEL_FILE = path.join(__dirname, '..', 'data', 'youtube-model.json');
+  const MODEL_BAK  = MODEL_FILE + '.test-bak11';
+
+  before(() => {
+    if (fs.existsSync(MODEL_FILE)) fs.renameSync(MODEL_FILE, MODEL_BAK);
+    // 20件学習で usedML=true を確定させる
+    train([
+      ...Array(10).fill(null).map(() => makeSample('hit',  { viewCount: 50000, subscriberCount: 1000 })),
+      ...Array(10).fill(null).map(() => makeSample('miss', { viewCount: 100,   subscriberCount: 1000 })),
+    ]);
+  });
+  after(() => {
+    if (fs.existsSync(MODEL_FILE)) fs.unlinkSync(MODEL_FILE);
+    if (fs.existsSync(MODEL_BAK)) fs.renameSync(MODEL_BAK, MODEL_FILE);
+  });
+
+  test('usedML=true → サマリーに "ML" が含まれる', () => {
+    const video  = makeVideo({ viewCount: 10000, subscriberCount: 1000 });
+    const result = predict(video);
+    assert.equal(result.usedML, true, `20件学習後に usedML=false`);
+    assert.ok(buildSummary(video, result).includes('ML'), 'ML の文字がサマリーにない');
+  });
+
+  test('usedML=true → "ML モデル使用" の行を含む', () => {
+    const video   = makeVideo({ viewCount: 10000, subscriberCount: 1000 });
+    const result  = predict(video);
+    assert.equal(result.usedML, true);
+    assert.ok(buildSummary(video, result).includes('ML モデル使用'), '"ML モデル使用" がサマリーにない');
+  });
+
+  test('usedML=true → 学習件数 (20) がサマリーに含まれる', () => {
+    const video   = makeVideo({ viewCount: 10000, subscriberCount: 1000 });
+    const result  = predict(video);
+    assert.equal(result.mlSamples, 20);
+    assert.ok(buildSummary(video, result).includes('20'), '学習数 20 がサマリーに含まれない');
   });
 });
