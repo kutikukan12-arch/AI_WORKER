@@ -65,3 +65,4 @@ Desktop.ini
 !.env.example
 data/workers.json
 data/quality-gates.json
+data/pending-plans.json

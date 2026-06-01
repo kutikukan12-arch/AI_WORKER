@@ -99,6 +99,9 @@ const autoPolicy         = require('./utils/auto-policy');
 
 // ─── Phase E-5b: Worker Role ───
 const workerRegistry  = require('./utils/worker-registry');
+
+// ─── !project refine: 保留計画管理 ───
+const pendingPlans = require('./utils/pending-plans');
 const companyManager  = require('./utils/company-manager');
 const qualityGate     = require('./utils/quality-gate');
 
@@ -2321,6 +2324,273 @@ async function handleMeeting(message, rawTopic) {
 // !research list / show <id> — 調査レポートの一覧・詳細表示
 //
 // ─────────────────────────────────────────────────────
+// !project refine — 不足機能分析 → タスク案生成 → 人間確認 → 一括登録
+//
+// サブコマンド:
+//   !project refine [projectId]          — 分析・提案生成（登録なし）
+//   !project refine approve [projectId]  — Owner のみ一括登録
+//   !project refine cancel [projectId]   — pending 破棄
+//   !project refine show [projectId]     — 提案再表示
+//
+// 安全条件:
+//   - approve は DISCORD_OWNER_ID のみ
+//   - status: pending → consumed（二重 approve 防止）
+//   - 最大 20件（超過分は「次回候補」表示）
+//   - auto-refine/auto-approve 禁止（コマンド起点のみ）
+//   - 各 prompt に security.checkPrompt() を適用
+// ─────────────────────────────────────────────────────
+async function handleProjectRefine(message, args) {
+  // args: ['refine', subSub?, projectId?]
+  const subSub   = args[1] || '';          // approve / cancel / show / '' (生成)
+  const pidArg   = args[2] || '';
+  const pid      = pidArg || projectManager.getCurrentProject(message.channelId) || 'default';
+  const project  = projectManager.getProject(pid);
+
+  if (!project) {
+    await message.reply(
+      `❌ プロジェクトが見つかりません: \`${pid}\`\n` +
+      `\`!project list\` で確認してください。`
+    ).catch(() => {});
+    return;
+  }
+
+  // ── !project refine approve ───────────────────────
+  if (subSub === 'approve') {
+    // ① Owner のみ
+    if (!DISCORD_OWNER_ID || message.author.id !== DISCORD_OWNER_ID) {
+      await message.reply('🚫 **!project refine approve は Owner のみ実行できます。**').catch(() => {});
+      return;
+    }
+
+    const plan = pendingPlans.getLatestPlan(pid);
+    if (!plan) {
+      await message.reply(
+        `⚠️ **${pid}** に pending な refine 計画がありません。\n` +
+        `先に \`!project refine ${pid}\` を実行してください。`
+      ).catch(() => {});
+      return;
+    }
+
+    // ② consumed チェック（二重 approve 防止）
+    if (plan.status === pendingPlans.PLAN_STATUS.CONSUMED) {
+      await message.reply(
+        `⚠️ この計画は既に登録済みです (consumed)。\n` +
+        `新しい提案を作成するには \`!project refine ${pid}\` を再実行してください。`
+      ).catch(() => {});
+      return;
+    }
+
+    const processingMsg = await message.reply(`⏳ **Refine Approve 中...**\n${plan.tasks.length}件を登録します。`).catch(() => null);
+
+    const registered = [];
+    const skipped    = [];
+
+    for (const t of plan.tasks) {
+      // 重複チェック（同一 prompt の未完了タスクがあればスキップ）
+      const existing = taskManager.listTasks().find(
+        x => x.projectId === pid &&
+             x.prompt === t.prompt &&
+             x.state !== taskManager.STATES.DONE
+      );
+      if (existing) {
+        skipped.push({ prompt: t.prompt, reason: '重複' });
+        continue;
+      }
+      const created = taskManager.createTask(
+        t.prompt,
+        message.author.id,
+        null,
+        t.dangerLevel || '低',
+        pid,
+        t.type || 'IMPLEMENT'
+      );
+      registered.push(created);
+    }
+
+    // ③ consumed に遷移（二重登録防止）
+    pendingPlans.consumePlan(plan.id);
+
+    const lines = registered.map((t, i) =>
+      `${i + 1}. \`${t.id}\` [${t.type}] ${(t.prompt || '').slice(0, 50)}`
+    ).join('\n') || '（なし）';
+
+    const skipLines = skipped.length > 0
+      ? `\n⏭️ スキップ（重複）: ${skipped.length}件`
+      : '';
+
+    const reply =
+      `✅ **Refine Approve 完了** — Project: \`${pid}\`\n\n` +
+      `登録: **${registered.length}件**${skipLines}\n\n` +
+      lines.slice(0, 1400) +
+      `\n\n実行: \`!project run ${pid}\``;
+
+    if (processingMsg) await processingMsg.edit(reply.slice(0, 1900)).catch(() => {});
+    else await message.reply(reply.slice(0, 1900)).catch(() => {});
+    logger.info(`[Refine] approve: ${pid} | ${registered.length}件登録 planId:${plan.id}`);
+    return;
+  }
+
+  // ── !project refine cancel ───────────────────────
+  if (subSub === 'cancel') {
+    const count = pendingPlans.discardByProject(pid);
+    await message.reply(
+      count > 0
+        ? `🗑️ **Refine 計画を破棄しました** — \`${pid}\` (${count}件)`
+        : `⚠️ \`${pid}\` に pending な計画はありません。`
+    ).catch(() => {});
+    return;
+  }
+
+  // ── !project refine show ─────────────────────────
+  if (subSub === 'show') {
+    const plan = pendingPlans.getLatestPlan(pid);
+    if (!plan) {
+      await message.reply(
+        `⚠️ **${pid}** に pending な refine 計画がありません。\n` +
+        `\`!project refine ${pid}\` で新しい提案を生成してください。`
+      ).catch(() => {});
+      return;
+    }
+    await message.reply(_formatRefinePlan(plan, pid)).catch(() => {});
+    return;
+  }
+
+  // ── !project refine（生成）────────────────────────
+  const processingMsg = await message.reply(
+    `⏳ **Refine 分析中...**\n` +
+    `Project: \`${pid}\`\n不足機能を分析しています…`
+  ).catch(() => null);
+
+  try {
+    // 完了済みタスクを収集
+    const allTasks    = taskManager.listTasks();
+    const projTasks   = projectManager.filterTasksByProject(allTasks, pid);
+    const doneSums    = [];
+
+    projTasks
+      .filter(t => t.state === taskManager.STATES.ON_HOLD)
+      .forEach(t => doneSums.push(`${t.type}: ${(t.prompt || '').slice(0, 40)}`));
+
+    const histDir = path.join(AI_WORKER_ROOT, 'data', 'history');
+    try {
+      if (fs.existsSync(histDir)) {
+        fs.readdirSync(histDir).filter(f => f.endsWith('.json')).slice(-3).forEach(hf => {
+          try {
+            const hist = JSON.parse(fs.readFileSync(path.join(histDir, hf), 'utf8'));
+            (hist.tasks || [])
+              .filter(t => (t.projectId || 'default') === pid)
+              .forEach(t => doneSums.push(`${t.type}: ${(t.prompt || '').slice(0, 40)}`));
+          } catch { /* ignore */ }
+        });
+      }
+    } catch { /* ignore */ }
+
+    // Planner で gap 分析 + 候補生成（既存 planProjectGoalsBest を活用）
+    const planner = require('./utils/project-planner.js');
+    const plan    = await planner.planProjectGoalsBest(pid, {
+      description: (project.description || project.name || '') + (project.goal || ''),
+      doneTasks:   doneSums,
+    });
+
+    // 候補を全件取得（max 30件まで取得し 20件 + overflow に分割）
+    const allCandidates = (plan.nextCandidates || []).slice(0, 30);
+    const rawProposals  = [];
+
+    for (const cand of allCandidates) {
+      const prompt = cand.title || cand.prompt || '';
+      if (!prompt) continue;
+
+      const estSize = taskTypeUtil.estimateTaskSize(prompt);
+
+      if (estSize.size === taskTypeUtil.TASK_SIZES.LARGE) {
+        // LARGE → generateSplitProposals で分割してそれぞれ追加
+        const splits = taskManager.generateSplitProposals(prompt);
+        for (const sp of splits) {
+          rawProposals.push({
+            type:       cand.type || 'IMPLEMENT',
+            prompt:     sp.slice(0, 500),
+            priority:   cand.priority || '中',
+            dangerLevel: '低',
+            size:       taskTypeUtil.estimateTaskSize(sp).size,
+            reason:     `${cand.reason || '不足機能'} (LARGE分割)`,
+            fromLarge:  true,
+          });
+        }
+      } else {
+        rawProposals.push({
+          type:       cand.type || 'IMPLEMENT',
+          prompt:     prompt.slice(0, 500),
+          priority:   cand.priority || '中',
+          dangerLevel: '低',
+          size:       estSize.size,
+          reason:     cand.reason || '不足機能',
+          fromLarge:  false,
+        });
+      }
+    }
+
+    // security.checkPrompt フィルタ（ブロックされたものは除外・ログ）
+    const safeProposals = [];
+    for (const p of rawProposals) {
+      const sec = security.checkPrompt(p.prompt);
+      if (!sec.safe) {
+        logger.warn(`[Refine] セキュリティブロック: ${p.prompt.slice(0, 40)} | ${sec.reason}`);
+        continue;
+      }
+      safeProposals.push({ ...p, securityOk: true });
+    }
+
+    // 20件 / overflow に分割
+    const MAX = pendingPlans.MAX_TASKS;
+    const tasks    = safeProposals.slice(0, MAX);
+    const overflow = safeProposals.slice(MAX);
+
+    if (tasks.length === 0) {
+      if (processingMsg) await processingMsg.edit(
+        `📊 **Refine 分析完了** — Project: \`${pid}\`\n\n不足タスク候補が見つかりませんでした。\nプロジェクトの説明・目標を \`!project switch\` で確認してください。`
+      ).catch(() => {});
+      return;
+    }
+
+    // pending-plans.json に保存
+    const saved = pendingPlans.createPlan(pid, message.author.id, tasks, overflow);
+
+    // Discord に表示
+    const reply = _formatRefinePlan(saved, pid);
+    if (processingMsg) await processingMsg.edit(reply.slice(0, 1900)).catch(() => {});
+    else await message.reply(reply.slice(0, 1900)).catch(() => {});
+    logger.info(`[Refine] 生成: ${pid} | ${tasks.length}件 overflow:${overflow.length}件 planId:${saved.id}`);
+
+  } catch (err) {
+    logger.error(`[Refine] エラー: ${err.message}`);
+    if (processingMsg) await processingMsg.edit(
+      `❌ **Refine 分析中にエラーが発生しました**\n${err.message.slice(0, 100)}`
+    ).catch(() => {});
+  }
+}
+
+/** refine 計画を Discord 向けテキストにフォーマット */
+function _formatRefinePlan(plan, pid) {
+  const taskLines = plan.tasks.map((t, i) =>
+    `${i + 1}. [${t.type}] ${(t.prompt || '').slice(0, 55)}${t.fromLarge ? ' *(LARGE分割)*' : ''}\n   理由: ${(t.reason || '').slice(0, 40)}`
+  ).join('\n');
+
+  const overflowNote = plan.overflow && plan.overflow.length > 0
+    ? `\n⏭️ **次回 refine 候補**: ${plan.overflow.length}件（20件上限のため今回除外）`
+    : '';
+
+  return (
+    `📋 **Refine 提案** — Project: \`${pid}\`\n` +
+    `Plan ID: \`${plan.id}\`\n` +
+    `ステータス: **${plan.status}** | 有効期限: ${new Date(plan.expiresAt).toLocaleString('ja-JP')}\n\n` +
+    `**不足タスク候補 (${plan.tasks.length}件):**\n${taskLines}` +
+    overflowNote +
+    `\n\n✅ 登録: \`!project refine approve ${pid}\`\n` +
+    `🗑️ 破棄: \`!project refine cancel ${pid}\``
+  );
+}
+
+// ─────────────────────────────────────────────────────
 // !project コマンド — プロジェクト管理
 //
 // list    — プロジェクト一覧を表示
@@ -2331,6 +2601,12 @@ async function handleMeeting(message, rawTopic) {
 async function handleProject(message, args) {
   const sub  = args[0] || 'current';
   const name = args.slice(1).join(' ').trim();
+
+  // ─── !project refine — 不足機能分析 → タスク案生成 ───────────
+  if (sub === 'refine') {
+    await handleProjectRefine(message, args);
+    return;
+  }
 
   // ─── !project runner <サブコマンド> — Phase A-2 ───────────────
   if (sub === 'runner') {
