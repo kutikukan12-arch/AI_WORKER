@@ -35,6 +35,7 @@
 //   !apply-review <taskId>  Codex回答を Claude にフィードバック
 //   !create-pr <taskId>     指定タスクの PR を手動作成
 //   !history [taskId]       レビュー履歴を表示
+//   !project refine [id]    不足機能分析→タスク案生成→人間確認→一括登録
 //   !doctor                 システム診断（管理者のみ）
 //   !help                   コマンド一覧
 // =====================================================
@@ -486,7 +487,7 @@ async function sendPRHumanConfirm(channel, taskId, prResult, dangerLevel) {
 async function handleHelp(message) {
   const embed = new EmbedBuilder()
     .setColor(0x5865F2)
-    .setTitle('🤖 AI_WORKER Bot コマンド一覧 (Phase F-4)')
+    .setTitle('🤖 AI_WORKER Bot コマンド一覧')
     .addFields(
       // ── 自律ループ ───────────────────────────────────────
       {
@@ -538,6 +539,9 @@ async function handleHelp(message) {
           '`!project plan [id]` — タスク候補を表示',
           '`!project plan apply` — 候補上位3件をタスクに登録',
           '`!project runner auto-apply on/off/status` — 自動タスク登録',
+          '🔎 `!project refine [projectId]` — 不足機能を分析してタスク案を生成',
+          '✅ `!project refine approve [projectId]` — 提案を一括登録（Owner のみ）',
+          '🗑️ `!project refine cancel/show [projectId]` — 提案を破棄・再表示',
         ].join('\n'),
         inline: false,
       },
@@ -616,7 +620,7 @@ async function handleHelp(message) {
         inline: false,
       },
     )
-    .setFooter({ text: 'AI_WORKER Phase F-4 | 自律AI開発チーム | !project run で開始' })
+    .setFooter({ text: 'AI_WORKER | 自律AI開発チーム | !project run で開始' })
     .setTimestamp();
 
   await message.reply({ embeds: [embed] });
@@ -2556,9 +2560,9 @@ async function handleProjectRefine(message, args) {
     const saved = pendingPlans.createPlan(pid, message.author.id, tasks, overflow);
 
     // Discord に表示
-    const reply = _formatRefinePlan(saved, pid);
-    if (processingMsg) await processingMsg.edit(reply.slice(0, 1900)).catch(() => {});
-    else await message.reply(reply.slice(0, 1900)).catch(() => {});
+    const replyPayload = _formatRefinePlan(saved, pid);
+    if (processingMsg) await processingMsg.edit(replyPayload).catch(() => {});
+    else await message.reply(replyPayload).catch(() => {});
     logger.info(`[Refine] 生成: ${pid} | ${tasks.length}件 overflow:${overflow.length}件 planId:${saved.id}`);
 
   } catch (err) {
@@ -2569,25 +2573,46 @@ async function handleProjectRefine(message, args) {
   }
 }
 
-/** refine 計画を Discord 向けテキストにフォーマット */
+/** refine 計画を Discord Embed にフォーマット */
 function _formatRefinePlan(plan, pid) {
-  const taskLines = plan.tasks.map((t, i) =>
-    `${i + 1}. [${t.type}] ${(t.prompt || '').slice(0, 55)}${t.fromLarge ? ' *(LARGE分割)*' : ''}\n   理由: ${(t.reason || '').slice(0, 40)}`
-  ).join('\n');
+  const TYPE_EMOJI = { IMPLEMENT: '🔧', RESEARCH: '🔍', TEST: '🧪', DOCS: '📝', REVIEW: '🔎' };
 
-  const overflowNote = plan.overflow && plan.overflow.length > 0
-    ? `\n⏭️ **次回 refine 候補**: ${plan.overflow.length}件（20件上限のため今回除外）`
-    : '';
+  const taskLines = plan.tasks.map((t, i) => {
+    const emoji = TYPE_EMOJI[t.type] || '📌';
+    const label = `${i + 1}. ${emoji} [${t.type}] ${(t.prompt || '').slice(0, 50)}`;
+    const suffix = t.fromLarge ? ' *(分割)*' : '';
+    const reason = t.reason ? `\n   └ ${(t.reason).slice(0, 40)}` : '';
+    return label + suffix + reason;
+  }).join('\n');
 
-  return (
-    `📋 **Refine 提案** — Project: \`${pid}\`\n` +
-    `Plan ID: \`${plan.id}\`\n` +
-    `ステータス: **${plan.status}** | 有効期限: ${new Date(plan.expiresAt).toLocaleString('ja-JP')}\n\n` +
-    `**不足タスク候補 (${plan.tasks.length}件):**\n${taskLines}` +
-    overflowNote +
-    `\n\n✅ 登録: \`!project refine approve ${pid}\`\n` +
-    `🗑️ 破棄: \`!project refine cancel ${pid}\``
-  );
+  const embed = new EmbedBuilder()
+    .setColor(0x5865F2)
+    .setTitle(`📋 Refine 提案 — ${pid}`)
+    .setDescription(
+      `Plan ID: \`${plan.id}\`\n` +
+      `ステータス: **${plan.status}** | 有効期限: ${new Date(plan.expiresAt).toLocaleString('ja-JP')}`
+    )
+    .addFields({
+      name: `不足タスク候補 (${plan.tasks.length}件)`,
+      value: fmt.embedField(taskLines || '（なし）'),
+      inline: false,
+    });
+
+  if (plan.overflow && plan.overflow.length > 0) {
+    embed.addFields({
+      name: '⏭️ 次回 refine 候補',
+      value: `${plan.overflow.length}件（20件上限のため今回除外）`,
+      inline: false,
+    });
+  }
+
+  embed.addFields({
+    name: '操作',
+    value: `✅ 登録: \`!project refine approve ${pid}\`\n🗑️ 破棄: \`!project refine cancel ${pid}\``,
+    inline: false,
+  });
+
+  return { embeds: [embed] };
 }
 
 // ─────────────────────────────────────────────────────
