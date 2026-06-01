@@ -178,9 +178,24 @@
       border-radius: 8px; padding: 12px 16px;
     }
     .approval-card .ap-top {
-      display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 4px;
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 0.8rem; margin-bottom: 4px;
     }
-    .approval-card .ap-prompt { font-size: 0.78rem; color: #94a3b8; }
+    .approval-card .ap-reason { font-size: 0.82rem; color: #e2e8f0; margin-bottom: 3px; }
+    .approval-card .ap-prompt { font-size: 0.75rem; color: #64748b; margin-bottom: 8px; }
+    .ap-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .ap-btn {
+      border: none; border-radius: 5px; cursor: pointer;
+      font-size: 0.73rem; font-weight: 700; padding: 4px 10px;
+      transition: opacity .15s;
+    }
+    .ap-btn:hover { opacity: .8; }
+    .ap-btn.approve { background: #064e3b; color: #34d399; }
+    .ap-btn.deny    { background: #7f1d1d; color: #f87171; }
+    .ap-btn.pause   { background: #451a03; color: #fbbf24; }
+    .danger-高 { color: #f87171; font-weight: 700; }
+    .danger-中 { color: #fbbf24; }
+    .danger-低 { color: #34d399; }
     #no-approvals { color: #475569; font-size: 0.82rem; }
   </style>
 </head>
@@ -467,22 +482,56 @@
     }).join('');
   }
 
+  async function approvalAction(taskId, action) {
+    const enc = encodeURIComponent(taskId);
+    try {
+      const r = await fetch(`/api/approvals/${enc}/${action}`, { method: 'POST' });
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error || 'error');
+      loadAll();
+    } catch (e) {
+      alert(`エラー: ${e.message}`);
+    }
+  }
+
+  function dangerLabel(d) {
+    const map = { '高': '🔴高', '中': '🟡中', '低': '🟢低' };
+    return `<span class="danger-${d}">${map[d] || d || '—'}</span>`;
+  }
+
   function renderApprovals(approvals) {
     const list = document.getElementById('approval-list');
-    const pending = approvals.filter(a => a.status === 'pending' || !a.status);
-    if (pending.length === 0) {
+    const pending = approvals.filter(a => a.state === 'pending');
+    const paused  = approvals.filter(a => a.state === 'paused');
+    const items   = [...pending, ...paused];
+    if (items.length === 0) {
       list.innerHTML = '<span id="no-approvals" style="color:#475569;font-size:.82rem;">承認待ちはありません</span>';
       return;
     }
-    list.innerHTML = pending.map(a => `
-      <div class="approval-card">
-        <div class="ap-top">
-          <strong style="color:#fbbf24;">${a.taskId || a.id || '?'}</strong>
-          <span style="color:#64748b;font-size:.72rem;">${fmt(a.createdAt)}</span>
+    list.innerHTML = items.map(a => {
+      const tid = (a.taskId || a.id || '?').replace(/</g,'&lt;');
+      const isPaused = a.state === 'paused';
+      return `
+        <div class="approval-card" style="${isPaused ? 'border-color:#78716c;' : ''}">
+          <div class="ap-top">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <strong style="color:${isPaused ? '#78716c' : '#fbbf24'};">${tid}</strong>
+              ${dangerLabel(a.danger)}
+              ${isPaused ? '<span style="font-size:.68rem;color:#78716c;">⏸️一時停止</span>' : ''}
+            </div>
+            <span style="color:#64748b;font-size:.72rem;">${fmt(a.createdAt)}</span>
+          </div>
+          ${a.reason ? `<div class="ap-reason">${a.reason.slice(0,120).replace(/</g,'&lt;')}</div>` : ''}
+          ${a.prompt ? `<div class="ap-prompt">${a.prompt.slice(0,100).replace(/</g,'&lt;')}${a.prompt.length>100?'…':''}</div>` : ''}
+          <div class="ap-actions">
+            ${!isPaused ? `<button class="ap-btn approve" onclick="approvalAction('${tid}','approve')">✅ 承認</button>` : ''}
+            <button class="ap-btn deny" onclick="approvalAction('${tid}','deny')">❌ 却下</button>
+            ${!isPaused ? `<button class="ap-btn pause" onclick="approvalAction('${tid}','pause')">⏸️ 一時停止</button>` : ''}
+            ${isPaused  ? `<button class="ap-btn" style="background:#1e3a5f;color:#60a5fa;" onclick="approvalAction('${tid}','resume')">▶️ 再開</button>` : ''}
+          </div>
         </div>
-        <div class="ap-prompt">${(a.prompt || a.reason || '').slice(0, 120)}</div>
-      </div>
-    `).join('');
+      `;
+    }).join('');
   }
 
   async function loadAll() {

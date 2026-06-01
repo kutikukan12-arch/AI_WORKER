@@ -44,6 +44,38 @@ function apiApprovals(_req, res) {
   res.end(JSON.stringify(list));
 }
 
+function apiApprovalAction(req, res) {
+  const parts = req.url.split('?')[0].split('/');
+  // /api/approvals/:taskId/:action
+  const taskId = decodeURIComponent(parts[3] || '');
+  const action = parts[4];
+  const VALID = { approve: 'approved', deny: 'denied', pause: 'paused', resume: 'pending' };
+  if (!taskId || !VALID[action]) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'invalid' }));
+    return;
+  }
+  try {
+    const raw  = fs.readFileSync(path.join(DATA_DIR, 'approvals.json'), 'utf8');
+    const data = JSON.parse(raw);
+    const list = Array.isArray(data) ? data : (data?.approvals ?? []);
+    const idx  = list.findIndex(a => a.taskId === taskId);
+    if (idx === -1) { res.writeHead(404); res.end(JSON.stringify({ error: 'not found' })); return; }
+    const now = new Date().toISOString();
+    list[idx].state      = VALID[action];
+    list[idx].updatedAt  = now;
+    list[idx].resolvedBy = 'dashboard';
+    list[idx].resolvedAt = now;
+    const save = Array.isArray(data) ? list : { ...data, approvals: list };
+    fs.writeFileSync(path.join(DATA_DIR, 'approvals.json'), JSON.stringify(save, null, 2), 'utf8');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, taskId, action }));
+  } catch (e) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: e.message }));
+  }
+}
+
 function readCostToday() {
   const now = new Date();
   const y = now.getFullYear();
@@ -101,11 +133,15 @@ const ROUTES = {
   '/api/cost':      apiCost,
 };
 
+const APPROVAL_ACTION_RE = /^\/api\/approvals\/[^/]+\/(approve|deny|pause|resume)$/;
+
 function startDashboard(logger) {
   const server = http.createServer((req, res) => {
     const url = req.url.split('?')[0];
     res.setHeader('Access-Control-Allow-Origin', '*');
-    if (ROUTES[url]) {
+    if (req.method === 'POST' && APPROVAL_ACTION_RE.test(url)) {
+      apiApprovalAction(req, res);
+    } else if (ROUTES[url]) {
       ROUTES[url](req, res);
     } else {
       serveHtml(req, res);
