@@ -956,6 +956,120 @@ function _companyResolvePid(args, channelId) {
 //   autoProjectRunner.disableRunner(projectId) を呼んで
 //   Runner を安全停止する。
 // ─────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────
+// gatherRunnerPreview(projectId)
+//
+// !project run 開始時に表示する「実行前見通し」を集計する。
+// Runner 実行ロジック・タスク選定ロジックは変更しない（表示専用）。
+//
+// 戻り値:
+//   {
+//     total: number,        残タスク合計
+//     autoSafe: number,     AUTO_SAFE（自動実行可）
+//     aiReview: number,     AI_REVIEW_REQUIRED（実行可・レビュー付き）
+//     needsApproval: number, HUMAN_APPROVAL_REQUIRED
+//     blocked: number,      BLOCKED
+//     byType: { IMPLEMENT, FIX, RESEARCH, TEST, DOCS, REVIEW, OTHER },
+//     hasLarge: boolean,    LARGE タスクがあれば true
+//     largeCount: number,
+//   }
+// ─────────────────────────────────────────────────────
+function gatherRunnerPreview(projectId) {
+  try {
+    const all   = taskManager.listTasks();
+    const tasks = projectManager.filterTasksByProject(all, projectId)
+      .filter(t =>
+        t.state === taskManager.STATES.PENDING ||
+        t.state === taskManager.STATES.ON_HOLD  // Auto Resume 候補
+      );
+
+    let autoSafe = 0, aiReview = 0, needsApproval = 0, blocked = 0;
+    let largeCount = 0;
+    const byType = { IMPLEMENT: 0, FIX: 0, RESEARCH: 0, TEST: 0, DOCS: 0, REVIEW: 0, OTHER: 0 };
+
+    for (const t of tasks) {
+      // policy 判定（タスク選定ロジックとは独立した集計のみ）
+      const policy = autoPolicy.classifyTask(t, { danger: t.dangerLevel || '低' });
+      switch (policy) {
+        case autoPolicy.AUTO_POLICY.AUTO_SAFE:                autoSafe++;       break;
+        case autoPolicy.AUTO_POLICY.AI_REVIEW_REQUIRED:       aiReview++;       break;
+        case autoPolicy.AUTO_POLICY.HUMAN_APPROVAL_REQUIRED:  needsApproval++;  break;
+        case autoPolicy.AUTO_POLICY.BLOCKED:                  blocked++;        break;
+        default:                                              aiReview++;       break;
+      }
+
+      // LARGE チェック
+      if (t.size === taskManager.TASK_SIZES.LARGE) largeCount++;
+
+      // タイプ別集計
+      const typ = String(t.type || '').toUpperCase();
+      if (byType[typ] !== undefined) byType[typ]++;
+      else byType.OTHER++;
+    }
+
+    return {
+      total: tasks.length,
+      autoSafe,
+      aiReview,
+      needsApproval,
+      blocked,
+      byType,
+      hasLarge:   largeCount > 0,
+      largeCount,
+    };
+  } catch (e) {
+    logger.warn(`[ProjectRun] preview 集計エラー: ${e.message}`);
+    return { total: 0, autoSafe: 0, aiReview: 0, needsApproval: 0, blocked: 0,
+             byType: {}, hasLarge: false, largeCount: 0 };
+  }
+}
+
+// ─────────────────────────────────────────────────────
+// formatRunnerPreview(preview, projectId) → Discord テキスト
+// ─────────────────────────────────────────────────────
+function formatRunnerPreview(preview, projectId) {
+  if (preview.total === 0) {
+    return (
+      `📋 **実行前確認** — 実行対象タスクなし\n` +
+      `現在 \`${projectId}\` に PENDING / ON_HOLD タスクがありません。\n` +
+      `\`!project refine ${projectId}\` で不足機能を分析して新しいタスクを生成してください。\n\n` +
+      `> ℹ️ タスク0件 = プロジェクト完成 **ではありません**。AI Board Report で達成度を確認してください。`
+    );
+  }
+
+  // type 別内訳（0件のものは省略）
+  const typeLines = Object.entries(preview.byType)
+    .filter(([, c]) => c > 0)
+    .map(([t, c]) => {
+      const e = { IMPLEMENT: '🔧', FIX: '🛠️', RESEARCH: '🔍', TEST: '🧪',
+                  DOCS: '📝', REVIEW: '🔎', OTHER: '📌' }[t] || '📌';
+      return `  ${e} ${t}: ${c}件`;
+    })
+    .join('\n') || '  （タイプ情報なし）';
+
+  // 注意ライン
+  const warnings = [];
+  if (preview.hasLarge)      warnings.push(`⚠️ LARGE タスク ${preview.largeCount}件 → 自動分割されます`);
+  if (preview.blocked > 0)   warnings.push(`🚫 BLOCKED ${preview.blocked}件 → 自動実行スキップ`);
+  if (preview.needsApproval > 0) warnings.push(`⚠️ 承認必要 ${preview.needsApproval}件 → Runner が停止・人間確認が必要`);
+  const warnText = warnings.length > 0 ? '\n' + warnings.join('\n') : '';
+
+  const runnable = preview.autoSafe + preview.aiReview;
+
+  return (
+    `📋 **実行前確認** — \`${projectId}\`\n` +
+    `残タスク: **${preview.total}件**` +
+    ` | 自動実行可: ${runnable}件` +
+    (preview.needsApproval > 0 ? ` | 承認必要: ${preview.needsApproval}件` : '') +
+    (preview.blocked > 0       ? ` | スキップ: ${preview.blocked}件`       : '') +
+    `\n\n**タイプ別:**\n${typeLines}` +
+    warnText +
+    `\n\n> ⚠️ 登録タスクが完了しても「商品完成」ではありません。` +
+    `完成度は **AI Board Report** / **CEO Report** で判定します。`
+  );
+}
+
 async function handleProjectRun(message, projectId) {
   if (!projectId) {
     await message.reply(
@@ -1046,11 +1160,15 @@ async function handleProjectRun(message, projectId) {
   activeRuns.set(projectId, ctx);
   logger.info(`[ProjectRun] 開始 runId:${ctx.runId} | ${projectId}`);
 
-  // 開始メッセージ
+  // ─── 実行前見通し表示 ────────────────────────────────
+  const preview = gatherRunnerPreview(projectId);
+  const previewText = formatRunnerPreview(preview, projectId);
+
+  // 開始メッセージ（見通し込み）
   await message.reply(
     `🚀 **Project Runner 開始**\n\n` +
     `Project: **${project.name}** (\`${projectId}\`)${staffText}\n\n` +
-    `Auto Runner を有効化しました。タスクを順次実行します。\n` +
+    previewText + '\n\n' +
     `停止: \`!project stop ${projectId}\` | 状態: \`!project runner status\``
   ).catch(() => {});
 
