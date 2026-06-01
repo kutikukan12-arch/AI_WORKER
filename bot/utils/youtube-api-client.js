@@ -35,27 +35,67 @@ function _saveQuota(q) {
   }
 }
 
+const REQUEST_TIMEOUT_MS = 30000;
+
+function _classifyApiError(code, message) {
+  if (code === 403 && /quota/i.test(message)) {
+    return `YouTube API クォータ上限超過（本日 ${DAILY_LIMIT} ユニット使用済み）。明日以降に再試行してください。`;
+  }
+  if (code === 403) {
+    return `YouTube API キー認証エラー（403）。.env の YOUTUBE_API_KEY を確認してください。`;
+  }
+  if (code === 400) {
+    return `YouTube API 入力エラー（400）: ${String(message).slice(0, 100)} — 動画 ID や引数を確認してください。`;
+  }
+  if (code === 404) {
+    return `YouTube API リソース未発見（404）。動画 ID・チャンネル ID が正しいか確認してください。`;
+  }
+  return `YouTube API エラー ${code}: ${message}`;
+}
+
 function _request(apiKey, endpoint, params) {
   const qs  = new URLSearchParams({ ...params, key: apiKey }).toString();
   const url = `${BASE_URL}/${endpoint}?${qs}`;
 
   return new Promise((resolve, reject) => {
-    https.get(url, (res) => {
+    const req = https.get(url, (res) => {
       let body = '';
       res.on('data', chunk => { body += chunk; });
       res.on('end', () => {
         try {
           const data = JSON.parse(body);
           if (data.error) {
-            reject(new Error(`YouTube API ${data.error.code}: ${data.error.message}`));
+            reject(new Error(_classifyApiError(data.error.code, data.error.message)));
           } else {
             resolve(data);
           }
         } catch (e) {
-          reject(new Error(`JSON parse error: ${e.message}`));
+          reject(new Error(`YouTube API レスポンス解析エラー: ${e.message}`));
         }
       });
-    }).on('error', reject);
+    });
+
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+      req.destroy();
+      reject(new Error(
+        `YouTube API タイムアウト: ${REQUEST_TIMEOUT_MS / 1000}秒 以内に応答がありませんでした。` +
+        `ネットワーク接続を確認してから再試行してください。`
+      ));
+    });
+
+    req.on('error', (err) => {
+      if (err.code === 'ETIMEDOUT' || err.code === 'ESOCKETTIMEDOUT') {
+        reject(new Error(
+          `YouTube API タイムアウト: 接続がタイムアウトしました。ネットワーク接続を確認してください。`
+        ));
+      } else if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND') {
+        reject(new Error(
+          `YouTube API 接続失敗（${err.code}）: ネットワーク接続または DNS を確認してください。`
+        ));
+      } else {
+        reject(err);
+      }
+    });
   });
 }
 

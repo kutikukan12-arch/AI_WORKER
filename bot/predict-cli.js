@@ -82,6 +82,29 @@ function parseArgs(argv) {
   return args;
 }
 
+// ── 入力バリデーション ────────────────────────────────────────
+
+const NUMERIC_OPTIONS = [
+  { field: 'subs',     flag: '--subs (-s)',     unit: '整数（例: 10000）' },
+  { field: 'views',    flag: '--views (-v)',    unit: '整数（例: 8500）' },
+  { field: 'likes',    flag: '--likes (-l)',    unit: '整数（例: 300）' },
+  { field: 'comments', flag: '--comments',      unit: '整数（例: 40）' },
+  { field: 'duration', flag: '--duration (-d)', unit: '秒数の整数（例: 600 = 10分）' },
+];
+
+function validateArgs(args) {
+  for (const { field, flag, unit } of NUMERIC_OPTIONS) {
+    if (args[field] !== undefined && isNaN(args[field])) {
+      console.error(
+        `\n入力エラー: ${flag} には数値を指定してください。\n` +
+        `  形式: ${unit}\n` +
+        `  例:   node bot/predict-cli.js --title "タイトル" ${flag.split(' ')[0]} 10000\n`
+      );
+      process.exit(1);
+    }
+  }
+}
+
 // ── 整形出力（Discord マークダウン → plain text） ────────────
 
 function stripMarkdown(text) {
@@ -92,9 +115,14 @@ function stripMarkdown(text) {
 
 function main() {
   const a = parseArgs(process.argv);
+  validateArgs(a);
 
   if (!a.title) {
-    console.error('エラー: --title は必須です。-h でヘルプを確認してください。');
+    console.error(
+      '\n入力エラー: --title は必須です。\n' +
+      '  例: node bot/predict-cli.js --title "【衝撃】AIが仕事を奪う未来" --subs 50000\n' +
+      '  詳細は -h でヘルプを確認してください。\n'
+    );
     process.exit(1);
   }
 
@@ -112,8 +140,17 @@ function main() {
 
   const isPrePub = !video.viewCount;
 
-  const result  = predict(video);
-  const summary = buildSummary(video, result);
+  let result, summary;
+  try {
+    result  = predict(video);
+    summary = buildSummary(video, result);
+  } catch (err) {
+    console.error(
+      `\nエラー（予測処理失敗）:\n  ${err.message}\n\n` +
+      `対処法: 入力値を確認してください。-h でヘルプを確認してください。\n`
+    );
+    process.exit(1);
+  }
 
   // ─── ヘッダー ───
   console.log('');

@@ -5549,7 +5549,39 @@ async function handleYoutube(message, args) {
       );
     } catch (err) {
       logger.error(`!youtube predict エラー: ${err.message}`);
-      await processingMsg.edit(`❌ **予測に失敗しました**\n${err.message.slice(0, 200)}`);
+      const errMsg = err.message || '';
+      let guide;
+      if (/タイムアウト|timeout|timed/i.test(errMsg)) {
+        guide =
+          '⏱️ **タイムアウト** — YouTube API への接続に時間がかかりすぎました。\n' +
+          'ネットワーク接続を確認してから再試行してください。';
+      } else if (/クォータ|quota/i.test(errMsg)) {
+        guide =
+          '🚫 **API クォータ超過** — 本日の API 利用上限に達しました。\n' +
+          '明日以降に再試行するか、`.env` の `YOUTUBE_API_KEY` を別のキーに変更してください。';
+      } else if (/403|認証エラー|APIキー/i.test(errMsg)) {
+        guide =
+          '🔑 **API 認証エラー** — `YOUTUBE_API_KEY` が無効または期限切れです。\n' +
+          '`.env` を確認し、Google Cloud Console で新しいキーを発行してください。';
+      } else if (/400|入力エラー/i.test(errMsg)) {
+        guide =
+          '📋 **入力エラー** — 動画 ID または引数が正しくありません。\n' +
+          '例: `!youtube predict https://www.youtube.com/watch?v=XXXXXXXXXXX`';
+      } else if (/404|未発見|not found/i.test(errMsg)) {
+        guide =
+          '🔍 **動画が見つかりません** — 動画 ID が正しいか、動画が公開状態か確認してください。';
+      } else if (/接続失敗|ENOTFOUND|ECONNREFUSED/i.test(errMsg)) {
+        guide =
+          '🌐 **接続失敗** — YouTube API に接続できません。\n' +
+          'ネットワーク接続または DNS を確認してください。';
+      } else {
+        guide =
+          '⚠️ **API エラー** — YouTube API の呼び出しに失敗しました。\n' +
+          '`!doctor` でシステム状態を確認してください。';
+      }
+      await processingMsg.edit(
+        `❌ **予測に失敗しました**\n\n${guide}\n\n詳細: \`${errMsg.slice(0, 150)}\``
+      );
     }
     return;
   }
