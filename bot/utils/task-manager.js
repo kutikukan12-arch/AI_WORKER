@@ -561,15 +561,15 @@ function formatTaskList(tasks, title = 'タスク一覧') {
   const lines = tasks.slice(0, 15).map(t => {
     const stateEmoji = STATE_EMOJI[t.state] || '❓';
     const prioEmoji  = priority.toEmoji(t.priority);
-    const typeLabel  = t.type || TASK_TYPES.IMPLEMENT;  // 後方互換
-    const sizeLabel  = t.size || TASK_SIZES.MEDIUM;      // 後方互換
+    const typeLabel  = t.type || TASK_TYPES.IMPLEMENT;
+    const sizeLabel  = t.size || TASK_SIZES.MEDIUM;
     const typeEmoji  = TYPE_EMOJI[typeLabel] || '📋';
     const sizeEmoji  = SIZE_EMOJI[sizeLabel] || '🟡';
-    const short = t.prompt.slice(0, 30).replace(/[\r\n]+/g, ' ');
-    return `${typeEmoji}${sizeEmoji}${stateEmoji}${prioEmoji} \`${t.id}\` [${typeLabel}/${sizeLabel}] ${short}`;
+    const short = t.prompt.slice(0, 35).replace(/[\r\n]+/g, ' ');
+    return `${typeEmoji}${sizeEmoji}${stateEmoji}${prioEmoji} \`${t.id}\` ${short}`;
   });
 
-  let text = `**${title}** (${tasks.length}件)\n\`\`\`\n${lines.join('\n')}\n\`\`\``;
+  let text = `**${title}** (${tasks.length}件)\n${lines.join('\n')}`;
   if (tasks.length > 15) text += `\n…他 ${tasks.length - 15} 件`;
   return text;
 }

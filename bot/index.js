@@ -3376,45 +3376,54 @@ async function handleNext(message) {
   const next = filtered.find(t => t.state === taskManager.STATES.PENDING);
 
   if (!next) {
-    // なぜ実行できないか状態別に詳細を表示
     const stateDetail = {};
     filtered.forEach(t => { stateDetail[t.state] = (stateDetail[t.state] || 0) + 1; });
     const detailLines = Object.entries(stateDetail)
       .filter(([, c]) => c > 0)
-      .map(([s, c]) => `  ${taskManager.STATE_EMOJI[s] || '❓'} ${s}: ${c}件`);
-    const hint = stateDetail['レビュー待ち'] > 0 || stateDetail['保留'] > 0
-      ? '\n💡 `!task cleanup` で整理するか `!task resume <id>` で再開できます。'
-      : '';
-    await message.reply(
-      `📋 **次タスク**\n\nProject: **${currentPid}**\n実行可能な未着手タスクはありません。` +
-      (detailLines.length > 0 ? '\n\n現在のタスク:\n' + detailLines.join('\n') : '') +
-      hint
-    );
+      .map(([s, c]) => `${taskManager.STATE_EMOJI[s] || '❓'} ${s}: ${c}件`);
+    const canResume = stateDetail['レビュー待ち'] > 0 || stateDetail['保留'] > 0;
+
+    const embed = new EmbedBuilder()
+      .setColor(0x95A5A6)
+      .setTitle('📋 次タスク')
+      .setDescription(`Project: **${currentPid}**\n実行可能な未着手タスクはありません。`)
+      .setTimestamp();
+    if (detailLines.length > 0) {
+      embed.addFields({ name: '現在のタスク状況', value: detailLines.join('\n'), inline: false });
+    }
+    if (canResume) {
+      embed.setFooter({ text: '!task cleanup で整理するか !task resume <id> で再開できます。' });
+    }
+    await message.reply({ embeds: [embed] });
     return;
   }
 
-  // task.type / task.size（後方互換: 未設定は IMPLEMENT / MEDIUM）
   const typeLabel = next.type || taskManager.TASK_TYPES.IMPLEMENT;
   const sizeLabel = next.size || taskManager.TASK_SIZES.MEDIUM;
-  const typeEmoji = taskManager.TYPE_EMOJI[typeLabel]  || '📋';
-  const sizeEmoji = taskManager.SIZE_EMOJI[sizeLabel]  || '🟡';
-
+  const typeEmoji = taskManager.TYPE_EMOJI[typeLabel] || '📋';
+  const sizeEmoji = taskManager.SIZE_EMOJI[sizeLabel] || '🟡';
   const PRIORITY_EN = { '高': 'HIGH', '中': 'MEDIUM', '低': 'LOW' };
   const priorityEn  = PRIORITY_EN[next.priority] || next.priority;
+  const isLarge     = sizeLabel === taskManager.TASK_SIZES.LARGE;
 
-  // LARGE タスクは警告を付ける
-  const largeWarn = sizeLabel === taskManager.TASK_SIZES.LARGE
-    ? `\n\n⚠️ このタスクは **LARGE** です。\`!claude\` で手動実行を推奨します。`
-    : '';
+  const embed = new EmbedBuilder()
+    .setColor(isLarge ? 0xED4245 : 0x57F287)
+    .setTitle('📋 次タスク')
+    .addFields(
+      { name: 'Task ID',  value: `\`${next.id}\``,               inline: true },
+      { name: 'タイプ',   value: `${typeEmoji} ${typeLabel}`,     inline: true },
+      { name: 'サイズ',   value: `${sizeEmoji} ${sizeLabel}`,     inline: true },
+      { name: '優先度',   value: priorityEn,                      inline: true },
+      { name: 'Project',  value: currentPid,                      inline: true },
+      { name: '内容',     value: next.prompt.slice(0, 200) + (next.prompt.length > 200 ? '…' : ''), inline: false },
+    )
+    .setTimestamp();
 
-  await message.reply(
-    `📋 **次タスク**\n\n` +
-    `Task:\n\`${next.id}\`\n\n` +
-    `[${typeLabel}/${sizeLabel}] ${typeEmoji}${sizeEmoji}\n\n` +
-    `内容: ${next.prompt.slice(0, 80)}${next.prompt.length > 80 ? '...' : ''}\n\n` +
-    `Priority: ${priorityEn}` +
-    largeWarn
-  );
+  if (isLarge) {
+    embed.addFields({ name: '⚠️ 注意', value: 'LARGEタスクです。`!claude` で手動実行を推奨します。', inline: false });
+  }
+
+  await message.reply({ embeds: [embed] });
 }
 
 // ─────────────────────────────────────────────────────
@@ -5368,7 +5377,30 @@ async function handleQueue(message, sub) {
     return;
   }
 
-  await message.reply(taskQueue.formatStatus());
+  const { active, queued, max, pendingIds } = taskQueue.getStatus();
+  const embedColor = active >= max ? 0xED4245 : queued > 0 ? 0xFEE75C : 0x57F287;
+
+  const embed = new EmbedBuilder()
+    .setColor(embedColor)
+    .setTitle('📊 タスクキュー')
+    .addFields(
+      { name: '実行中', value: `${active} / ${max}`, inline: true },
+      { name: '待機中', value: `${queued} 件`,        inline: true },
+    )
+    .setTimestamp();
+
+  if (pendingIds.length > 0) {
+    const SHOW_MAX = 5;
+    const shown = pendingIds.slice(0, SHOW_MAX);
+    const rest  = pendingIds.length - shown.length;
+    embed.addFields({
+      name:  '待機タスク',
+      value: shown.map(id => `\`${id}\``).join('\n') + (rest > 0 ? `\n…他${rest}件` : ''),
+      inline: false,
+    });
+  }
+
+  await message.reply({ embeds: [embed] });
 }
 
 // ─────────────────────────────────────────────────────
