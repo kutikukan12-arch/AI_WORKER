@@ -1,29 +1,31 @@
 {
   "version": 1,
-  "sampleCount": 242,
-  "lastTrainedAt": "2026-05-31T17:00:00.362Z",
+  "sampleCount": 305,
+  "lastTrainedAt": "2026-06-01T17:00:00.377Z",
   "routingAdjustments": {
     "Codex": 1,
     "ChatGPT": 1,
     "Claude Code": 1
   },
   "typeSuccessAdjustments": {
-    "IMPLEMENT": 8,
-    "FIX": 6,
-    "DOCS": 4,
+    "IMPLEMENT": 13,
+    "FIX": 10,
+    "DOCS": 6,
     "RESEARCH": 3,
-    "REVIEW": 2
+    "REVIEW": 4,
+    "TEST": 5
   },
   "typeTimeMultipliers": {
-    "IMPLEMENT": 0.75,
-    "FIX": 0.71,
-    "DOCS": 1.66,
+    "IMPLEMENT": 0.58,
+    "FIX": 0.83,
+    "DOCS": 1.86,
     "RESEARCH": 1.05,
-    "REVIEW": 1.27
+    "REVIEW": 1.23,
+    "TEST": 1.1
   },
   "accuracy": {
-    "outcomeSamples": 242,
-    "avgTimeAccuracy": 0.385,
-    "avgSuccessAccuracy": 0.85
+    "outcomeSamples": 305,
+    "avgTimeAccuracy": 0.653,
+    "avgSuccessAccuracy": 0.874
   }
 }
