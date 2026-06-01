@@ -122,6 +122,9 @@ const ceoReport = require('./utils/ceo-report');
 const companyManager  = require('./utils/company-manager');
 const qualityGate     = require('./utils/quality-gate');
 
+// ─── Web Dashboard ───
+const { startDashboard } = require('./utils/dashboard-server');
+
 // 承認待ちの実行待機Map: taskId → () => void
 // ※ Bot 再起動で消える設計（意図的割り切り）
 const pendingExecutions = new Map();
@@ -285,6 +288,8 @@ client.once('ready', async () => {
   console.log(`  ${flags}`);
   console.log(`  監視CH: ${ALLOWED_CHANNEL_IDS.join(', ') || '全チャンネル'}`);
   console.log('═'.repeat(60) + '\n');
+
+  startDashboard(logger);
 
   // ─── 再起動後の完了通知（restart-state.json があれば）───
   const restartState = restartManager.readRestartState();

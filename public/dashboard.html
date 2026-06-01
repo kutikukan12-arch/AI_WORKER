@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI-Worker ダッシュボード</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #1a1d27;
+      border-bottom: 1px solid #2d3148;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    header h1 { font-size: 1.1rem; font-weight: 600; color: #a78bfa; }
+    #refresh-info { font-size: 0.75rem; color: #64748b; }
+    #refresh-btn {
+      background: #2d3148; border: 1px solid #3d4168; color: #a78bfa;
+      padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 0.8rem;
+    }
+    #refresh-btn:hover { background: #3d4168; }
+
+    main { padding: 20px 24px; max-width: 1200px; margin: 0 auto; }
+
+    /* ── Stats ─────────────────────────────────── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .stat-card {
+      background: #1a1d27;
+      border: 1px solid #2d3148;
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .stat-card .label { font-size: 0.7rem; color: #64748b; text-transform: uppercase; letter-spacing: .05em; }
+    .stat-card .value { font-size: 1.6rem; font-weight: 700; margin-top: 4px; }
+    .stat-card.blue   .value { color: #60a5fa; }
+    .stat-card.green  .value { color: #34d399; }
+    .stat-card.yellow .value { color: #fbbf24; }
+    .stat-card.red    .value { color: #f87171; }
+    .stat-card.purple .value { color: #a78bfa; }
+
+    /* ── Sections ───────────────────────────────── */
+    section { margin-bottom: 28px; }
+    section h2 {
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: #64748b;
+      margin-bottom: 10px;
+    }
+
+    /* ── Runner cards ───────────────────────────── */
+    .runner-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 12px;
+    }
+    .runner-card {
+      background: #1a1d27;
+      border: 1px solid #2d3148;
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .runner-card .rc-header {
+      display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;
+    }
+    .runner-card .rc-name { font-weight: 600; font-size: 0.9rem; }
+    .badge {
+      font-size: 0.68rem; font-weight: 700; padding: 2px 8px;
+      border-radius: 999px; text-transform: uppercase;
+    }
+    .badge.on  { background: #064e3b; color: #34d399; }
+    .badge.off { background: #1e1b2e; color: #64748b; }
+    .badge.paused { background: #451a03; color: #fbbf24; }
+    .rc-row { display: flex; justify-content: space-between; font-size: 0.78rem; padding: 2px 0; }
+    .rc-row .k { color: #64748b; }
+    .rc-row .v { color: #cbd5e1; }
+
+    /* ── Task table ─────────────────────────────── */
+    .table-wrap { overflow-x: auto; border-radius: 8px; border: 1px solid #2d3148; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    thead th {
+      background: #1a1d27; padding: 10px 12px;
+      text-align: left; font-weight: 600; color: #64748b;
+      text-transform: uppercase; letter-spacing: .05em;
+      border-bottom: 1px solid #2d3148;
+    }
+    tbody tr { border-bottom: 1px solid #1e2130; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: #1e2130; }
+    tbody td { padding: 9px 12px; color: #cbd5e1; vertical-align: middle; }
+    td.id    { font-family: monospace; font-size: 0.72rem; color: #64748b; }
+    td.prompt { max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .state-tag {
+      display: inline-block; font-size: 0.7rem; font-weight: 700;
+      padding: 2px 7px; border-radius: 4px;
+    }
+    .state-未着手   { background: #1e293b; color: #94a3b8; }
+    .state-作業中   { background: #1e3a5f; color: #60a5fa; }
+    .state-レビュー待ち { background: #2d1b4e; color: #c4b5fd; }
+    .state-人間確認待ち { background: #451a03; color: #fbbf24; }
+    .state-完了     { background: #064e3b; color: #34d399; }
+    .state-保留     { background: #1c1917; color: #78716c; }
+
+    .type-tag {
+      display: inline-block; font-size: 0.68rem; font-weight: 600;
+      padding: 1px 6px; border-radius: 4px;
+      background: #1e293b; color: #94a3b8;
+    }
+
+    .prio-高 { color: #f87171; font-weight: 700; }
+    .prio-中 { color: #fbbf24; }
+    .prio-低 { color: #64748b; }
+
+    #empty-row td { text-align: center; color: #475569; padding: 32px; }
+
+    /* ── Approvals ──────────────────────────────── */
+    .approval-list { display: flex; flex-direction: column; gap: 8px; }
+    .approval-card {
+      background: #1a1d27; border: 1px solid #451a03;
+      border-radius: 8px; padding: 12px 16px;
+    }
+    .approval-card .ap-top {
+      display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 4px;
+    }
+    .approval-card .ap-prompt { font-size: 0.78rem; color: #94a3b8; }
+    #no-approvals { color: #475569; font-size: 0.82rem; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🤖 AI-Worker ダッシュボード</h1>
+  <div style="display:flex;gap:12px;align-items:center;">
+    <span id="refresh-info">読み込み中...</span>
+    <button id="refresh-btn" onclick="loadAll()">更新</button>
+  </div>
+</header>
+
+<main>
+  <!-- Stats -->
+  <div class="stats-grid" id="stats-grid">
+    <div class="stat-card blue">  <div class="label">全タスク</div><div class="value" id="s-total">—</div></div>
+    <div class="stat-card blue">  <div class="label">未着手</div>  <div class="value" id="s-pending">—</div></div>
+    <div class="stat-card blue">  <div class="label">作業中</div>  <div class="value" id="s-inprog">—</div></div>
+    <div class="stat-card purple"><div class="label">レビュー待ち</div><div class="value" id="s-review">—</div></div>
+    <div class="stat-card yellow"><div class="label">人間確認待ち</div><div class="value" id="s-await">—</div></div>
+    <div class="stat-card green"> <div class="label">完了</div>    <div class="value" id="s-done">—</div></div>
+    <div class="stat-card red">   <div class="label">保留</div>    <div class="value" id="s-hold">—</div></div>
+  </div>
+
+  <!-- Approvals -->
+  <section>
+    <h2>⚠️ 承認待ち</h2>
+    <div class="approval-list" id="approval-list">
+      <span id="no-approvals">承認待ちはありません</span>
+    </div>
+  </section>
+
+  <!-- Runner -->
+  <section>
+    <h2>🔄 Auto Runner</h2>
+    <div class="runner-grid" id="runner-grid">
+      <div style="color:#475569;font-size:.82rem;">読み込み中...</div>
+    </div>
+  </section>
+
+  <!-- Tasks -->
+  <section>
+    <h2>📋 タスク一覧</h2>
+    <div style="margin-bottom:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;" id="filter-bar">
+      <span style="font-size:.75rem;color:#64748b;">フィルタ:</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Type</th>
+            <th>状態</th>
+            <th>優先度</th>
+            <th>プロジェクト</th>
+            <th>内容</th>
+            <th>更新日時</th>
+          </tr>
+        </thead>
+        <tbody id="task-tbody">
+          <tr id="empty-row"><td colspan="7">読み込み中...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+  let allTasks = [];
+  let activeFilter = 'all';
+
+  const STATE_LABELS = {
+    '未着手':'未着手','作業中':'作業中','レビュー待ち':'レビュー待ち',
+    '人間確認待ち':'人間確認待ち','完了':'完了','保留':'保留'
+  };
+
+  function fmt(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return d.toLocaleDateString('ja-JP', { month:'2-digit', day:'2-digit' })
+      + ' ' + d.toLocaleTimeString('ja-JP', { hour:'2-digit', minute:'2-digit' });
+  }
+
+  function shortId(id) {
+    return id ? id.replace('task_', '') : id;
+  }
+
+  async function fetchJson(url) {
+    const r = await fetch(url);
+    return r.json();
+  }
+
+  function renderStats(tasks) {
+    const counts = {};
+    tasks.forEach(t => { counts[t.state] = (counts[t.state] || 0) + 1; });
+    document.getElementById('s-total').textContent   = tasks.length;
+    document.getElementById('s-pending').textContent = counts['未着手']      || 0;
+    document.getElementById('s-inprog').textContent  = counts['作業中']      || 0;
+    document.getElementById('s-review').textContent  = counts['レビュー待ち'] || 0;
+    document.getElementById('s-await').textContent   = counts['人間確認待ち'] || 0;
+    document.getElementById('s-done').textContent    = counts['完了']         || 0;
+    document.getElementById('s-hold').textContent    = counts['保留']         || 0;
+  }
+
+  function renderFilterBar(tasks) {
+    const bar = document.getElementById('filter-bar');
+    const states = ['all', ...Object.keys(STATE_LABELS)];
+    bar.innerHTML = '<span style="font-size:.75rem;color:#64748b;">フィルタ:</span>';
+    states.forEach(s => {
+      const btn = document.createElement('button');
+      const count = s === 'all' ? tasks.length : tasks.filter(t => t.state === s).length;
+      btn.textContent = (s === 'all' ? '全て' : s) + ` (${count})`;
+      btn.style.cssText = `background:${s===activeFilter?'#2d3148':'#1a1d27'};border:1px solid #2d3148;
+        color:${s===activeFilter?'#a78bfa':'#64748b'};padding:3px 10px;border-radius:5px;
+        cursor:pointer;font-size:.73rem;`;
+      btn.onclick = () => { activeFilter = s; renderTasks(allTasks); renderFilterBar(allTasks); };
+      bar.appendChild(btn);
+    });
+  }
+
+  function renderTasks(tasks) {
+    const filtered = activeFilter === 'all' ? tasks : tasks.filter(t => t.state === activeFilter);
+    const tbody = document.getElementById('task-tbody');
+    if (filtered.length === 0) {
+      tbody.innerHTML = '<tr id="empty-row"><td colspan="7">タスクなし</td></tr>';
+      return;
+    }
+    tbody.innerHTML = filtered.map(t => `
+      <tr>
+        <td class="id">${shortId(t.id)}</td>
+        <td><span class="type-tag">${t.type || '—'}</span></td>
+        <td><span class="state-tag state-${t.state}">${t.state}</span></td>
+        <td class="prio-${t.priority}">${t.priority || '—'}</td>
+        <td style="font-size:.75rem;color:#64748b;">${t.projectId || '—'}</td>
+        <td class="prompt" title="${(t.prompt||'').replace(/"/g,'&quot;')}">${t.prompt || '—'}</td>
+        <td style="font-size:.72rem;color:#475569;">${fmt(t.updatedAt)}</td>
+      </tr>
+    `).join('');
+  }
+
+  function runnerBadge(state) {
+    if (state.enabled)      return '<span class="badge on">実行中</span>';
+    if (state.pauseReason)  return '<span class="badge paused">一時停止</span>';
+    return '<span class="badge off">停止</span>';
+  }
+
+  function renderRunner(runner) {
+    const grid = document.getElementById('runner-grid');
+    const entries = Object.values(runner).filter(r => r && r.projectId);
+    if (entries.length === 0) {
+      grid.innerHTML = '<div style="color:#475569;font-size:.82rem;">Runner データなし</div>';
+      return;
+    }
+    grid.innerHTML = entries.map(r => `
+      <div class="runner-card">
+        <div class="rc-header">
+          <span class="rc-name">${r.projectId}</span>
+          ${runnerBadge(r)}
+        </div>
+        <div class="rc-row"><span class="k">ループ数</span><span class="v">${r.loopCount ?? '—'}</span></div>
+        <div class="rc-row"><span class="k">作成タスク</span><span class="v">${r.totalTasksCreated ?? 0}</span></div>
+        ${r.pauseReason ? `<div class="rc-row"><span class="k">停止理由</span><span class="v" style="font-size:.7rem;max-width:160px;text-align:right;">${r.pauseReason}</span></div>` : ''}
+        ${r.plannerStats ? `<div class="rc-row"><span class="k">LLM 呼出</span><span class="v">${r.plannerStats.llmCallCount ?? 0} 回</span></div>` : ''}
+        <div class="rc-row"><span class="k">最終更新</span><span class="v">${fmt(r.updatedAt)}</span></div>
+      </div>
+    `).join('');
+  }
+
+  function renderApprovals(approvals) {
+    const list = document.getElementById('approval-list');
+    const pending = approvals.filter(a => a.status === 'pending' || !a.status);
+    if (pending.length === 0) {
+      list.innerHTML = '<span id="no-approvals" style="color:#475569;font-size:.82rem;">承認待ちはありません</span>';
+      return;
+    }
+    list.innerHTML = pending.map(a => `
+      <div class="approval-card">
+        <div class="ap-top">
+          <strong style="color:#fbbf24;">${a.taskId || a.id || '?'}</strong>
+          <span style="color:#64748b;font-size:.72rem;">${fmt(a.createdAt)}</span>
+        </div>
+        <div class="ap-prompt">${(a.prompt || a.reason || '').slice(0, 120)}</div>
+      </div>
+    `).join('');
+  }
+
+  async function loadAll() {
+    try {
+      const [tasks, runner, approvals] = await Promise.all([
+        fetchJson('/api/tasks'),
+        fetchJson('/api/runner'),
+        fetchJson('/api/approvals'),
+      ]);
+
+      allTasks = Array.isArray(tasks) ? tasks : [];
+      allTasks.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+
+      renderStats(allTasks);
+      renderFilterBar(allTasks);
+      renderTasks(allTasks);
+      renderRunner(runner || {});
+      renderApprovals(Array.isArray(approvals) ? approvals : []);
+
+      const now = new Date().toLocaleTimeString('ja-JP');
+      document.getElementById('refresh-info').textContent = `最終更新: ${now}`;
+    } catch (e) {
+      document.getElementById('refresh-info').textContent = `エラー: ${e.message}`;
+    }
+  }
+
+  loadAll();
+  setInterval(loadAll, 30000);
+</script>
+</body>
+</html>
