@@ -412,17 +412,50 @@ function formatHumanCheck({ taskId = '', projectId = '', reason = '', details = 
 }
 
 // ─────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────
+// ④ Codex 高危険度 HUMAN_CHECK フォーマット
+//
+// data:
+//   taskId    — string
+//   codexFile — string（reviews/codex_task_xxx.md）
+//   danger    — '高' | '中' | '低'（デフォルト: '高'）
+//   taskType  — string（任意）
+// ─────────────────────────────────────────────────────
+function formatCodexHighDanger({ taskId = '', codexFile = '', danger = '高', taskType = '' }) {
+  return (
+    `⚠️ **AI レビュー依頼に高危険度の内容が含まれる可能性があります**\n\n` +
+    `**何が起きたか:**\n` +
+    `2人目の AI（Codex）へのレビュー依頼の内容に、高危険度の操作が含まれている可能性があります。` +
+    (taskType ? `（タスク種別: ${taskType}）` : '') + `\n\n` +
+    `**なぜ止まっているか:**\n` +
+    `高危険度タスクは、人間が確認してから実行する設計になっています（安全のため）。\n\n` +
+    `**承認すると:** → Codex レビュー依頼を続行します。コードレビューが実施されます。\n\n` +
+    `**却下すると:** → このレビュー依頼を取りやめます。タスク自体はキャンセルされません。\n\n` +
+    `**放置すると:** → このタスクは判断待ちで止まったままです。自動で進むことはありません。\n\n` +
+    `**📋 AI おすすめ:** 承認前にレビュー内容を確認\n` +
+    `理由: 高危険度と判定されたコードが自動実行される前に、内容を確認することが重要です。\n\n` +
+    `**操作コマンド:**\n` +
+    `\`\`\`\n` +
+    `!approve ${taskId}   → 承認して Codex レビューを続行\n` +
+    `!deny   ${taskId}   → 却下して取りやめ\n` +
+    `\`\`\`\n\n` +
+    `━━━━━━━━━━━━━━━\n` +
+    `🔧 **技術詳細** | タスク: \`${taskId}\` | 危険度: 高 | ファイル: \`${codexFile}\``
+  );
+}
+
 // メインエントリポイント
 // ─────────────────────────────────────────────────────
 /**
  * formatForCEO(type, data)
- *   type: 'github_push_failed' | 'task_error' | 'human_check'
+ *   type: 'github_push_failed' | 'task_error' | 'human_check' | 'codex_high_danger'
  */
 function formatForCEO(type, data = {}) {
   switch (type) {
     case 'github_push_failed': return formatGitHubPushFailed(data);
     case 'task_error':         return formatTaskError(data);
     case 'human_check':        return formatHumanCheck(data);
+    case 'codex_high_danger':  return formatCodexHighDanger(data);
     default: return `[${type}] ${JSON.stringify(data).slice(0, 100)}`;
   }
 }
@@ -450,6 +483,7 @@ module.exports = {
   formatGitHubPushFailed,
   formatTaskError,
   formatHumanCheck,
+  formatCodexHighDanger,
   translateErrorType,
   translateHumanCheckReason,
 };

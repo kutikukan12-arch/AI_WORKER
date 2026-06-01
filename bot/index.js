@@ -459,16 +459,20 @@ async function sendHumanMention(channel, taskId, title, detail, danger = '中', 
     type:      'post',
   });
 
-  const mentionMessage =
-    `<@${DISCORD_OWNER_ID}>\n\n` +
-    `【確認してほしいこと】\n\n${title}\n\n` +
-    `【何が起きる？】\n\n${detail}\n\n` +
-    (options.merits    ? `【メリット】\n\n${options.merits}\n\n`    : '') +
-    (options.demerits  ? `【デメリット】\n\n${options.demerits}\n\n` : '') +
-    `【おすすめ】\n\nおすすめ: ${recommended}\n\n` +
-    `【危険度】\n\n${dangerEmoji} ${danger}\n\n` +
-    `（タスクID: \`${taskId}\`）\n` +
-    `✅ 承認: \`!approve ${taskId}\`　❌ 却下: \`!deny ${taskId}\``;
+  // options.customMessage が指定された場合はそちらを使用（CEO フォーマット対応）
+  const mentionMessage = options.customMessage
+    ? `<@${DISCORD_OWNER_ID}>\n\n${options.customMessage}`
+    : (
+      `<@${DISCORD_OWNER_ID}>\n\n` +
+      `【確認してほしいこと】\n\n${title}\n\n` +
+      `【何が起きる？】\n\n${detail}\n\n` +
+      (options.merits    ? `【メリット】\n\n${options.merits}\n\n`    : '') +
+      (options.demerits  ? `【デメリット】\n\n${options.demerits}\n\n` : '') +
+      `【おすすめ】\n\nおすすめ: ${recommended}\n\n` +
+      `【危険度】\n\n${dangerEmoji} ${danger}\n\n` +
+      `（タスクID: \`${taskId}\`）\n` +
+      `✅ 承認: \`!approve ${taskId}\`　❌ 却下: \`!deny ${taskId}\``
+    );
 
   try {
     if (NOTIFICATION_CHANNELS.humanCheck) {
@@ -4029,12 +4033,21 @@ async function executeClaudeTask({
       );
 
       if (codexRequest.danger === '高' && DISCORD_OWNER_ID) {
+        // Phase D-1 追加対象: CEO 向けフォーマット（承認/却下/放置を明示）
         await sendHumanMention(
           message.channel, taskId,
           'Codex 依頼の危険度が「高」です',
           `reviews/codex_${taskId}.md を確認してください。`,
           '高',
-          { channelType: 'codexReview' }
+          {
+            channelType:   'codexReview',
+            customMessage: fmt.formatCodexHighDanger({
+              taskId,
+              codexFile: `reviews/codex_${taskId}.md`,
+              danger:    '高',
+              taskType:  String(taskType || ''),
+            }),
+          }
         );
       }
     }

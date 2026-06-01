@@ -208,5 +208,77 @@ test('4e. Git 処理（commitAndPush）は変更なし', () => {
   assert.ok(src.includes('github.commitAndPush'), 'commitAndPush が消えている');
 });
 
+// ─────────────────────────────────────────────────────
+// 5. Codex 高危険度 HUMAN_CHECK 通知（Phase D-1 追加対象）
+// ─────────────────────────────────────────────────────
+console.log('\n[5. Codex 高危険度通知]');
+
+test('5a. formatCodexHighDanger が「承認すると」説明を含む', () => {
+  const text = fmt.formatCodexHighDanger({ taskId: 'task_x', codexFile: 'reviews/codex_task_x.md' });
+  assert.ok(text.includes('承認すると'), '承認後の説明がない');
+  assert.ok(text.includes('Codex') || text.includes('レビュー'), '内容説明がない');
+});
+
+test('5b. formatCodexHighDanger が「却下すると」説明を含む', () => {
+  const text = fmt.formatCodexHighDanger({ taskId: 'task_x', codexFile: 'reviews/codex_task_x.md' });
+  assert.ok(text.includes('却下すると'), '却下後の説明がない');
+});
+
+test('5c. formatCodexHighDanger が「放置すると」説明を含む', () => {
+  const text = fmt.formatCodexHighDanger({ taskId: 'task_x', codexFile: 'reviews/codex_task_x.md' });
+  assert.ok(text.includes('放置すると'), '放置説明がない');
+  assert.ok(text.includes('止まった') || text.includes('動き出さ') || text.includes('自動で進む'), '放置時の動作説明がない');
+});
+
+test('5d. formatCodexHighDanger に AI おすすめ・理由が含まれる', () => {
+  const text = fmt.formatCodexHighDanger({ taskId: 'task_x', codexFile: 'reviews/codex_task_x.md' });
+  assert.ok(text.includes('おすすめ') || text.includes('推奨'), 'AI おすすめがない');
+  assert.ok(text.includes('理由'), 'おすすめ理由がない');
+});
+
+test('5e. formatCodexHighDanger の技術詳細（taskId・ファイル名）が下部に保持される', () => {
+  const text = fmt.formatCodexHighDanger({ taskId: 'task_abc', codexFile: 'reviews/codex_task_abc.md' });
+  assert.ok(text.includes('task_abc'), 'タスクIDが保持されていない');
+  assert.ok(text.includes('技術詳細') || text.includes('🔧'), '技術詳細セクションがない');
+  assert.ok(text.includes('codex_task_abc.md'), 'ファイル名が保持されていない');
+});
+
+test('5f. !approve / !deny コマンドが含まれる', () => {
+  const text = fmt.formatCodexHighDanger({ taskId: 'task_xyz', codexFile: '' });
+  assert.ok(text.includes('!approve task_xyz'), '!approve コマンドがない');
+  assert.ok(text.includes('!deny'), '!deny コマンドがない');
+});
+
+test('5g. formatForCEO("codex_high_danger") がエントリポイントから呼べる', () => {
+  const text = fmt.formatForCEO('codex_high_danger', { taskId: 'task_z', codexFile: 'f.md' });
+  assert.ok(text.length > 50, 'formatForCEO codex_high_danger が空');
+  assert.ok(text.includes('task_z'), 'taskId が含まれない');
+});
+
+test('5h. index.js で Codex 高危険度通知が formatCodexHighDanger を使っている', () => {
+  assert.ok(src.includes('formatCodexHighDanger'), 'formatCodexHighDanger が index.js にない');
+  // sendHumanMention の customMessage として渡されている
+  const codexDangerIdx  = src.indexOf("codexRequest.danger === '高'");
+  const codexDangerArea = src.slice(codexDangerIdx, codexDangerIdx + 400);
+  assert.ok(codexDangerArea.includes('customMessage'), 'customMessage が渡されていない');
+  assert.ok(codexDangerArea.includes('formatCodexHighDanger'), 'このブロックで formatCodexHighDanger が使われていない');
+});
+
+test('5i. sendHumanMention の承認ロジック（approvalManager.createApproval）は変更なし', () => {
+  const sendHMIdx  = src.indexOf('async function sendHumanMention');
+  const sendHMEnd  = src.indexOf('\nasync function sendPRHumanConfirm', sendHMIdx);
+  const sendHMBody = src.slice(sendHMIdx, sendHMEnd > 0 ? sendHMEnd : sendHMIdx + 1500);
+  assert.ok(sendHMBody.includes('approvalManager.createApproval'), '承認ロジックが消えている');
+  assert.ok(sendHMBody.includes('reviewHistory.recordHumanConfirm'), '履歴記録が消えている');
+});
+
+test('5j. 旧フォーマット（「Codex依頼の危険度が「高」です / ログを確認してください」）は Codex 高危険ブロックから消えた', () => {
+  const codexDangerIdx  = src.indexOf("codexRequest.danger === '高'");
+  const codexDangerArea = src.slice(codexDangerIdx, codexDangerIdx + 400);
+  assert.ok(!codexDangerArea.includes("'Codex 依頼の危険度が「高」です'") ||
+            codexDangerArea.includes('customMessage'),
+    '旧フォーマットのメッセージが残っている（customMessageに置き換えられるべき）');
+});
+
 console.log(`\n結果: ${pass} passed / ${fail} failed\n`);
 if (fail > 0) process.exit(1);
