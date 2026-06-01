@@ -1188,24 +1188,28 @@ describe('predict() — 投稿前メタデータ入力', () => {
     assert.ok(['hit', 'miss', 'unknown'].includes(label), `不正な label: ${label}`);
   });
 
-  test('viewCount=0, subs=0 → buzzRatio=null, probability=50', () => {
+  test('viewCount=0, subs=0 → 投稿前ルール: buzzRatio=null, probability=45（ベースライン0.45）', () => {
+    // 投稿前モード (_ruleScorePrePub): base=0.45、subs=0/title短/tags無/duration=0 → ボーナス無し
     const video = {
       viewCount: 0, likeCount: 0, commentCount: 0,
       title: 'タイトル', tags: [], duration: 0, subscriberCount: 0,
     };
     const result = predict(video);
     assert.equal(result.buzzRatio, null);
-    assert.equal(result.probability, 50);
+    assert.equal(result.probability, 45);
   });
 
-  test('viewCount=0, subs=1000 → buzz_ratio=0 → probability=10, label=miss', () => {
+  test('viewCount=0, subs=1000 → 投稿前ルール: buzzRatio=null, probability=48, label=unknown', () => {
+    // 投稿前モード (_ruleScorePrePub): base=0.45 + subs=1000(+0.03) = 0.48
+    // title='タイトル'(4文字 < 8文字) → タイトルボーナス無し、tags=[]、duration=0 → ボーナス無し
     const video = {
       viewCount: 0, likeCount: 0, commentCount: 0,
       title: 'タイトル', tags: [], duration: 0, subscriberCount: 1000,
     };
     const result = predict(video);
-    assert.equal(result.probability, 10);
-    assert.equal(result.label, 'miss');
+    assert.equal(result.buzzRatio, null);
+    assert.equal(result.probability, 48);
+    assert.equal(result.label, 'unknown');
   });
 
   test('投稿前入力 → buildSummary() が文字列を返し "YouTube ヒット予測" を含む', () => {
