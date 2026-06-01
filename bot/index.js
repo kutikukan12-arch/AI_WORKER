@@ -5630,6 +5630,46 @@ function _parseYtKwargs(str) {
   return result;
 }
 
+function _classifyYtDiscordError(errMsg) {
+  if (/タイムアウト|timeout|timed/i.test(errMsg)) {
+    return (
+      '⏱️ **タイムアウト** — YouTube API への接続に時間がかかりすぎました。\n' +
+      'ネットワーク接続を確認してから再試行してください。'
+    );
+  }
+  if (/クォータ|quota/i.test(errMsg)) {
+    return (
+      '🚫 **API クォータ超過** — 本日の API 利用上限に達しました。\n' +
+      '明日以降に再試行するか、`.env` の `YOUTUBE_API_KEY` を別のキーに変更してください。'
+    );
+  }
+  if (/403|認証エラー|APIキー/i.test(errMsg)) {
+    return (
+      '🔑 **API 認証エラー** — `YOUTUBE_API_KEY` が無効または期限切れです。\n' +
+      '`.env` を確認し、Google Cloud Console で新しいキーを発行してください。'
+    );
+  }
+  if (/400|入力エラー/i.test(errMsg)) {
+    return (
+      '📋 **入力エラー** — 引数が正しくありません。\n' +
+      '`!youtube` でコマンド一覧を確認してください。'
+    );
+  }
+  if (/404|未発見|not found/i.test(errMsg)) {
+    return '🔍 **リソース未発見** — 動画 ID・チャンネル ID が正しいか確認してください。';
+  }
+  if (/接続失敗|ENOTFOUND|ECONNREFUSED/i.test(errMsg)) {
+    return (
+      '🌐 **接続失敗** — YouTube API に接続できません。\n' +
+      'ネットワーク接続または DNS を確認してください。'
+    );
+  }
+  return (
+    '⚠️ **API エラー** — YouTube API の呼び出しに失敗しました。\n' +
+    '`!doctor` でシステム状態を確認してください。'
+  );
+}
+
 // !youtube コマンド — YouTube 視聴予測 AI
 //
 // サブコマンド:
@@ -5687,21 +5727,30 @@ async function handleYoutube(message, args) {
         subscriberCount: kw.subs ? parseInt(kw.subs, 10) : 0,
       };
 
-      const result  = youtubePredictor.predict(video);
-      const summary = youtubePredictor.buildSummary(video, result);
-      const durStr  = video.duration
-        ? `${Math.floor(video.duration / 60)}分${video.duration % 60}秒`
-        : '未指定';
+      try {
+        const result  = youtubePredictor.predict(video);
+        const summary = youtubePredictor.buildSummary(video, result);
+        const durStr  = video.duration
+          ? `${Math.floor(video.duration / 60)}分${video.duration % 60}秒`
+          : '未指定';
 
-      await message.reply(
-        summary + '\n\n' +
-        `📝 **投稿前予測モード** (再生数・エンゲージメントなし)\n` +
-        `🏷️ タイトル: ${video.title || '（未入力）'}\n` +
-        `🏷️ タグ: ${tagsArr.length}個  ` +
-        `⏱️ 長さ: ${durStr}  ` +
-        `👥 登録者: ${video.subscriberCount.toLocaleString()}` +
-        (kw.genre ? `\n🎮 ジャンル: \`${kw.genre}\`` : '')
-      );
+        await message.reply(
+          summary + '\n\n' +
+          `📝 **投稿前予測モード** (再生数・エンゲージメントなし)\n` +
+          `🏷️ タイトル: ${video.title || '（未入力）'}\n` +
+          `🏷️ タグ: ${tagsArr.length}個  ` +
+          `⏱️ 長さ: ${durStr}  ` +
+          `👥 登録者: ${video.subscriberCount.toLocaleString()}` +
+          (kw.genre ? `\n🎮 ジャンル: \`${kw.genre}\`` : '')
+        );
+      } catch (err) {
+        logger.error(`!youtube predict (kwarg) エラー: ${err.message}`);
+        await message.reply(
+          `❌ **予測に失敗しました**\n\n` +
+          `⚠️ **予測処理エラー** — 入力値を確認してください。\n` +
+          `詳細: \`${(err.message || '').slice(0, 150)}\``
+        );
+      }
       return;
     }
 
@@ -5753,37 +5802,8 @@ async function handleYoutube(message, args) {
     } catch (err) {
       logger.error(`!youtube predict エラー: ${err.message}`);
       const errMsg = err.message || '';
-      let guide;
-      if (/タイムアウト|timeout|timed/i.test(errMsg)) {
-        guide =
-          '⏱️ **タイムアウト** — YouTube API への接続に時間がかかりすぎました。\n' +
-          'ネットワーク接続を確認してから再試行してください。';
-      } else if (/クォータ|quota/i.test(errMsg)) {
-        guide =
-          '🚫 **API クォータ超過** — 本日の API 利用上限に達しました。\n' +
-          '明日以降に再試行するか、`.env` の `YOUTUBE_API_KEY` を別のキーに変更してください。';
-      } else if (/403|認証エラー|APIキー/i.test(errMsg)) {
-        guide =
-          '🔑 **API 認証エラー** — `YOUTUBE_API_KEY` が無効または期限切れです。\n' +
-          '`.env` を確認し、Google Cloud Console で新しいキーを発行してください。';
-      } else if (/400|入力エラー/i.test(errMsg)) {
-        guide =
-          '📋 **入力エラー** — 動画 ID または引数が正しくありません。\n' +
-          '例: `!youtube predict https://www.youtube.com/watch?v=XXXXXXXXXXX`';
-      } else if (/404|未発見|not found/i.test(errMsg)) {
-        guide =
-          '🔍 **動画が見つかりません** — 動画 ID が正しいか、動画が公開状態か確認してください。';
-      } else if (/接続失敗|ENOTFOUND|ECONNREFUSED/i.test(errMsg)) {
-        guide =
-          '🌐 **接続失敗** — YouTube API に接続できません。\n' +
-          'ネットワーク接続または DNS を確認してください。';
-      } else {
-        guide =
-          '⚠️ **API エラー** — YouTube API の呼び出しに失敗しました。\n' +
-          '`!doctor` でシステム状態を確認してください。';
-      }
       await processingMsg.edit(
-        `❌ **予測に失敗しました**\n\n${guide}\n\n詳細: \`${errMsg.slice(0, 150)}\``
+        `❌ **予測に失敗しました**\n\n${_classifyYtDiscordError(errMsg)}\n\n詳細: \`${errMsg.slice(0, 150)}\``
       );
     }
     return;
@@ -5875,7 +5895,10 @@ async function handleYoutube(message, args) {
       );
     } catch (err) {
       logger.error(`!youtube collect エラー: ${err.message}`);
-      await processingMsg.edit(`❌ **収集に失敗しました**\n${err.message.slice(0, 300)}`);
+      const errMsg = err.message || '';
+      await processingMsg.edit(
+        `❌ **収集に失敗しました**\n\n${_classifyYtDiscordError(errMsg)}\n\n詳細: \`${errMsg.slice(0, 150)}\``
+      );
     }
     return;
   }
@@ -5965,7 +5988,10 @@ async function handleYoutube(message, args) {
       );
     } catch (err) {
       logger.error(`!youtube bulk-collect エラー: ${err.message}`);
-      await processingMsg.edit(`❌ **収集に失敗しました**\n${err.message.slice(0, 300)}`);
+      const errMsg = err.message || '';
+      await processingMsg.edit(
+        `❌ **収集に失敗しました**\n\n${_classifyYtDiscordError(errMsg)}\n\n詳細: \`${errMsg.slice(0, 150)}\``
+      );
     }
     return;
   }
@@ -6002,7 +6028,24 @@ async function handleYoutube(message, args) {
       );
     } catch (err) {
       logger.error(`!youtube train エラー: ${err.message}`);
-      await processingMsg.edit(`❌ **訓練に失敗しました**\n${err.message.slice(0, 200)}`);
+      const errMsg = err.message || '';
+      let guide;
+      if (/EACCES|permission denied/i.test(errMsg)) {
+        guide =
+          '🔒 **権限エラー** — モデルファイルへの書き込み権限がありません。\n' +
+          'サーバーのファイルパーミッションを確認してください。';
+      } else if (/ENOENT|no such file/i.test(errMsg)) {
+        guide =
+          '📁 **ファイルエラー** — データファイルが見つかりません。\n' +
+          '`!youtube collect` でデータを収集してから再試行してください。';
+      } else {
+        guide =
+          '⚠️ **訓練エラー** — モデルの訓練中に予期しないエラーが発生しました。\n' +
+          '`!doctor` でシステム状態を確認してください。';
+      }
+      await processingMsg.edit(
+        `❌ **訓練に失敗しました**\n\n${guide}\n\n詳細: \`${errMsg.slice(0, 150)}\``
+      );
     }
     return;
   }
