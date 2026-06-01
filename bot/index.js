@@ -1471,6 +1471,33 @@ async function _runProjectLoop(ctx) {
         continue;
       }
 
+      // IN_PROGRESS タスクが残っている場合は「no_pending_tasks」ではなく
+      // 完了を待って次のループへ進む（孤立タスク対策・商品完成との分離）
+      const inProgressTasks = activeTasks.filter(
+        t => t.state === taskManager.STATES.IN_PROGRESS
+      );
+      if (inProgressTasks.length > 0) {
+        logger.info(`[ProjectLoop] IN_PROGRESS ${inProgressTasks.length}件あり — 完了を待機: ${inProgressTasks.map(t => t.id).join(',')}`);
+        await message.channel.send(
+          `⏳ **作業中タスクの完了を待っています** | \`${projectId}\`\n` +
+          `完了待ち: ${inProgressTasks.map(t => `\`${t.id}\` [${t.type || '?'}]`).join(', ')}`
+        ).catch(() => {});
+        // 最初の IN_PROGRESS タスクの状態変化を待つ
+        const inProg = inProgressTasks[0];
+        const watchRes = await waitForStateChange(inProg.id, taskManager, {
+          maxWaitMs:      (parseInt(process.env.TASK_TIMEOUT_SECONDS) || 300) * 1000 + 10_000,
+          pollIntervalMs: 2000,
+          checkStopFn:    () => ctx.stopRequested,
+        });
+        logger.info(`[ProjectLoop] IN_PROGRESS 完了待ち終了: ${inProg.id} outcome=${watchRes.outcome}`);
+        if (watchRes.outcome === 'stopped') {
+          ctx.stopReason = 'stopped_by_user';
+          break;
+        }
+        // 状態変化したのでループ先頭へ戻る（次ループで PENDING を再確認）
+        continue;
+      }
+
       ctx.stopReason = 'no_pending_tasks';
       break;
     }

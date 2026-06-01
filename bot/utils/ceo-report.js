@@ -42,7 +42,17 @@ const EXEC_LABEL = {
 // ─────────────────────────────────────────────────────
 function boardStatusToExecStatus(boardStatus, runStats, taskSummary) {
   const { tasksFailed = 0, stopReason = '' } = runStats;
-  const { awaiting = 0 } = taskSummary;
+  const { awaiting = 0, inProgress = 0 } = taskSummary;
+
+  // IN_PROGRESS タスクあり → 開発実行中（商品完成とは別）
+  if (inProgress > 0) {
+    return EXEC_STATUS.CONTINUE_DEVELOPMENT;
+  }
+
+  // stopReason が "作業中タスク待ち" 系
+  if (/waiting_for_in_progress|development_running/.test(stopReason)) {
+    return EXEC_STATUS.CONTINUE_DEVELOPMENT;
+  }
 
   switch (boardStatus) {
     case 'BLOCKED':

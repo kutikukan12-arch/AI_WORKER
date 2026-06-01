@@ -51,12 +51,26 @@ const STATUS_LABEL = {
 //
 // 戻り値: BOARD_STATUS のいずれか
 // ─────────────────────────────────────────────────────
+// 状態判定の優先順位（タスク消化と商品完成を分離）:
+//   1. IN_PROGRESS あり        → DEVELOPMENT_RUNNING（実行中）
+//   2. HUMAN_CHECK / BLOCKED  → BLOCKED
+//   3. REVIEW待ち / YELLOW    → NEEDS_REVIEW
+//   4. PENDING / ON_HOLD あり → NEEDS_REFINEMENT
+//   5. 商品完成はここでは判定しない（外部検証で決まる）
+const BOARD_STATUS_DEVELOPMENT_RUNNING = 'DEVELOPMENT_RUNNING';
+
 function determineStatus(runStats, quality, taskSummary) {
   const { tasksFailed = 0, stopReason = '' } = runStats;
   const { level = 'GREEN', redTriggers = [] } = quality;
-  const { pending = 0, onHold = 0, reviewing = 0, awaiting = 0 } = taskSummary;
+  const { pending = 0, onHold = 0, reviewing = 0, awaiting = 0,
+          inProgress = 0 } = taskSummary;
 
-  // ── BLOCKED 判定（最優先）──────────────────────────
+  // ── 優先1: 作業中タスクあり（タスク消化中・商品完成とは別）
+  if (inProgress > 0) {
+    return BOARD_STATUS.NEEDS_REFINEMENT; // 作業継続中 = まだ完成ではない
+  }
+
+  // ── 優先2: BLOCKED 判定 ─────────────────────────────
   // 失敗あり / Quality RED / 承認待ち / 連続エラー停止
   if (
     tasksFailed > 0 ||
@@ -67,26 +81,27 @@ function determineStatus(runStats, quality, taskSummary) {
     return BOARD_STATUS.BLOCKED;
   }
 
-  // ── NEEDS_REVIEW（実装完了だが評価が必要）─────────
+  // ── 優先3: NEEDS_REVIEW（実装完了だが評価が必要）─────
   // YELLOW / レビュー待ちあり
   if (level === 'YELLOW' || reviewing > 0) {
     return BOARD_STATUS.NEEDS_REVIEW;
   }
 
-  // ── NEEDS_REFINEMENT（登録タスク終了だが不足あり）─
+  // ── 優先4: NEEDS_REFINEMENT（登録タスク終了だが不足あり）
   // project_done 直後・残タスクあり・最初はほぼここ
   if (
     stopReason === 'project_done' ||
     pending > 0 ||
-    onHold > 0
+    onHold > 0 ||
+    /no_pending_tasks|waiting_for_in_progress/.test(stopReason)
   ) {
     return BOARD_STATUS.NEEDS_REFINEMENT;
   }
 
-  // ── RELEASE_READY（非常に厳格）─────────────────────
+  // ── 優先5: RELEASE_READY（非常に厳格）─────────────────
   // 全て0 + GREEN + project_done + tasksFailed=0 でのみ
-  // ※ 初期実装では意図的に難しくする（安全側）
-  return BOARD_STATUS.NEEDS_REFINEMENT; // 常にNEEDS_REFINEMENTを優先
+  // ※ 商品完成は外部検証（Product Audit）が必要
+  return BOARD_STATUS.NEEDS_REFINEMENT; // 安全側
 }
 
 // ─────────────────────────────────────────────────────
