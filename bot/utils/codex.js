@@ -223,6 +223,22 @@ async function callCodexAPI(prompt, codeContent, model = 'gpt-4o') {
     const data = await response.json();
     const result = data.choices?.[0]?.message?.content || null;
     logger.info('Codex API 呼び出し完了');
+
+    // Finance Manager: OpenAI usage を記録（フェイルオープン）
+    try {
+      const usage = data.usage;
+      if (usage) {
+        const fm = require('./finance-manager');
+        fm.recordOpenAI({
+          projectId:    'unknown', // 呼び出し元で projectId を渡せない（後方互換）
+          taskId:       null,
+          model,
+          inputTokens:  usage.prompt_tokens     || 0,
+          outputTokens: usage.completion_tokens || 0,
+        });
+      }
+    } catch { /* Finance 記録失敗はメイン処理を壊さない */ }
+
     return result;
 
   } catch (err) {

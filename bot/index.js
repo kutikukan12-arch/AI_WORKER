@@ -119,6 +119,10 @@ const aiBoardReport = require('./utils/ai-board-report');
 
 // ─── CEO Report ───
 const ceoReport = require('./utils/ceo-report');
+
+// ─── Finance Manager ───
+const financeManager = require('./utils/finance-manager');
+
 const companyManager  = require('./utils/company-manager');
 const qualityGate     = require('./utils/quality-gate');
 
@@ -1755,11 +1759,15 @@ async function _teardown(ctx, prevPid) {
       const ceoRpt = ceoReport.generateCeoReport(
         projectId, runStats, qaForBoard, report.status, taskManager, projectManager
       );
-      // 3パートに分けて送信
+      // Finance Manager: Claude Code コストを月次集計に同期
+      try { financeManager.syncClaudeCosts(); } catch { /* ignore */ }
+
+      // 3パートに分けて送信（Part4: Finance セクション追加）
       const parts = [
         ceoReport.formatCeoReportPart1(ceoRpt),
         ceoReport.formatCeoReportPart2(ceoRpt),
         ceoReport.formatCeoReportPart3(ceoRpt),
+        financeManager.formatFinanceSection(),  // 💰 Finance セクション
       ];
       // 送信先: CEO_REPORT_CHANNEL_ID → sendNotification, 未設定 → コマンドチャンネル
       const sendPart = async (text) => {
@@ -6661,6 +6669,13 @@ client.on('messageCreate', async (message) => {
 
   if (content === '!doctor') {
     await handleDoctor(message);
+    return;
+  }
+
+  // !cost — Finance Manager コストレポート
+  if (content === '!cost') {
+    const costText = financeManager.formatCostReport();
+    await message.reply(costText.slice(0, 1900)).catch(() => {});
     return;
   }
 
