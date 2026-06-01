@@ -38,6 +38,21 @@ const CHUNK_SIZE  = 20;  // 一度に処理する history ファイル数
 const MIN_SAMPLES = 5;   // モデル学習に必要な最低サンプル数
 
 // ─────────────────────────────────────────────────────
+// _checkClassBalance(y) — 二値ラベル配列に正例・負例の両クラスがあるか確認
+//
+// 戻り値: { posCount, negCount, isBalanced }
+// isBalanced = true のときのみ LogisticRegression を学習すべき。
+// ─────────────────────────────────────────────────────
+function _checkClassBalance(y) {
+  let posCount = 0, negCount = 0;
+  for (const v of y) {
+    if (v === 1) posCount++;
+    else         negCount++;
+  }
+  return { posCount, negCount, isBalanced: posCount > 0 && negCount > 0 };
+}
+
+// ─────────────────────────────────────────────────────
 // 内部: タスクの初回レビュー通過判定（v1 trainer と同じロジック）
 // ─────────────────────────────────────────────────────
 function _isFirstPassOk(task) {
@@ -177,8 +192,16 @@ function trainV2() {
 
   let successModel = null;
   if (X_success.length >= MIN_SAMPLES) {
-    successModel = new LogisticRegression().train(X_success, y_success);
-    logger.info(`[V2Trainer] LogisticRegression 学習完了 (samples:${X_success.length})`);
+    const balance = _checkClassBalance(y_success);
+    if (balance.isBalanced) {
+      successModel = new LogisticRegression().train(X_success, y_success);
+      logger.info(`[V2Trainer] LogisticRegression 学習完了 (samples:${X_success.length}, pos:${balance.posCount}, neg:${balance.negCount})`);
+    } else {
+      logger.warn(
+        `[V2Trainer] 成功モデル: 全${X_success.length}件が単一クラス` +
+        ` (pos:${balance.posCount}, neg:${balance.negCount}) — 判別不能のためスキップ`
+      );
+    }
   } else {
     logger.info(`[V2Trainer] 成功モデルはサンプル不足でスキップ (${X_success.length}/${MIN_SAMPLES})`);
   }
@@ -285,4 +308,4 @@ function getV2Stats() {
   };
 }
 
-module.exports = { trainV2, trainIncrementalV2, loadModels, getV2Stats };
+module.exports = { trainV2, trainIncrementalV2, loadModels, getV2Stats, _checkClassBalance };

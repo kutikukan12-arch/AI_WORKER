@@ -246,6 +246,56 @@ test('encode(): 90日以上前のタスクは recency_norm = 0.0', () => {
 });
 
 // ─────────────────────────────────────────────────────
+// 5. クラスバランスガード (_checkClassBalance)
+// ─────────────────────────────────────────────────────
+console.log('\n[5. クラスバランスガード: _checkClassBalance]');
+
+const { _checkClassBalance } = require('../bot/utils/ai-model-v2-trainer');
+
+test('_checkClassBalance: 全て正例 → isBalanced=false', () => {
+  const y = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]; // 10件全hit
+  const r = _checkClassBalance(y);
+  assert.strictEqual(r.posCount, 10, `posCount=${r.posCount}`);
+  assert.strictEqual(r.negCount, 0,  `negCount=${r.negCount}`);
+  assert.strictEqual(r.isBalanced, false, '全正例なのに isBalanced=true');
+});
+
+test('_checkClassBalance: 全て負例 → isBalanced=false', () => {
+  const y = [0, 0, 0, 0, 0];
+  const r = _checkClassBalance(y);
+  assert.strictEqual(r.isBalanced, false, '全負例なのに isBalanced=true');
+});
+
+test('_checkClassBalance: 混在 → isBalanced=true', () => {
+  const y = [1, 1, 1, 0, 1, 0, 1, 1, 0, 1];
+  const r = _checkClassBalance(y);
+  assert.strictEqual(r.posCount, 7);
+  assert.strictEqual(r.negCount, 3);
+  assert.strictEqual(r.isBalanced, true, '混在なのに isBalanced=false');
+});
+
+test('_checkClassBalance: 1件ずつ → isBalanced=true', () => {
+  const r = _checkClassBalance([1, 0]);
+  assert.strictEqual(r.isBalanced, true);
+});
+
+test('LogisticRegression: 全正例で学習すると予測値が一定になる（判別不能を確認）', () => {
+  const X = [];
+  const y = [];
+  for (let i = 0; i < 20; i++) {
+    // 異なる type にしても全て正例
+    const task = makeTask({ type: i % 2 === 0 ? 'IMPLEMENT' : 'FIX' });
+    X.push(extractor.encode(task));
+    y.push(1); // 全hit
+  }
+  const m = new LogisticRegression({ epochs: 50 }).train(X, y);
+  const preds = X.map(x => m.predict(x));
+  const maxDiff = Math.max(...preds) - Math.min(...preds);
+  // 全正例では予測値が一定（分散が非常に小さい）になる
+  assert.ok(maxDiff < 0.1, `全正例でも予測に ${maxDiff.toFixed(4)} の幅がある（想定より大きい）`);
+});
+
+// ─────────────────────────────────────────────────────
 // 結果
 // ─────────────────────────────────────────────────────
 console.log(`\n${'─'.repeat(50)}`);
