@@ -108,6 +108,9 @@ const pendingPlans = require('./utils/pending-plans');
 // ─── !project refine: Gap 分析（優先順位付き）───
 const refineGapAnalyzer = require('./utils/refine-gap-analyzer');
 
+// ─── タスク状態監視（状態ベース待機）───
+const { waitForStateChange } = require('./utils/task-state-watcher');
+
 // ─── Project Insights（Human feedback / Audit / Requirements）───
 const projectInsights = require('./utils/project-insights');
 
@@ -1407,14 +1410,41 @@ async function _runProjectLoop(ctx) {
       const typeGuard     = taskManager.buildTypeGuard(storedType);
       const guardedPrompt = prompt + typeGuard;
 
-      await enqueueAndWait(next.id, () => executeClaudeTask({
+      // ─ 状態ベース監視で実行 ─────────────────────────────
+      // executeClaudeTask をバックグラウンド起動し、
+      // task.state のポーリングと Promise.race させる。
+      // 状態変化を即検出 → 後処理（Discord/GitHub）はバックグラウンドで継続。
+      const taskTimeoutMs = (parseInt(process.env.TASK_TIMEOUT_SECONDS) || 300) * 1000 + 10_000;
+      const execPromise   = enqueueAndWait(next.id, () => executeClaudeTask({
         message, prompt: guardedPrompt, taskId: next.id, projectId,
         taskType, taskSizeResult, taskWorkspace, refTaskId: null, source: 'project-run',
       }));
+      // 状態監視: 1.5 秒ポーリングで IN_PROGRESS 以外への遷移を即検出
+      const watchPromise  = waitForStateChange(next.id, taskManager, {
+        maxWaitMs:      taskTimeoutMs,
+        pollIntervalMs: 1500,
+        checkStopFn:    () => ctx.stopRequested,
+      });
+      // 状態変化が先に来たらそちらを採用（後処理はバックグラウンドで継続）
+      const watchResult   = await Promise.race([
+        watchPromise,
+        execPromise.then(() => {
+          // exec 完了後の最新状態を取得
+          const t = taskManager.getTask(next.id);
+          return { outcome: t ? (t.state !== taskManager.STATES.IN_PROGRESS ? 'changed' : 'in_progress') : 'done', task: t };
+        }),
+      ]);
+      // execPromise が背後で継続している場合も吸収（エラーは無視）
+      execPromise.catch(() => {});
 
-      // 完了後の状態確認
-      const finalTask = taskManager.getTask(next.id);
-      if (!finalTask) {
+      // watchResult から finalTask を取得（exec が先に完了した場合も同様）
+      const finalTask = watchResult.task !== undefined
+        ? watchResult.task
+        : taskManager.getTask(next.id);
+
+      logger.info(`[ProjectLoop] 状態検出: ${next.id} outcome=${watchResult.outcome} state=${finalTask?.state || 'archived'}`);
+
+      if (!finalTask || watchResult.outcome === 'done') {
         // DONE（アーカイブ済み）
         ctx.tasksDone++;
         ctx.consecutiveErrors = 0;
