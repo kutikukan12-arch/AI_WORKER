@@ -104,6 +104,9 @@ const workerRegistry  = require('./utils/worker-registry');
 
 // ─── !project refine: 保留計画管理 ───
 const pendingPlans = require('./utils/pending-plans');
+
+// ─── AI Board Report ───
+const aiBoardReport = require('./utils/ai-board-report');
 const companyManager  = require('./utils/company-manager');
 const qualityGate     = require('./utils/quality-gate');
 
@@ -194,6 +197,9 @@ const ERROR_CHANNEL_ID    = process.env.ERROR_CHANNEL_ID    || '1509548061884682
 // YouTube 視聴予測 AI
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || '';
 
+// AI Board Report チャンネル（未設定時はコマンドチャンネルにフォールバック）
+const AI_BOARD_CHANNEL_ID = process.env.AI_BOARD_CHANNEL_ID || '';
+
 const NOTIFICATION_CHANNELS = Object.freeze({
   history:     HISTORY_CHANNEL_ID,
   aiReview:    AI_REVIEW_CHANNEL_ID,
@@ -202,6 +208,7 @@ const NOTIFICATION_CHANNELS = Object.freeze({
   meeting:     MEETING_CHANNEL_ID,
   git:         GITHUB_LOG_CHANNEL_ID,
   pr:          PR_CHANNEL_ID,
+  boardReport: AI_BOARD_CHANNEL_ID,
 });
 
 // workspace パス
@@ -1525,6 +1532,27 @@ async function _teardown(ctx, prevPid) {
     postQaText
   ).catch(() => {});
 
+  // 3b. AI Board Report（project_done 時または全stopReason で送信）
+  try {
+    const qaForBoard = (() => {
+      try { return qualityGate.assessQuality(projectId); } catch { return { level: 'GREEN', score: null, redTriggers: [] }; }
+    })();
+    const runStats = { tasksDone, tasksFailed, stopReason: stopReason || '', yellowCount };
+    const report   = aiBoardReport.generateBoardReport(
+      projectId, runStats, qaForBoard, taskManager, projectManager
+    );
+    const reportText = aiBoardReport.formatBoardReport(report);
+    // AI_BOARD_CHANNEL_ID があればそこへ、なければ実行チャンネルへ
+    if (AI_BOARD_CHANNEL_ID) {
+      await sendNotification('boardReport', message.channel, reportText.slice(0, 1900)).catch(() => {});
+    } else {
+      await message.channel.send(reportText.slice(0, 1900)).catch(() => {});
+    }
+    logger.info(`[BoardReport] 送信完了: ${projectId} | status:${report.status}`);
+  } catch (brErr) {
+    logger.warn(`[BoardReport] 生成エラー（続行）: ${brErr.message}`);
+  }
+
   // 4. activeRuns から削除
   activeRuns.delete(projectId);
 
@@ -2632,6 +2660,42 @@ async function handleProject(message, args) {
   // ─── !project refine — 不足機能分析 → タスク案生成 ───────────
   if (sub === 'refine') {
     await handleProjectRefine(message, args);
+    return;
+  }
+
+  // ─── !project board [projectId] — AI Board Report 手動生成 ───
+  if (sub === 'board') {
+    const boardPid = args[1] || projectManager.getCurrentProject(message.channelId) || 'default';
+    const boardProj = projectManager.getProject(boardPid);
+    if (!boardProj) {
+      await message.reply(`❌ プロジェクトが見つかりません: \`${boardPid}\``).catch(() => {});
+      return;
+    }
+    const processingBoard = await message.reply(`⏳ **AI Board Report 生成中...**\n\`${boardPid}\``).catch(() => null);
+    try {
+      const qa = (() => {
+        try { return qualityGate.assessQuality(boardPid); }
+        catch { return { level: 'GREEN', score: null, redTriggers: [] }; }
+      })();
+      // 手動実行の場合 runStats は現在のタスク状態から推定
+      const allT     = taskManager.listTasks();
+      const projT    = projectManager.filterTasksByProject(allT, boardPid);
+      const doneCount = projT.filter(t => t.state === taskManager.STATES.DONE).length;
+      const runStats = {
+        tasksDone:   doneCount,
+        tasksFailed: 0,
+        stopReason:  'manual_board',
+        yellowCount: 0,
+      };
+      const report   = aiBoardReport.generateBoardReport(boardPid, runStats, qa, taskManager, projectManager);
+      const text     = aiBoardReport.formatBoardReport(report);
+      if (processingBoard) await processingBoard.edit(text.slice(0, 1900)).catch(() => {});
+      else await message.reply(text.slice(0, 1900)).catch(() => {});
+      logger.info(`[BoardReport] 手動生成: ${boardPid} | status:${report.status}`);
+    } catch (e) {
+      logger.error(`[BoardReport] 手動生成エラー: ${e.message}`);
+      if (processingBoard) await processingBoard.edit(`❌ Board Report 生成に失敗しました: ${e.message.slice(0, 100)}`).catch(() => {});
+    }
     return;
   }
 
