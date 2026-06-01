@@ -105,6 +105,9 @@ const workerRegistry  = require('./utils/worker-registry');
 // ─── !project refine: 保留計画管理 ───
 const pendingPlans = require('./utils/pending-plans');
 
+// ─── !project refine: Gap 分析（優先順位付き）───
+const refineGapAnalyzer = require('./utils/refine-gap-analyzer');
+
 // ─── AI Board Report ───
 const aiBoardReport = require('./utils/ai-board-report');
 
@@ -2546,53 +2549,89 @@ async function handleProjectRefine(message, args) {
       }
     } catch { /* ignore */ }
 
-    // Planner で gap 分析 + 候補生成（既存 planProjectGoalsBest を活用）
+    // ─ Gap 分析（優先順位付き）+ Planner 結果を合流 ──
+    // Phase 改善: 一般的な次ステップではなく PM/Product 監査視点で優先順位付け
+    const qaForRefine = (() => {
+      try { return qualityGate.assessQuality(pid); }
+      catch { return { level: 'GREEN', score: null, redTriggers: [], indicators: {} }; }
+    })();
+    const indForRefine = (() => {
+      try { return qualityGate.gatherIndicators(pid); }
+      catch { return {}; }
+    })();
+    const boardStatusForRefine = (() => {
+      try {
+        const runStats = { tasksDone: indForRefine.doneCount || 0, tasksFailed: indForRefine.failedCount || 0, stopReason: '' };
+        const rpt = aiBoardReport.generateBoardReport(pid, runStats, qaForRefine, taskManager, projectManager);
+        return rpt.status;
+      } catch { return 'NEEDS_REFINEMENT'; }
+    })();
+    const reviewsDirForRefine = path.join(AI_WORKER_ROOT, 'reviews');
+
+    const gapResult = refineGapAnalyzer.analyzeGaps({
+      projectId:      pid,
+      project,
+      boardStatus:    boardStatusForRefine,
+      indicators:     indForRefine,
+      qualityLevel:   qaForRefine.level,
+      taskManager,
+      projectManager,
+      reviewsDir:     reviewsDirForRefine,
+    });
+    logger.info(`[Refine] Gap分析: ${pid} | P1:${gapResult.gaps.filter(g=>g.category==='P1').length} P2:${gapResult.gaps.filter(g=>g.category==='P2').length} P3:${gapResult.gaps.filter(g=>g.category==='P3').length} sources:${gapResult.sources.join(',')}`);
+
+    // Planner の nextCandidates を P3〜P5 として後ろに追加（gap analyzer が優先）
     const planner = require('./utils/project-planner.js');
-    const plan    = await planner.planProjectGoalsBest(pid, {
+    const plannerResult = await planner.planProjectGoalsBest(pid, {
       description: (project.description || project.name || '') + (project.goal || ''),
       doneTasks:   doneSums,
     });
+    const plannerExtras = (plannerResult.nextCandidates || []).slice(0, 15).map(c => ({
+      type:          c.type || 'IMPLEMENT',
+      prompt:        (c.title || c.prompt || '').slice(0, 500),
+      priority:      c.priority || '中',
+      dangerLevel:   '低',
+      category:      'P5',  // planner 候補は最低優先度として追加
+      categoryRank:  6,
+      categoryLabel: '一般候補',
+      reason:        c.reason || '不足機能候補',
+      source:        'planner',
+      fromLarge:     false,
+    }));
 
-    // 候補を全件取得（max 30件まで取得し 20件 + overflow に分割）
-    const allCandidates = (plan.nextCandidates || []).slice(0, 30);
-    const rawProposals  = [];
-
-    for (const cand of allCandidates) {
-      const prompt = cand.title || cand.prompt || '';
-      if (!prompt) continue;
-
-      const estSize = taskTypeUtil.estimateTaskSize(prompt);
-
-      if (estSize.size === taskTypeUtil.TASK_SIZES.LARGE) {
-        // LARGE → generateSplitProposals で分割してそれぞれ追加
-        const splits = taskManager.generateSplitProposals(prompt);
-        for (const sp of splits) {
-          rawProposals.push({
-            type:       cand.type || 'IMPLEMENT',
-            prompt:     sp.slice(0, 500),
-            priority:   cand.priority || '中',
-            dangerLevel: '低',
-            size:       taskTypeUtil.estimateTaskSize(sp).size,
-            reason:     `${cand.reason || '不足機能'} (LARGE分割)`,
-            fromLarge:  true,
-          });
-        }
-      } else {
-        rawProposals.push({
-          type:       cand.type || 'IMPLEMENT',
-          prompt:     prompt.slice(0, 500),
-          priority:   cand.priority || '中',
-          dangerLevel: '低',
-          size:       estSize.size,
-          reason:     cand.reason || '不足機能',
-          fromLarge:  false,
-        });
+    // Gap + Planner をマージ（gap 優先、重複除去）
+    const merged = [...gapResult.gaps];
+    const existingPrompts = new Set(merged.map(g => g.prompt.slice(0, 40)));
+    for (const extra of plannerExtras) {
+      if (!extra.prompt) continue;
+      const key = extra.prompt.slice(0, 40);
+      if (!existingPrompts.has(key)) {
+        merged.push(extra);
+        existingPrompts.add(key);
       }
     }
 
-    // security.checkPrompt フィルタ（ブロックされたものは除外・ログ）
+    // LARGE タスクを分割
+    const rawProposals = [];
+    for (const item of merged) {
+      const prompt  = item.prompt || '';
+      const estSize = taskTypeUtil.estimateTaskSize(prompt);
+      if (estSize.size === taskTypeUtil.TASK_SIZES.LARGE) {
+        const splits = taskManager.generateSplitProposals(prompt);
+        for (const sp of splits) {
+          rawProposals.push({ ...item, prompt: sp.slice(0, 500),
+            size: taskTypeUtil.estimateTaskSize(sp).size, fromLarge: true,
+            reason: `${item.reason} (LARGE分割)` });
+        }
+      } else {
+        rawProposals.push({ ...item, size: estSize.size });
+      }
+    }
+
+    // security.checkPrompt フィルタ
     const safeProposals = [];
     for (const p of rawProposals) {
+      if (!p.prompt) continue;
       const sec = security.checkPrompt(p.prompt);
       if (!sec.safe) {
         logger.warn(`[Refine] セキュリティブロック: ${p.prompt.slice(0, 40)} | ${sec.reason}`);
@@ -2601,14 +2640,17 @@ async function handleProjectRefine(message, args) {
       safeProposals.push({ ...p, securityOk: true });
     }
 
-    // 20件 / overflow に分割
+    // 20件 / overflow に分割（優先順位順なので先頭が高優先）
     const MAX = pendingPlans.MAX_TASKS;
     const tasks    = safeProposals.slice(0, MAX);
     const overflow = safeProposals.slice(MAX);
 
     if (tasks.length === 0) {
       if (processingMsg) await processingMsg.edit(
-        `📊 **Refine 分析完了** — Project: \`${pid}\`\n\n不足タスク候補が見つかりませんでした。\nプロジェクトの説明・目標を \`!project switch\` で確認してください。`
+        `📊 **Refine 分析完了** — Project: \`${pid}\`\n\n` +
+        `現時点では不足タスク候補が見つかりませんでした。\n` +
+        `Board Status: **${boardStatusForRefine}** | Quality: **${qaForRefine.level}**\n\n` +
+        `プロジェクトの説明・目標を更新するか、直接 \`!task add\` でタスクを追加してください。`
       ).catch(() => {});
       return;
     }
@@ -2630,27 +2672,47 @@ async function handleProjectRefine(message, args) {
   }
 }
 
-/** refine 計画を Discord Embed にフォーマット */
+/** refine 計画を Discord Embed にフォーマット（優先カテゴリ付き） */
 function _formatRefinePlan(plan, pid) {
-  const TYPE_EMOJI = { IMPLEMENT: '🔧', RESEARCH: '🔍', TEST: '🧪', DOCS: '📝', REVIEW: '🔎' };
+  const TYPE_EMOJI = { IMPLEMENT: '🔧', RESEARCH: '🔍', TEST: '🧪', DOCS: '📝', REVIEW: '🔎', FIX: '🛠️' };
+  const CAT_EMOJI  = { P1: '🔴', P2: '🟠', P3: '🟡', P4: '🔵', P5: '⬜', undefined: '📌' };
+
+  // カテゴリ別にグループ化して表示
+  const byCategory = {};
+  for (const t of plan.tasks) {
+    const cat = t.category || 'P5';
+    if (!byCategory[cat]) byCategory[cat] = [];
+    byCategory[cat].push(t);
+  }
 
   const taskLines = plan.tasks.map((t, i) => {
-    const emoji = TYPE_EMOJI[t.type] || '📌';
-    const label = `${i + 1}. ${emoji} [${t.type}] ${(t.prompt || '').slice(0, 50)}`;
-    const suffix = t.fromLarge ? ' *(分割)*' : '';
-    const reason = t.reason ? `\n   └ ${(t.reason).slice(0, 40)}` : '';
-    return label + suffix + reason;
+    const typeEmoji = TYPE_EMOJI[t.type] || '📌';
+    const catEmoji  = CAT_EMOJI[t.category] || '📌';
+    const catLabel  = t.categoryLabel ? `[${t.categoryLabel}]` : '';
+    const prompt    = (t.prompt || '').slice(0, 48);
+    const suffix    = t.fromLarge ? ' *(分割)*' : '';
+    const reason    = t.reason ? `\n   └ ${t.reason.slice(0, 45)}` : '';
+    return `${i + 1}. ${catEmoji}${typeEmoji} ${catLabel} ${prompt}${suffix}${reason}`;
   }).join('\n');
 
+  // 優先度サマリー
+  const p1Count = (byCategory['P1'] || []).length;
+  const p2Count = (byCategory['P2'] || []).length;
+  const prioritySummary = [
+    p1Count > 0 ? `🔴 コア価値未達:${p1Count}件` : '',
+    p2Count > 0 ? `🟠 致命的不具合:${p2Count}件` : '',
+  ].filter(Boolean).join(' | ');
+
   const embed = new EmbedBuilder()
-    .setColor(0x5865F2)
+    .setColor(p1Count > 0 || p2Count > 0 ? 0xFF6600 : 0x5865F2)
     .setTitle(`📋 Refine 提案 — ${pid}`)
     .setDescription(
       `Plan ID: \`${plan.id}\`\n` +
-      `ステータス: **${plan.status}** | 有効期限: ${new Date(plan.expiresAt).toLocaleString('ja-JP')}`
+      `ステータス: **${plan.status}** | 有効期限: ${new Date(plan.expiresAt).toLocaleString('ja-JP')}\n` +
+      (prioritySummary ? `\n**優先度:** ${prioritySummary}` : '')
     )
     .addFields({
-      name: `不足タスク候補 (${plan.tasks.length}件)`,
+      name: `不足タスク候補 (${plan.tasks.length}件) — 上が優先度高`,
       value: fmt.embedField(taskLines || '（なし）'),
       inline: false,
     });
