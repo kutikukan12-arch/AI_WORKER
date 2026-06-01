@@ -5630,43 +5630,7 @@ function _parseYtKwargs(str) {
   return result;
 }
 
-function _classifyDiscordError(errMsg) {
-  const msg = errMsg || '';
-  if (/タイムアウト|timeout|timed out/i.test(msg)) {
-    return (
-      '⏱️ **タイムアウト** — 処理に時間がかかりすぎました。\n' +
-      '少し待ってから再試行してください。'
-    );
-  }
-  if (/ENOTFOUND|ECONNREFUSED|ECONNRESET|network.?error|connection.?refused|getaddrinfo/i.test(msg)) {
-    return (
-      '🌐 **ネットワークエラー** — 外部サービスへの接続に失敗しました。\n' +
-      'インターネット接続を確認してから再試行してください。'
-    );
-  }
-  if (/401|403|unauthorized|forbidden|authentication failed|token|credential/i.test(msg)) {
-    return (
-      '🔑 **認証エラー** — アクセス権限がありません。\n' +
-      '`.env` の API キー・トークンを確認してください。`!doctor` で診断できます。'
-    );
-  }
-  if (/ENOENT|EACCES|EPERM|permission denied|no such file/i.test(msg)) {
-    return (
-      '📁 **ファイルアクセスエラー** — ファイルまたはディレクトリにアクセスできません。\n' +
-      'ワークスペースのフォルダ権限を確認してください。'
-    );
-  }
-  if (/quota|rate.?limit|429/i.test(msg)) {
-    return (
-      '⏳ **API 制限** — リクエスト上限に達しました。\n' +
-      'しばらく待ってから再試行してください。'
-    );
-  }
-  return (
-    '🔧 **予期しないエラー** — 詳細は `logs/` を確認してください。\n' +
-    '再試行しても解決しない場合は管理者に連絡してください。'
-  );
-}
+const _classifyDiscordError = fmt.classifyDiscordError;
 
 function _classifyYtDiscordError(errMsg) {
   if (/タイムアウト|timeout|timed/i.test(errMsg)) {

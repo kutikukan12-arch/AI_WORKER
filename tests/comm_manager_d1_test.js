@@ -426,5 +426,111 @@ test('7h. formatHumanCheck の却下後に「再実行できる」旨がある',
   );
 });
 
+// ─────────────────────────────────────────────────────
+// 8. [Phase 3] formatTypeGuard — 危険度ラベル → Type Guard ブロック
+// ─────────────────────────────────────────────────────
+console.log('\n[8. formatTypeGuard — Type Guard ブロック生成]');
+
+test('8a. 危険度「高」→ REJECT ブロックが返る', () => {
+  const text = fmt.formatTypeGuard('高');
+  assert.ok(text.includes('REJECT'), 'REJECT が含まれない');
+  assert.ok(text.includes('却下推奨'), '却下推奨が含まれない');
+});
+
+test('8b. 危険度「中」→ IMPLEMENT ブロックが返る', () => {
+  const text = fmt.formatTypeGuard('中');
+  assert.ok(text.includes('IMPLEMENT'), 'IMPLEMENT が含まれない');
+  assert.ok(text.includes('実装してよい'), '実装してよい が含まれない');
+});
+
+test('8c. 危険度「低」→ SKIP ブロックが返る', () => {
+  const text = fmt.formatTypeGuard('低');
+  assert.ok(text.includes('SKIP'), 'SKIP が含まれない');
+  assert.ok(text.includes('問題なし'), '問題なし が含まれない');
+});
+
+test('8d. 絵文字付き「🔴高」でも REJECT が返る', () => {
+  const text = fmt.formatTypeGuard('🔴高');
+  assert.ok(text.includes('REJECT'), '絵文字付き危険度で REJECT が含まれない');
+});
+
+test('8e. 絵文字付き「🟡中」でも IMPLEMENT が返る', () => {
+  const text = fmt.formatTypeGuard('🟡中');
+  assert.ok(text.includes('IMPLEMENT'), '絵文字付き危険度で IMPLEMENT が含まれない');
+});
+
+test('8f. 空文字列・undefined → SKIP が返る（デフォルト）', () => {
+  assert.ok(fmt.formatTypeGuard('').includes('SKIP'), '空文字で SKIP が返らない');
+  assert.ok(fmt.formatTypeGuard(undefined).includes('SKIP'), 'undefined で SKIP が返らない');
+});
+
+test('8g. 各ブロックは --- セパレータで始まる', () => {
+  ['高', '中', '低'].forEach(d => {
+    const text = fmt.formatTypeGuard(d);
+    assert.ok(text.startsWith('---'), `危険度「${d}」のブロックが --- で始まらない`);
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// 9. [Phase 3] classifyDiscordError — エラー文字列 → スマホ向け説明文
+// ─────────────────────────────────────────────────────
+console.log('\n[9. classifyDiscordError — エラー分類]');
+
+test('9a. タイムアウト系メッセージ → ⏱️ タイムアウト', () => {
+  const text = fmt.classifyDiscordError('Operation timed out after 30000ms');
+  assert.ok(text.includes('タイムアウト'), 'タイムアウト分類がない');
+  assert.ok(text.includes('再試行'), '再試行案内がない');
+});
+
+test('9b. ENOTFOUND → 🌐 ネットワークエラー', () => {
+  const text = fmt.classifyDiscordError('getaddrinfo ENOTFOUND api.github.com');
+  assert.ok(text.includes('ネットワークエラー'), 'ネットワーク分類がない');
+});
+
+test('9c. 403 Forbidden → 🔑 認証エラー', () => {
+  const text = fmt.classifyDiscordError('Request failed with status code 403');
+  assert.ok(text.includes('認証エラー'), '認証エラー分類がない');
+  assert.ok(text.includes('!doctor') || text.includes('API キー'), 'doctor/APIキー案内がない');
+});
+
+test('9d. ENOENT → 📁 ファイルアクセスエラー', () => {
+  const text = fmt.classifyDiscordError("ENOENT: no such file or directory, open 'workspace/foo'");
+  assert.ok(text.includes('ファイルアクセスエラー'), 'ファイルエラー分類がない');
+});
+
+test('9e. 429 / rate limit → ⏳ API 制限', () => {
+  const text = fmt.classifyDiscordError('HTTP 429 Too Many Requests');
+  assert.ok(text.includes('API 制限'), 'API制限分類がない');
+});
+
+test('9f. 未知のエラー → 🔧 予期しないエラー', () => {
+  const text = fmt.classifyDiscordError('something completely unexpected happened');
+  assert.ok(text.includes('予期しないエラー'), '不明エラー分類がない');
+  assert.ok(text.includes('logs/'), 'logs/ 案内がない');
+});
+
+test('9g. null / undefined 引数でもクラッシュしない', () => {
+  assert.doesNotThrow(() => fmt.classifyDiscordError(null));
+  assert.doesNotThrow(() => fmt.classifyDiscordError(undefined));
+  assert.ok(fmt.classifyDiscordError(null).length > 0, 'null で空文字を返した');
+});
+
+test('9h. classifyDiscordError が formatter.js からエクスポートされている', () => {
+  assert.strictEqual(typeof fmt.classifyDiscordError, 'function',
+    'classifyDiscordError が関数としてエクスポートされていない');
+});
+
+test('9i. index.js が fmt.classifyDiscordError を alias 経由で使用している', () => {
+  assert.ok(
+    src.includes('fmt.classifyDiscordError'),
+    'index.js に fmt.classifyDiscordError エイリアスがない'
+  );
+  // ローカル定義は削除されている
+  assert.ok(
+    !src.includes('function _classifyDiscordError'),
+    'index.js に _classifyDiscordError の関数定義が残っている'
+  );
+});
+
 console.log(`\n結果: ${pass} passed / ${fail} failed\n`);
 if (fail > 0) process.exit(1);
