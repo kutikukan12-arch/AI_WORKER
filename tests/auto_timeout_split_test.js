@@ -477,6 +477,69 @@ test('11g. handleAutoOn が handleAutoTimeoutSplit を使っている', () => {
 });
 
 // ─────────────────────────────────────────────────────
+// 13. TIMEOUT + ON_HOLD 検出修正のテスト（Phase E-3 バグ修正検証）
+//
+// 問題: executeClaudeTask の catch ブロックが TIMEOUT 時に
+//       state を IN_PROGRESS → ON_HOLD に変更するため、
+//       handleAutoTimeoutSplit の IN_PROGRESS ガードが弾いていた。
+// 修正: errorType='TIMEOUT' && state=ON_HOLD も Auto Split 対象とする。
+// ─────────────────────────────────────────────────────
+console.log('\n[13. TIMEOUT+ON_HOLD split 対象検出（E-3 バグ修正）]');
+
+test('13a. errorType=TIMEOUT かつ state=ON_HOLD は split 対象になる（ガード修正確認）', () => {
+  // index.js のソースを確認: isTimeoutOnHold 条件が含まれているか
+  const src = require('fs').readFileSync(require('path').join(__dirname,'..','bot','index.js'),'utf8');
+  const fnIdx = src.indexOf('async function handleAutoTimeoutSplit');
+  const fnEnd = src.indexOf('\nasync function handle', fnIdx + 1);
+  const fnBody = src.slice(fnIdx, fnEnd > 0 ? fnEnd : fnIdx + 800);
+  assert.ok(fnBody.includes('isTimeoutOnHold'), 'isTimeoutOnHold 条件がない');
+  assert.ok(fnBody.includes("errorType === 'TIMEOUT'"), "errorType=TIMEOUT チェックがない");
+  assert.ok(fnBody.includes('STATES.ON_HOLD'), 'ON_HOLD チェックがない');
+});
+
+test('13b. 通常の ON_HOLD（errorType が TIMEOUT でない）は split 対象にならない', () => {
+  // errorType=UNKNOWN, state=ON_HOLD → no_split になるべき
+  const src = require('fs').readFileSync(require('path').join(__dirname,'..','bot','index.js'),'utf8');
+  const fnIdx = src.indexOf('async function handleAutoTimeoutSplit');
+  const fnEnd = src.indexOf('\nasync function handle', fnIdx + 1);
+  const fnBody = src.slice(fnIdx, fnEnd > 0 ? fnEnd : fnIdx + 800);
+  // errorType チェックが AND 条件（isTimeoutOnHold）であることを確認
+  // "isTimeoutOnHold && ..." ではなく "!isTimeoutOnHold && ..." の形で排除していること
+  assert.ok(fnBody.includes('!isTimeoutOnHold'), '!isTimeoutOnHold による通常ON_HOLD除外がない');
+});
+
+test('13c. IN_PROGRESS は従来通り split 対象になる', () => {
+  // IN_PROGRESS のタスクは isTimeoutOnHold=false でも通過する（既存動作維持）
+  const src = require('fs').readFileSync(require('path').join(__dirname,'..','bot','index.js'),'utf8');
+  const fnIdx = src.indexOf('async function handleAutoTimeoutSplit');
+  const fnEnd = src.indexOf('\nasync function handle', fnIdx + 1);
+  const fnBody = src.slice(fnIdx, fnEnd > 0 ? fnEnd : fnIdx + 800);
+  // "task.state !== taskManager.STATES.IN_PROGRESS" 条件が OR で残っていること
+  assert.ok(fnBody.includes('STATES.IN_PROGRESS'), 'IN_PROGRESS チェックが消えている');
+  // !isTimeoutOnHold && state!==IN_PROGRESS → no_split
+  // つまり isTimeoutOnHold=true OR state===IN_PROGRESS → 通過
+  assert.ok(
+    fnBody.includes('!isTimeoutOnHold && task.state !== taskManager.STATES.IN_PROGRESS'),
+    '複合条件が正しくない'
+  );
+});
+
+test('13d. _runProjectLoop が TIMEOUT+ON_HOLD 経路で handleAutoTimeoutSplit を呼ぶ', () => {
+  // _runProjectLoop のソースに TIMEOUT+ON_HOLD 判定が追加されているか確認
+  const src = require('fs').readFileSync(require('path').join(__dirname,'..','bot','index.js'),'utf8');
+  const loopIdx = src.indexOf('async function _runProjectLoop');
+  const loopEnd = src.indexOf('\nasync function _teardown', loopIdx + 1);
+  const loopBody = src.slice(loopIdx, loopEnd > 0 ? loopEnd : loopIdx + 5000);
+  // TIMEOUT + ON_HOLD の条件が _runProjectLoop 内にある
+  assert.ok(
+    loopBody.includes("errorType === 'TIMEOUT'") && loopBody.includes('STATES.ON_HOLD'),
+    '_runProjectLoop に TIMEOUT+ON_HOLD 分岐がない'
+  );
+  // handleAutoTimeoutSplit が呼ばれている
+  assert.ok(loopBody.includes('handleAutoTimeoutSplit'), '_runProjectLoop が handleAutoTimeoutSplit を呼んでいない');
+});
+
+// ─────────────────────────────────────────────────────
 // クリーンアップ
 // ─────────────────────────────────────────────────────
 cleanup();

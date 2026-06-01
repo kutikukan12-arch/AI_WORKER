@@ -1396,7 +1396,11 @@ async function _runProjectLoop(ctx) {
         }
         // M-1: 正常なレビュー待ち（AIレビュー等）は failed 扱いしない
         // tasksDone も増やさない（実行済みだが完了ではない）
-      } else if (finalTask.state === taskManager.STATES.IN_PROGRESS) {
+      } else if (
+        finalTask.state === taskManager.STATES.IN_PROGRESS ||
+        // TIMEOUT: executeClaudeTask catch が IN_PROGRESS→ON_HOLD に遷移済み
+        (finalTask.errorType === 'TIMEOUT' && finalTask.state === taskManager.STATES.ON_HOLD)
+      ) {
         // タイムアウト → Auto Split 試行
         const splitAction = await handleAutoTimeoutSplit({
           message, task: finalTask, contextLabel: 'PROJ-RUN',
@@ -4096,7 +4100,15 @@ function enqueueAndWait(taskId, execute) {
 const AUTO_SPLIT_TASK_TYPES = new Set(['IMPLEMENT', 'FIX', 'REFACTOR', 'TEST']);
 
 async function handleAutoTimeoutSplit({ message, task, contextLabel = 'AUTO' }) {
-  if (!task || task.state !== taskManager.STATES.IN_PROGRESS) {
+  if (!task) return 'no_split';
+  // executeClaudeTask の catch ブロックが TIMEOUT 時に IN_PROGRESS→ON_HOLD へ遷移させるため、
+  // task.state だけでは TIMEOUT を検出できない。
+  // errorType='TIMEOUT' かつ state=ON_HOLD の場合も Auto Split 対象とする。
+  // 通常の ON_HOLD（ユーザー保留・他エラー）は errorType が TIMEOUT でないため対象外のまま。
+  const isTimeoutOnHold =
+    task.errorType === 'TIMEOUT' &&
+    task.state === taskManager.STATES.ON_HOLD;
+  if (!isTimeoutOnHold && task.state !== taskManager.STATES.IN_PROGRESS) {
     return 'no_split';
   }
 
