@@ -3,6 +3,9 @@
 // YouTube ヒット予測 CLI
 // Usage: node bot/predict-cli.js --title "タイトル" --subs 10000 [options]
 
+// CLI では INFO/DEBUG をコンソールに出さない（ファイルログには残る）
+process.env.LOG_LEVEL = process.env.LOG_LEVEL || 'WARN';
+
 const { predict, buildSummary } = require('./utils/youtube-predictor');
 
 // ── ヘルプ ──────────────────────────────────────────────────

@@ -32,6 +32,10 @@ const LEVEL_COLORS = {
 };
 const RESET = '\x1b[0m';
 
+// LOG_LEVEL 環境変数でコンソール出力の最低レベルを制御できる
+// 例: LOG_LEVEL=WARN → INFO/DEBUG はコンソールに出ない（ファイルには記録）
+const LEVEL_ORDER = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };
+
 // ─── メインのログ出力関数 ───
 function log(level, message) {
   const timestamp = new Date().toLocaleString('ja-JP', {
@@ -39,9 +43,12 @@ function log(level, message) {
     hour: '2-digit', minute: '2-digit', second: '2-digit'
   });
 
-  // コンソールへ色付きで出力
-  const color = LEVEL_COLORS[level] || '';
-  console.log(`${color}[${timestamp}] [${level}]${RESET} ${message}`);
+  // コンソールへ色付きで出力（LOG_LEVEL 未満はスキップ）
+  const minLevel = LEVEL_ORDER[process.env.LOG_LEVEL] ?? 0;
+  if ((LEVEL_ORDER[level] ?? 0) >= minLevel) {
+    const color = LEVEL_COLORS[level] || '';
+    console.log(`${color}[${timestamp}] [${level}]${RESET} ${message}`);
+  }
 
   // ファイルへ色なしで保存
   const logLine = `[${timestamp}] [${level}] ${message}\n`;
