@@ -651,3 +651,219 @@ describe('buildSummary()', () => {
     assert.ok(summary.includes(result.confidence), `confidence "${result.confidence}" が含まれない`);
   });
 });
+
+// ─────────────────────────────────────────────────────
+// encode() — 追加精度テスト
+// ─────────────────────────────────────────────────────
+
+describe('encode() — 追加精度テスト', () => {
+
+  test('half-width "!" → title_has_excl = 1.0', () => {
+    const vec = encode(makeVideo({ title: 'Breaking News!' }));
+    assert.equal(vec[3], 1.0);
+  });
+
+  test('half-width "?" → title_has_quest = 1.0', () => {
+    const vec = encode(makeVideo({ title: 'Is this true?' }));
+    assert.equal(vec[4], 1.0);
+  });
+
+  test('tags が null → エラーにならない（空配列フォールバック）', () => {
+    assert.doesNotThrow(() => encode(makeVideo({ tags: null })));
+  });
+
+  test('description が null → エラーにならない', () => {
+    assert.doesNotThrow(() => encode(makeVideo({ description: null })));
+  });
+
+  test('videoId が異なる同一動画 → encode 結果は同一（videoId は特徴量に含まれない）', () => {
+    const e1 = encode(makeVideo({ videoId: 'aaa' }));
+    const e2 = encode(makeVideo({ videoId: 'bbb' }));
+    for (let i = 0; i < e1.length; i++) {
+      assert.equal(e1[i], e2[i], `vec[${i}](${FEATURE_NAMES[i]}) が異なる`);
+    }
+  });
+
+  test('emoji 2個 → title_emoji_norm = 0.4', () => {
+    const vec = encode(makeVideo({ title: '🎬🎬 テスト' }));
+    assert.ok(Math.abs(vec[5] - 0.4) < 0.001, `title_emoji_norm=${vec[5]} (期待: 0.4)`);
+  });
+
+  test('tags 15個 → tag_count_norm = 0.5', () => {
+    const vec = encode(makeVideo({ tags: Array(15).fill('tag') }));
+    assert.ok(Math.abs(vec[7] - 0.5) < 0.001, `tag_count_norm=${vec[7]} (期待: 0.5)`);
+  });
+
+  test('duration 1800秒 → duration_norm = 0.5', () => {
+    const vec = encode(makeVideo({ duration: 1800 }));
+    assert.ok(Math.abs(vec[9] - 0.5) < 0.001, `duration_norm=${vec[9]} (期待: 0.5)`);
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// predict() — ルールベース確率の精密検証
+// ─────────────────────────────────────────────────────
+
+describe('predict() — ルールベース確率の精密検証', () => {
+  // ML モデルなし状態を保証
+  const MODEL_FILE = path.join(__dirname, '..', 'data', 'youtube-model.json');
+  const MODEL_BAK  = MODEL_FILE + '.test-bak3';
+
+  before(() => {
+    if (fs.existsSync(MODEL_FILE)) fs.renameSync(MODEL_FILE, MODEL_BAK);
+  });
+  after(() => {
+    if (fs.existsSync(MODEL_FILE)) fs.unlinkSync(MODEL_FILE);
+    if (fs.existsSync(MODEL_BAK)) fs.renameSync(MODEL_BAK, MODEL_FILE);
+  });
+
+  test('buzz_ratio >= HIT_THRESHOLD(5.0) → probability = 90 (score=0.9)', () => {
+    // viewCount=5000, subs=1000 → ratio=5.0 >= 5.0 → score=0.9
+    const { probability } = predict(makeVideo({ viewCount: 5000, subscriberCount: 1000 }));
+    assert.equal(probability, 90, `probability=${probability} (期待: 90)`);
+  });
+
+  test('buzz_ratio <= MISS_THRESHOLD(0.3) → probability = 10 (score=0.1)', () => {
+    // viewCount=300, subs=1000 → ratio=0.3 <= 0.3 → score=0.1
+    const { probability } = predict(makeVideo({ viewCount: 300, subscriberCount: 1000 }));
+    assert.equal(probability, 10, `probability=${probability} (期待: 10)`);
+  });
+
+  test('buzz_ratio = 2.65 (線形補間中点) → probability = 50', () => {
+    // score = 0.1 + (2.65-0.3)/(5.0-0.3)*0.8 = 0.1 + 2.35/4.7*0.8 = 0.1 + 0.4 = 0.5
+    const { probability } = predict(makeVideo({ viewCount: 2650, subscriberCount: 1000 }));
+    assert.equal(probability, 50, `probability=${probability} (期待: 50)`);
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// predict() — ML 混合精度テスト
+// ─────────────────────────────────────────────────────
+
+describe('predict() — ML 混合精度', () => {
+  const MODEL_FILE = path.join(__dirname, '..', 'data', 'youtube-model.json');
+  const MODEL_BAK  = MODEL_FILE + '.test-bak4';
+
+  before(() => {
+    if (fs.existsSync(MODEL_FILE)) fs.renameSync(MODEL_FILE, MODEL_BAK);
+  });
+  after(() => {
+    if (fs.existsSync(MODEL_FILE)) fs.unlinkSync(MODEL_FILE);
+    if (fs.existsSync(MODEL_BAK)) fs.renameSync(MODEL_BAK, MODEL_FILE);
+  });
+
+  test('10件訓練済み (MIN_ML_SAMPLES=20 未満) → usedML=false', () => {
+    // train() は 10件で成功するが predict() での ML 使用には 20件必要
+    const samples = [
+      ...Array(5).fill(null).map(() => makeSample('hit',  { viewCount: 50000, subscriberCount: 1000 })),
+      ...Array(5).fill(null).map(() => makeSample('miss', { viewCount: 100,   subscriberCount: 1000 })),
+    ];
+    const model = train(samples);
+    assert.ok(model !== null, 'train() が null を返した');
+    const { usedML, mlSamples } = predict(makeVideo());
+    assert.equal(usedML,    false, `sampleCount=10 で usedML=true になっている`);
+    assert.equal(mlSamples, 10);
+  });
+
+  test('20件訓練済み (MIN_ML_SAMPLES=20 到達) → usedML=true', () => {
+    const samples = [
+      ...Array(10).fill(null).map(() => makeSample('hit',  { viewCount: 50000, subscriberCount: 1000 })),
+      ...Array(10).fill(null).map(() => makeSample('miss', { viewCount: 100,   subscriberCount: 1000 })),
+    ];
+    train(samples);
+    const { usedML, mlSamples } = predict(makeVideo());
+    assert.equal(usedML,    true, `sampleCount=20 で usedML=false になっている`);
+    assert.equal(mlSamples, 20);
+  });
+
+  test('ML使用時も probability が 0〜100 の整数', () => {
+    const samples = [
+      ...Array(10).fill(null).map(() => makeSample('hit',  { viewCount: 50000, subscriberCount: 1000 })),
+      ...Array(10).fill(null).map(() => makeSample('miss', { viewCount: 100,   subscriberCount: 1000 })),
+    ];
+    train(samples);
+    const cases = [
+      makeVideo({ viewCount: 100000, subscriberCount: 1000 }),
+      makeVideo({ viewCount: 10,     subscriberCount: 100000 }),
+      makeVideo({ subscriberCount: 0 }),
+    ];
+    for (const v of cases) {
+      const { probability } = predict(v);
+      assert.ok(
+        Number.isInteger(probability) && probability >= 0 && probability <= 100,
+        `ML使用時 probability=${probability} が 0〜100 の整数でない`
+      );
+    }
+  });
+
+  test('confidence: mlSamples=0 → "low"', () => {
+    // 直前テストが train() でモデルを書き込むため、このテスト専用に明示削除する
+    if (fs.existsSync(MODEL_FILE)) fs.unlinkSync(MODEL_FILE);
+    assert.equal(predict(makeVideo()).confidence, 'low');
+  });
+
+  test('confidence: mlSamples=20 → "medium"', () => {
+    const samples = [
+      ...Array(10).fill(null).map(() => makeSample('hit',  { viewCount: 50000, subscriberCount: 1000 })),
+      ...Array(10).fill(null).map(() => makeSample('miss', { viewCount: 100,   subscriberCount: 1000 })),
+    ];
+    train(samples);
+    assert.equal(predict(makeVideo()).confidence, 'medium');
+  });
+
+  test('[改善候補] confidence が "high" に到達しない: 100件訓練でも "medium" 止まり', () => {
+    // 現実装: confidence = mlSamples >= MIN_ML_SAMPLES ? 'medium' : 'low'
+    // → サンプル数によらず 'high' は返せない
+    // 改善案: mlSamples >= 100 などで 'high' を返すべき
+    const samples = Array(100).fill(null).map((_, i) =>
+      makeSample(i < 50 ? 'hit' : 'miss')
+    );
+    train(samples);
+    const { confidence } = predict(makeVideo());
+    assert.equal(confidence, 'medium',
+      `100件でも confidence='medium' のまま (改善候補: 十分なサンプルで "high" を返すべき)`);
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// train() — 予測方向の整合性テスト
+// ─────────────────────────────────────────────────────
+
+describe('train() — 予測方向の整合性', () => {
+  const MODEL_FILE = path.join(__dirname, '..', 'data', 'youtube-model.json');
+  const MODEL_BAK  = MODEL_FILE + '.test-bak5';
+
+  before(() => {
+    if (fs.existsSync(MODEL_FILE)) fs.renameSync(MODEL_FILE, MODEL_BAK);
+  });
+  after(() => {
+    if (fs.existsSync(MODEL_FILE)) fs.unlinkSync(MODEL_FILE);
+    if (fs.existsSync(MODEL_BAK)) fs.renameSync(MODEL_BAK, MODEL_FILE);
+  });
+
+  test('hit/miss 分離学習後: hit動画の probability が miss動画より高い', () => {
+    const samples = [
+      ...Array(15).fill(null).map(() => makeSample('hit',  { viewCount: 50000, subscriberCount: 1000 })),
+      ...Array(15).fill(null).map(() => makeSample('miss', { viewCount: 100,   subscriberCount: 1000 })),
+    ];
+    train(samples);
+    const hitResult  = predict(makeVideo({ viewCount: 50000, subscriberCount: 1000 }));
+    const missResult = predict(makeVideo({ viewCount: 100,   subscriberCount: 1000 }));
+    assert.ok(
+      hitResult.probability > missResult.probability,
+      `hit動画(${hitResult.probability}%) が miss動画(${missResult.probability}%) より高くない`
+    );
+  });
+
+  test('バランス訓練後: 明確 hit 動画→label=hit, 明確 miss 動画→label=miss', () => {
+    const samples = [
+      ...Array(15).fill(null).map(() => makeSample('hit',  { viewCount: 50000, subscriberCount: 1000 })),
+      ...Array(15).fill(null).map(() => makeSample('miss', { viewCount: 100,   subscriberCount: 1000 })),
+    ];
+    train(samples);
+    const hitResult  = predict(makeVideo({ viewCount: 50000, subscriberCount: 1000 }));
+    const missResult = predict(makeVideo({ viewCount: 100,   subscriberCount: 1000 }));
+    assert.equal(hitResult.label,  'hit',  `hit動画のlabel=${hitResult.label}`);
+    assert.equal(missResult.label, 'miss', `miss動画のlabel=${missResult.label}`);
+  });
+});
