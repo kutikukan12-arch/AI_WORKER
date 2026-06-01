@@ -389,38 +389,137 @@ function formatTaskError({ taskId = '', errorType = 'UNKNOWN', maskedErrMsg = ''
 }
 
 // ─────────────────────────────────────────────────────
-// ③ HUMAN_CHECK フォーマット
+// HUMAN_CHECK 用: 理由タイプ別に承認/却下/AI推奨テキストを生成
+// ─────────────────────────────────────────────────────
+function _humanCheckContext(reason) {
+  // AUTH / PERMISSION
+  if (/AUTH|認証|token|credential|PERMISSION|権限/i.test(reason)) {
+    return {
+      situation: 'APIキーや認証情報に問題が発生しました。外部サービスへのアクセスができない状態です。',
+      stopReason: '認証情報の確認なしに続行すると、エラーが繰り返されるだけなので一時停止しました。',
+      approveResult: '処理が再開します。ただし認証情報が正しくない場合は再びエラーになります。',
+      approveSuccessNote: '認証が成功すると自動で次のタスクへ進みます。',
+      approveFailNote: '再びエラーになった場合は、また止まって確認を求めます。',
+      approveDanger: '中',
+      denyResult: 'このタスクをキャンセルし、Runner が停止します。`!doctor` で認証情報を確認してから `!project run` で再開できます。',
+      aiRecommend: '内容確認推奨',
+      aiReason: 'まず `!doctor` でシステム診断を実行し、認証情報を確認してから承認することをお勧めします。',
+    };
+  }
+  // soft RED / validator failure
+  if (/soft.*red|validator|未完了|completion/i.test(reason)) {
+    return {
+      situation: 'AIが作業を行いましたが、完了チェックで問題が検出されました。コードの変更が不完全な可能性があります。',
+      stopReason: '2回試みても自動修正できなかったため、人間の判断を求めています。',
+      approveResult: '処理が再開し、次のタスクへ進みます。今回の作業結果はそのまま使用されます。',
+      approveSuccessNote: '次のタスクで問題が解消される可能性があります。',
+      approveFailNote: '問題が残ったまま進むリスクがあります。',
+      approveDanger: '中',
+      denyResult: 'このタスクをキャンセルし、Runner が停止します。`!task list` で状況を確認できます。',
+      aiRecommend: '内容確認推奨',
+      aiReason: '`!review list` でコードレビュー結果を確認し、変更内容に問題がないか確認してから判断してください。',
+    };
+  }
+  // timeout
+  if (/timeout|タイムアウト/i.test(reason)) {
+    return {
+      situation: '同じタスクが時間内に完了できない状態が続いています（2回連続タイムアウト）。',
+      stopReason: '自動で何度も再試行し続けると時間とコストが無駄になるため停止しました。',
+      approveResult: 'タスクの内容を確認したうえで処理を再開します。',
+      approveSuccessNote: '簡単なタスクならそのまま完了します。',
+      approveFailNote: '複雑な作業の場合は再度タイムアウトする可能性があります。',
+      approveDanger: '低',
+      denyResult: 'このタスクをスキップします。`!task list` で残りのタスクを確認できます。',
+      aiRecommend: '内容確認推奨',
+      aiReason: 'タスクが複雑すぎる可能性があります。`!task show` で内容を確認し、必要なら分割を検討してください。',
+    };
+  }
+  // AI レビュー却下推奨
+  if (/AIレビュー|却下推奨/i.test(reason)) {
+    return {
+      situation: 'AIによるコードレビューの結果、このコードには問題がある可能性が指摘されました。',
+      stopReason: '問題のあるコードをそのままリリースするリスクを防ぐために停止しました。',
+      approveResult: '指摘があっても処理を続行します。コードはそのまま使用されます。',
+      approveSuccessNote: '次のステップへ進めます。',
+      approveFailNote: 'AIが指摘した問題が残ったままになります。',
+      approveDanger: '高',
+      denyResult: 'このタスクをキャンセルします。`!review list` で詳細を確認できます。',
+      aiRecommend: '内容確認推奨',
+      aiReason: 'AIレビューで問題が見つかっています。`!review list` で詳細を確認してから判断することをお勧めします。',
+    };
+  }
+  // デフォルト
+  return {
+    situation: 'AIが自動で判断できない状況が発生しました。',
+    stopReason: '安全のため、人間に確認を求めて停止しました。',
+    approveResult: '処理が再開し、次のステップへ進みます。',
+    approveSuccessNote: '正常に続行します。',
+    approveFailNote: '問題があれば再度停止します。',
+    approveDanger: '中',
+    denyResult: 'このタスクをキャンセルし、Runner が停止します。',
+    aiRecommend: '内容確認推奨',
+    aiReason: '状況を確認してから判断することをお勧めします。',
+  };
+}
+
+// ─────────────────────────────────────────────────────
+// ③ HUMAN_CHECK フォーマット（CEO向け判断支援フォーマット）
 //    data: { taskId, projectId, reason, details, task }
 // ─────────────────────────────────────────────────────
 function formatHumanCheck({ taskId = '', projectId = '', reason = '', details = '', task = null }) {
-  const friendlyReason = translateHumanCheckReason(reason);
-  const taskPrompt     = (task?.prompt || '').slice(0, 60);
-  const taskType       = task?.type || '';
-  const taskDesc       = taskPrompt
-    ? `作業内容: ${taskPrompt}${taskType ? ` [${taskType}]` : ''}`
+  const taskPrompt = (task?.prompt || '').slice(0, 60);
+  const taskType   = task?.type || '';
+  const ctx        = _humanCheckContext(reason);
+  const dangerEmoji = { '高': '🔴', '中': '🟡', '低': '🟢' }[ctx.approveDanger] || '🟡';
+  const recEmoji    = ctx.aiRecommend.includes('承認') ? '✅' : '⚠️';
+
+  const taskLine = taskPrompt
+    ? `作業: ${taskPrompt}${taskType ? ` [${taskType}]` : ''}`
     : `タスク: \`${taskId}\``;
 
   return (
-    `⚠️ **AI が判断を止めました — 確認してください**\n\n` +
-    `Project: \`${projectId}\`\n${taskDesc}\n\n` +
-    `**何が起きた:** ${friendlyReason}\n` +
-    (details ? `補足: ${String(details).slice(0, 150)}\n` : '') +
-    `\n**承認すると:** → 処理が再開し、次のタスクへ進みます。\n\n` +
-    `**却下すると:** → このタスクをキャンセルし、Runner が安全に停止します。\n\n` +
-    `**放置すると:** → 処理は止まったままです。自動で動き出すことはありません。\n\n` +
-    `**操作:**\n\`\`\`\n` +
+    `⚠️ **確認が必要です** — Project: \`${projectId}\`\n\n` +
+
+    `📌 **状況**\n${ctx.situation}\n` +
+    (details ? `補足: ${String(details).slice(0, 120)}\n` : '') +
+    `${taskLine}\n\n` +
+
+    `🛑 **止めた理由**\n${ctx.stopReason}\n\n` +
+
+    `━━━━━━━━━━━━━━━\n\n` +
+
+    `✅ **承認した場合**\n` +
+    `結果: ${ctx.approveResult}\n` +
+    `　・成功: ${ctx.approveSuccessNote}\n` +
+    `　・失敗: ${ctx.approveFailNote}\n` +
+    `危険度: ${dangerEmoji} ${ctx.approveDanger}\n` +
+    `おすすめ: ${recEmoji} ${ctx.aiRecommend}\n\n` +
+
+    `❌ **却下した場合**\n` +
+    `結果: ${ctx.denyResult}\n` +
+    `　・プロジェクトへの影響: タスクが1件スキップされます\n` +
+    `　・再実行: \`!project run ${projectId}\` でいつでも再開できます\n\n` +
+
+    `⏸ **放置した場合**\n` +
+    `結果: AI_WORKER が待機したまま、自動で作業は進みません。\n\n` +
+
+    `🤖 **AI 判断**\n` +
+    `おすすめ操作: **${ctx.aiRecommend}**\n` +
+    `理由: ${ctx.aiReason}\n\n` +
+
+    `\`\`\`\n` +
     `!task show ${taskId}  → タスク詳細を確認\n` +
     `!approve ${taskId}    → 承認して再開\n` +
     `!deny   ${taskId}    → 却下して停止\n` +
     `\`\`\`\n\n` +
+
     `━━━━━━━━━━━━━━━\n` +
     `🔧 **技術詳細** | 理由: ${reason} | タスクID: \`${taskId}\``
   );
 }
 
 // ─────────────────────────────────────────────────────
-// ─────────────────────────────────────────────────────
-// ④ Codex 高危険度 HUMAN_CHECK フォーマット
+// ④ Codex 高危険度 HUMAN_CHECK フォーマット（CEO向け判断支援フォーマット）
 //
 // data:
 //   taskId    — string
@@ -429,25 +528,51 @@ function formatHumanCheck({ taskId = '', projectId = '', reason = '', details = 
 //   taskType  — string（任意）
 // ─────────────────────────────────────────────────────
 function formatCodexHighDanger({ taskId = '', codexFile = '', danger = '高', taskType = '' }) {
+  const taskTypeNote = taskType
+    ? `（${taskType} タスクのコードが対象です）`
+    : '';
+
   return (
-    `⚠️ **AI レビュー依頼に高危険度の内容が含まれる可能性があります**\n\n` +
-    `**何が起きたか:**\n` +
-    `2人目の AI（Codex）へのレビュー依頼の内容に、高危険度の操作が含まれている可能性があります。` +
-    (taskType ? `（タスク種別: ${taskType}）` : '') + `\n\n` +
-    `**なぜ止まっているか:**\n` +
-    `高危険度タスクは、人間が確認してから実行する設計になっています（安全のため）。\n\n` +
-    `**承認すると:** → Codex レビュー依頼を続行します。コードレビューが実施されます。\n\n` +
-    `**却下すると:** → このレビュー依頼を取りやめます。タスク自体はキャンセルされません。\n\n` +
-    `**放置すると:** → このタスクは判断待ちで止まったままです。自動で進むことはありません。\n\n` +
-    `**📋 AI おすすめ:** 承認前にレビュー内容を確認\n` +
-    `理由: 高危険度と判定されたコードが自動実行される前に、内容を確認することが重要です。\n\n` +
-    `**操作コマンド:**\n` +
+    `⚠️ **確認が必要です** — コードの安全チェック\n\n` +
+
+    `📌 **状況**\n` +
+    `AIがコードを作成しました。次に、別のAI（Codex/GPT-4o）がそのコードを確認して、` +
+    `不具合や危険な変更がないかチェックしようとしています。${taskTypeNote}\n` +
+    `このコードの内容が「高危険度」と判定されたため、確認をお願いしています。\n\n` +
+
+    `🛑 **止めた理由**\n` +
+    `コードに削除・上書き・外部送信など影響が大きい変更が含まれている可能性があります。\n` +
+    `自動で進める前に、人間が内容を確認する設計になっています。\n\n` +
+
+    `━━━━━━━━━━━━━━━\n\n` +
+
+    `✅ **承認した場合**\n` +
+    `結果: 別AI（Codex/GPT-4o）がコードを確認します。\n` +
+    `　・成功: レビュー結果が自動で記録され、問題があれば修正タスクが生成されます。\n` +
+    `　・失敗: レビューでさらに問題が見つかった場合は再度止まります。\n` +
+    `危険度: 🔴 高\n` +
+    `おすすめ: ⚠️ 内容確認推奨\n\n` +
+
+    `❌ **却下した場合**\n` +
+    `結果: このコードレビューをスキップします。コード自体はそのまま残ります。\n` +
+    `　・プロジェクトへの影響: このタスクのレビューが未実施になります\n` +
+    `　・再実行: \`!project run\` でいつでも再開できます\n\n` +
+
+    `⏸ **放置した場合**\n` +
+    `結果: AI_WORKER が待機したまま、自動で作業は進みません。\n\n` +
+
+    `🤖 **AI 判断**\n` +
+    `おすすめ操作: **内容確認推奨**\n` +
+    `理由: 承認前に \`!review list\` または \`${codexFile || `reviews/codex_${taskId}.md`}\` を開いて、` +
+    `コードの変更内容に問題がないか確認することをお勧めします。\n\n` +
+
     `\`\`\`\n` +
     `!approve ${taskId}   → 承認して Codex レビューを続行\n` +
-    `!deny   ${taskId}   → 却下して取りやめ\n` +
+    `!deny   ${taskId}   → 却下してスキップ\n` +
     `\`\`\`\n\n` +
+
     `━━━━━━━━━━━━━━━\n` +
-    `🔧 **技術詳細** | タスク: \`${taskId}\` | 危険度: 高 | ファイル: \`${codexFile}\``
+    `🔧 **技術詳細** | タスク: \`${taskId}\` | 危険度: 高 | ファイル: \`${codexFile || `codex_${taskId}.md`}\``
   );
 }
 

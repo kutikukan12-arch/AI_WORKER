@@ -2573,7 +2573,7 @@ async function handleMeeting(message, rawTopic) {
 
   } catch (error) {
     logger.error(`!meeting エラー: ${error.message}`);
-    const errorText = `❌ **会議の実行に失敗しました**\n\n${error.message.slice(0, 500)}`;
+    const errorText = `❌ **会議の実行に失敗しました**\n\n${_classifyDiscordError(error.message)}`;
     await processingMsg.edit(errorText);
     await sendNotification('error', message.channel, errorText);
   }
@@ -2868,7 +2868,7 @@ async function handleProjectRefine(message, args) {
   } catch (err) {
     logger.error(`[Refine] エラー: ${err.message}`);
     if (processingMsg) await processingMsg.edit(
-      `❌ **Refine 分析中にエラーが発生しました**\n${err.message.slice(0, 100)}`
+      `❌ **Refine 分析中にエラーが発生しました**\n\n${_classifyDiscordError(err.message)}`
     ).catch(() => {});
   }
 }
@@ -4917,7 +4917,7 @@ async function executeResearchTask({ message, task, projectId }) {
       `RESEARCHタスク失敗: ${e.message.slice(0, 50)}`
     );
     await message.channel.send(
-      `❌ **調査タスク失敗**\n\nタスク: \`${taskId}\`\nエラー: ${e.message.slice(0, 200)}`
+      `❌ **調査タスク失敗**\n\nタスク: \`${taskId}\`\n\n${_classifyDiscordError(e.message)}`
     ).catch(() => {});
     return;
   }
@@ -5557,7 +5557,7 @@ async function handleBatch(message) {
 
   } catch (error) {
     logger.error(`!batch エラー: ${error.message}`);
-    await processingMsg.edit(`❌ **バッチ実行に失敗しました**\n${error.message.slice(0, 500)}`);
+    await processingMsg.edit(`❌ **バッチ実行に失敗しました**\n\n${_classifyDiscordError(error.message)}`);
   }
 }
 
@@ -5614,7 +5614,7 @@ async function handleTrain(message) {
 
   } catch (error) {
     logger.error(`!train エラー: ${error.message}`);
-    await processingMsg.edit(`❌ **トレーニングに失敗しました**\n${error.message.slice(0, 300)}`);
+    await processingMsg.edit(`❌ **トレーニングに失敗しました**\n\n${_classifyDiscordError(error.message)}`);
   }
 }
 
@@ -5628,6 +5628,44 @@ function _parseYtKwargs(str) {
     result[m[1]] = m[2] !== undefined ? m[2] : m[3];
   }
   return result;
+}
+
+function _classifyDiscordError(errMsg) {
+  const msg = errMsg || '';
+  if (/タイムアウト|timeout|timed out/i.test(msg)) {
+    return (
+      '⏱️ **タイムアウト** — 処理に時間がかかりすぎました。\n' +
+      '少し待ってから再試行してください。'
+    );
+  }
+  if (/ENOTFOUND|ECONNREFUSED|ECONNRESET|network.?error|connection.?refused|getaddrinfo/i.test(msg)) {
+    return (
+      '🌐 **ネットワークエラー** — 外部サービスへの接続に失敗しました。\n' +
+      'インターネット接続を確認してから再試行してください。'
+    );
+  }
+  if (/401|403|unauthorized|forbidden|authentication failed|token|credential/i.test(msg)) {
+    return (
+      '🔑 **認証エラー** — アクセス権限がありません。\n' +
+      '`.env` の API キー・トークンを確認してください。`!doctor` で診断できます。'
+    );
+  }
+  if (/ENOENT|EACCES|EPERM|permission denied|no such file/i.test(msg)) {
+    return (
+      '📁 **ファイルアクセスエラー** — ファイルまたはディレクトリにアクセスできません。\n' +
+      'ワークスペースのフォルダ権限を確認してください。'
+    );
+  }
+  if (/quota|rate.?limit|429/i.test(msg)) {
+    return (
+      '⏳ **API 制限** — リクエスト上限に達しました。\n' +
+      'しばらく待ってから再試行してください。'
+    );
+  }
+  return (
+    '🔧 **予期しないエラー** — 詳細は `logs/` を確認してください。\n' +
+    '再試行しても解決しない場合は管理者に連絡してください。'
+  );
 }
 
 function _classifyYtDiscordError(errMsg) {
@@ -6101,7 +6139,7 @@ async function handleDoctor(message) {
     }
   } catch (e) {
     logger.error(`!doctor エラー: ${e.message}`);
-    await processingMsg.edit(`❌ 診断中にエラーが発生しました\n${e.message.slice(0, 200)}`);
+    await processingMsg.edit(`❌ 診断中にエラーが発生しました\n\n${_classifyDiscordError(e.message)}`);
   }
 }
 
@@ -6533,7 +6571,7 @@ async function handleCodex(message, userContent) {
 
   } catch (error) {
     logger.error(`!codex エラー: ${error.message}`);
-    const errorText = `❌ **Codex レビューに失敗しました**\n${error.message.slice(0, 300)}`;
+    const errorText = `❌ **Codex レビューに失敗しました**\n\n${_classifyDiscordError(error.message)}`;
     await processingMsg.edit(errorText);
     await sendNotification('error', message.channel, errorText);
   }
