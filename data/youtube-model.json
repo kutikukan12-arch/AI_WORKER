@@ -20,5 +20,6 @@
   "sampleCount": 10,
   "hitCount": 10,
   "missCount": 0,
-  "trainedAt": "2026-06-01T16:56:18.510Z"
+  "trainDirectionalAcc": 1,
+  "trainedAt": "2026-06-01T17:33:41.123Z"
 }
