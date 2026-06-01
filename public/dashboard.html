@@ -130,6 +130,47 @@
 
     #empty-row td { text-align: center; color: #475569; padding: 32px; }
 
+    /* ── Finance ────────────────────────────────── */
+    .finance-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .finance-card {
+      background: #1a1d27;
+      border: 1px solid #2d3148;
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .finance-card .fc-label { font-size: 0.7rem; color: #64748b; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
+    .finance-card .fc-value { font-size: 1.3rem; font-weight: 700; color: #e2e8f0; }
+    .finance-card .fc-sub   { font-size: 0.72rem; color: #64748b; margin-top: 2px; }
+    .cost-status {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 0.78rem; font-weight: 700; padding: 3px 10px;
+      border-radius: 999px;
+    }
+    .cost-status.GREEN  { background: #064e3b; color: #34d399; }
+    .cost-status.YELLOW { background: #451a03; color: #fbbf24; }
+    .cost-status.RED    { background: #7f1d1d; color: #f87171; }
+    .project-cost-row {
+      display: flex; justify-content: space-between;
+      font-size: 0.75rem; padding: 2px 0; color: #94a3b8;
+    }
+    .project-cost-row .pj-name { color: #cbd5e1; }
+
+    /* ── Projects ───────────────────────────────── */
+    .project-card {
+      background: #1a1d27;
+      border: 1px solid #2d3148;
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .project-card .pj-id   { font-family: monospace; font-size: 0.7rem; color: #64748b; margin-top: 4px; }
+    .project-card .pj-desc { font-size: 0.75rem; color: #94a3b8; margin-top: 6px; line-height: 1.4; }
+    .project-card .pj-task { font-size: 0.72rem; color: #60a5fa; margin-top: 8px; }
+
     /* ── Approvals ──────────────────────────────── */
     .approval-list { display: flex; flex-direction: column; gap: 8px; }
     .approval-card {
@@ -163,13 +204,59 @@
     <div class="stat-card yellow"><div class="label">人間確認待ち</div><div class="value" id="s-await">—</div></div>
     <div class="stat-card green"> <div class="label">完了</div>    <div class="value" id="s-done">—</div></div>
     <div class="stat-card red">   <div class="label">保留</div>    <div class="value" id="s-hold">—</div></div>
+    <div class="stat-card green"> <div class="label">本日コスト</div><div class="value" id="s-cost-today" style="font-size:1.1rem;">—</div></div>
+    <div class="stat-card purple"><div class="label">今月コスト</div><div class="value" id="s-cost-month" style="font-size:1.1rem;">—</div></div>
   </div>
+
+  <!-- Finance -->
+  <section>
+    <h2>💰 Finance — コスト（推定）</h2>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+      <span id="cost-status-badge" class="cost-status GREEN">● GREEN</span>
+      <span style="font-size:0.75rem;color:#64748b;">推定値 / 確定額は console.anthropic.com / platform.openai.com/usage</span>
+    </div>
+    <div class="finance-grid">
+      <div class="finance-card">
+        <div class="fc-label">本日（Claude Code）</div>
+        <div class="fc-value" id="fc-today-usd">—</div>
+        <div class="fc-sub" id="fc-today-jpy">—</div>
+        <div class="fc-sub" id="fc-today-tasks">—</div>
+      </div>
+      <div class="finance-card">
+        <div class="fc-label">今月累計（Claude）</div>
+        <div class="fc-value" id="fc-month-claude">—</div>
+        <div class="fc-sub" id="fc-month-claude-jpy">—</div>
+      </div>
+      <div class="finance-card">
+        <div class="fc-label">今月累計（OpenAI）</div>
+        <div class="fc-value" id="fc-month-openai">—</div>
+        <div class="fc-sub" id="fc-month-openai-jpy">—</div>
+      </div>
+      <div class="finance-card">
+        <div class="fc-label">今月合計</div>
+        <div class="fc-value" id="fc-month-total">—</div>
+        <div class="fc-sub" id="fc-month-total-jpy">—</div>
+      </div>
+    </div>
+    <div class="finance-card" style="margin-top:0;">
+      <div class="fc-label" style="margin-bottom:6px;">プロジェクト別（今月）</div>
+      <div id="fc-projects">—</div>
+    </div>
+  </section>
 
   <!-- Approvals -->
   <section>
     <h2>⚠️ 承認待ち</h2>
     <div class="approval-list" id="approval-list">
       <span id="no-approvals">承認待ちはありません</span>
+    </div>
+  </section>
+
+  <!-- Projects -->
+  <section>
+    <h2>📁 プロジェクト</h2>
+    <div class="runner-grid" id="projects-grid">
+      <div style="color:#475569;font-size:.82rem;">読み込み中...</div>
     </div>
   </section>
 
@@ -209,7 +296,8 @@
 </main>
 
 <script>
-  let allTasks = [];
+  let allTasks    = [];
+  let allProjects = [];
   let activeFilter = 'all';
 
   const STATE_LABELS = {
@@ -309,6 +397,76 @@
     `).join('');
   }
 
+  function usd(v) {
+    return v > 0 ? `$${v.toFixed(4)}` : '¥0（記録なし）';
+  }
+  function jpy(v) {
+    return v > 0 ? `≈ ¥${Math.round(v * 155).toLocaleString()} （推定）` : '';
+  }
+
+  function renderFinance(cost) {
+    const { today, monthly, status } = cost;
+
+    // stat cards
+    document.getElementById('s-cost-today').textContent  = today.totalUsd > 0 ? `$${today.totalUsd.toFixed(3)}` : '$0';
+    document.getElementById('s-cost-month').textContent  = monthly.totalUsd > 0 ? `$${monthly.totalUsd.toFixed(3)}` : '$0';
+
+    // status badge
+    const badge = document.getElementById('cost-status-badge');
+    badge.className = `cost-status ${status}`;
+    badge.textContent = `● ${status}`;
+
+    // today card
+    document.getElementById('fc-today-usd').textContent   = usd(today.totalUsd);
+    document.getElementById('fc-today-jpy').textContent   = jpy(today.totalUsd);
+    document.getElementById('fc-today-tasks').textContent = `${today.taskCount}タスク / ${Math.floor(today.totalSec / 60)}分`;
+
+    // monthly cards
+    const claude = monthly.bySource?.claude || 0;
+    const openai = monthly.bySource?.openai || 0;
+    document.getElementById('fc-month-claude').textContent     = usd(claude);
+    document.getElementById('fc-month-claude-jpy').textContent = jpy(claude);
+    document.getElementById('fc-month-openai').textContent     = usd(openai);
+    document.getElementById('fc-month-openai-jpy').textContent = jpy(openai);
+    document.getElementById('fc-month-total').textContent      = usd(monthly.totalUsd);
+    document.getElementById('fc-month-total-jpy').textContent  = jpy(monthly.totalUsd);
+
+    // project breakdown
+    const pjDiv = document.getElementById('fc-projects');
+    const entries = Object.entries(monthly.byProject || {}).sort(([, a], [, b]) => b - a);
+    if (entries.length === 0) {
+      pjDiv.textContent = '（記録なし）';
+    } else {
+      pjDiv.innerHTML = entries.slice(0, 8).map(([pid, v]) => {
+        const esc = pid.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        return `<div class="project-cost-row"><span class="pj-name">${esc}</span><span>$${v.toFixed(4)}</span></div>`;
+      }).join('');
+    }
+  }
+
+  function renderProjects(projects) {
+    const grid = document.getElementById('projects-grid');
+    if (!projects || projects.length === 0) {
+      grid.innerHTML = '<div style="color:#475569;font-size:.82rem;">プロジェクトなし</div>';
+      return;
+    }
+    grid.innerHTML = projects.map(p => {
+      const taskCount = allTasks.filter(t => t.projectId === p.id && t.state !== '完了' && t.state !== '保留').length;
+      const doneCount = allTasks.filter(t => t.projectId === p.id && t.state === '完了').length;
+      const nameEsc = (p.name || p.id).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+      const descEsc = (p.description || '').slice(0, 80).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+      const idEsc   = (p.id || '').replace(/&/g,'&amp;');
+      return `
+        <div class="project-card">
+          <div style="font-weight:600;font-size:.9rem;">${nameEsc}</div>
+          <div class="pj-id">${idEsc}</div>
+          ${descEsc ? `<div class="pj-desc">${descEsc}</div>` : ''}
+          <div class="pj-task">アクティブ: ${taskCount}件 / 完了: ${doneCount}件</div>
+        </div>
+      `;
+    }).join('');
+  }
+
   function renderApprovals(approvals) {
     const list = document.getElementById('approval-list');
     const pending = approvals.filter(a => a.status === 'pending' || !a.status);
@@ -329,13 +487,16 @@
 
   async function loadAll() {
     try {
-      const [tasks, runner, approvals] = await Promise.all([
+      const [tasks, runner, approvals, projects, cost] = await Promise.all([
         fetchJson('/api/tasks'),
         fetchJson('/api/runner'),
         fetchJson('/api/approvals'),
+        fetchJson('/api/projects'),
+        fetchJson('/api/cost'),
       ]);
 
-      allTasks = Array.isArray(tasks) ? tasks : [];
+      allTasks    = Array.isArray(tasks)    ? tasks    : [];
+      allProjects = Array.isArray(projects) ? projects : [];
       allTasks.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
 
       renderStats(allTasks);
@@ -343,6 +504,8 @@
       renderTasks(allTasks);
       renderRunner(runner || {});
       renderApprovals(Array.isArray(approvals) ? approvals : []);
+      renderProjects(allProjects);
+      if (cost) renderFinance(cost);
 
       const now = new Date().toLocaleTimeString('ja-JP');
       document.getElementById('refresh-info').textContent = `最終更新: ${now}`;
