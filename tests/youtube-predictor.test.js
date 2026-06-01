@@ -1508,3 +1508,114 @@ describe('buildSummary() — usedML=true ブランチ（20件学習後）', () =
     assert.ok(buildSummary(video, result).includes('20'), '学習数 20 がサマリーに含まれない');
   });
 });
+
+// ─────────────────────────────────────────────────────
+// predict() — reasons フィールド（主要因上位3件）
+// ─────────────────────────────────────────────────────
+
+describe('predict() — reasons フィールド', () => {
+
+  test('reasons フィールドが存在する', () => {
+    const result = predict(makeVideo());
+    assert.ok('reasons' in result, 'reasons フィールドがない');
+  });
+
+  test('reasons は配列', () => {
+    const { reasons } = predict(makeVideo());
+    assert.ok(Array.isArray(reasons), `reasons が配列でない: ${typeof reasons}`);
+  });
+
+  test('reasons の件数は 1〜3 件', () => {
+    const { reasons } = predict(makeVideo());
+    assert.ok(reasons.length >= 1 && reasons.length <= 3, `reasons.length=${reasons.length}`);
+  });
+
+  test('各 reason に factor / impact / detail がある', () => {
+    const { reasons } = predict(makeVideo());
+    for (const r of reasons) {
+      assert.ok('factor' in r, `factor がない: ${JSON.stringify(r)}`);
+      assert.ok('impact' in r, `impact がない: ${JSON.stringify(r)}`);
+      assert.ok('detail' in r, `detail がない: ${JSON.stringify(r)}`);
+    }
+  });
+
+  test('impact は "positive" または "negative"', () => {
+    const { reasons } = predict(makeVideo());
+    for (const r of reasons) {
+      assert.ok(
+        r.impact === 'positive' || r.impact === 'negative',
+        `不正な impact: ${r.impact}`
+      );
+    }
+  });
+
+  test('factor / detail が空文字列でない', () => {
+    const { reasons } = predict(makeVideo());
+    for (const r of reasons) {
+      assert.ok(r.factor.length > 0, `factor が空: ${JSON.stringify(r)}`);
+      assert.ok(r.detail.length > 0, `detail が空: ${JSON.stringify(r)}`);
+    }
+  });
+
+  test('投稿前モード (viewCount=0) でも reasons が返る', () => {
+    const video = makeVideo({ viewCount: 0, likeCount: 0, commentCount: 0 });
+    const { reasons } = predict(video);
+    assert.ok(Array.isArray(reasons) && reasons.length >= 1, `reasons.length=${reasons.length}`);
+  });
+
+  test('subs=0 / 最小入力でも reasons が返る', () => {
+    const { reasons } = predict({ viewCount: 0, subscriberCount: 0, title: '' });
+    assert.ok(Array.isArray(reasons) && reasons.length >= 1);
+  });
+
+  test('hit 圏の動画 → 少なくとも1件 impact=positive', () => {
+    // buzz_ratio=10 → 明確 hit → チャンネル規模ボーナスなどで positive が出るはず
+    const { reasons } = predict(makeVideo({ viewCount: 10000, subscriberCount: 1000 }));
+    assert.ok(
+      reasons.some(r => r.impact === 'positive'),
+      `hit 圏なのに positive な reason がない: ${JSON.stringify(reasons)}`
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// buildSummary() — 主要因セクション表示
+// ─────────────────────────────────────────────────────
+
+describe('buildSummary() — 主要因セクション', () => {
+
+  test('"主要因" または "このスコア" の見出しを含む', () => {
+    const video   = makeVideo();
+    const result  = predict(video);
+    const summary = buildSummary(video, result);
+    assert.ok(
+      summary.includes('主要因') || summary.includes('このスコア'),
+      '主要因セクションの見出しがない'
+    );
+  });
+
+  test('reasons の factor 名がサマリーに含まれる', () => {
+    const video   = makeVideo();
+    const result  = predict(video);
+    const summary = buildSummary(video, result);
+    for (const r of result.reasons) {
+      assert.ok(summary.includes(r.factor), `factor "${r.factor}" がサマリーに含まれない`);
+    }
+  });
+
+  test('reasons の detail がサマリーに含まれる', () => {
+    const video   = makeVideo();
+    const result  = predict(video);
+    const summary = buildSummary(video, result);
+    for (const r of result.reasons) {
+      assert.ok(summary.includes(r.detail), `detail "${r.detail}" がサマリーに含まれない`);
+    }
+  });
+
+  test('投稿前モードでも主要因セクションが含まれる', () => {
+    const video   = makeVideo({ viewCount: 0, likeCount: 0, commentCount: 0, subscriberCount: 5000 });
+    const result  = predict(video);
+    const summary = buildSummary(video, result);
+    assert.ok(summary.includes('主要因') || summary.includes('このスコア'), '投稿前モードで主要因がない');
+  });
+});
