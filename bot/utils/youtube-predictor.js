@@ -164,7 +164,8 @@ function predict(video) {
   let mlScore  = null;
   let mlSamples = 0;
 
-  if (modelData?.weights?.length === FEATURE_DIM) {
+  // 投稿前はMLモデルを使用しない（like_ratio等のviewCount依存特徴量が0になり miss方向へバイアスするため）
+  if (!isPrePub && modelData?.weights?.length === FEATURE_DIM) {
     const weights = new Float64Array(modelData.weights);
     mlScore   = _sigmoid(_dot(weights, encode(video)));
     mlSamples = modelData.sampleCount || 0;

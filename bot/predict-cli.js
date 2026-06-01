@@ -160,7 +160,7 @@ function main() {
   if (video.subscriberCount) console.log(`登録者数   : ${video.subscriberCount.toLocaleString()}`);
   if (isPrePub) {
     console.log(`モード     : 投稿前予測（viewCount 未設定）`);
-    console.log(`※ 注意     : predict() は投稿前スコアリング未対応（buzzRatio=0固定 → 常にmiss判定）`);
+    console.log(`※ 投稿前モード: タイトル・タグ・尺・登録者数のみで予測（buzz_ratio 不使用）`);
   } else {
     console.log(`視聴数     : ${video.viewCount.toLocaleString()}`);
   }
