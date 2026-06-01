@@ -423,6 +423,18 @@ function buildPredictionSummary(prompt, taskType = 'IMPLEMENT', taskSize = 'MEDI
   lines.push('');
   lines.push(`⏱️ **完了時間推定:** ${time.estimateMin}〜${time.estimateMax}分`);
 
+  // 精度根拠フッター（学習データがある場合のみ表示）
+  const acc = _loadWeights().accuracy;
+  if (acc) {
+    const parts = [];
+    if (acc.avgTimeMAPE !== null && acc.avgTimeMAPE !== undefined)
+      parts.push(`時間MAPE ${acc.avgTimeMAPE.toFixed(1)}%`);
+    if (acc.avgDirectionalAcc !== null && acc.avgDirectionalAcc !== undefined)
+      parts.push(`方向性正解率 ${(acc.avgDirectionalAcc * 100).toFixed(1)}%`);
+    if (parts.length > 0)
+      lines.push(`\n📐 **予測精度根拠:** ${parts.join(' / ')} (n=${acc.outcomeSamples || 0})`);
+  }
+
   return lines.join('\n');
 }
 

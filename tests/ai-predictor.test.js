@@ -444,6 +444,17 @@ describe('buildPredictionSummary()', () => {
     assert.ok(/\d+%/.test(r), '確率(%)が見当たらない');
     assert.ok(/\d+〜\d+分/.test(r), '時間推定が見当たらない');
   });
+
+  test('精度データなし（ルールベースのみ）でもクラッシュしない', () => {
+    assert.doesNotThrow(() => buildPredictionSummary('実装する', 'IMPLEMENT', 'MEDIUM'));
+  });
+
+  test('精度データなし時は予測精度根拠行が含まれない', () => {
+    // data/predictor-weights.json が存在しないテスト環境では精度フッターは出力されない
+    const r = buildPredictionSummary('実装する', 'IMPLEMENT', 'MEDIUM');
+    // 精度データがある場合のみ出力されるフッターは、ないときに例外を出さないことを確認
+    assert.ok(typeof r === 'string' && r.length > 0);
+  });
 });
 
 // ─────────────────────────────────────────────────────

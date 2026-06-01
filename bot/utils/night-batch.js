@@ -292,7 +292,14 @@ async function runBatch(notifyFn = null) {
     ? `🧠 **ML モデル(V2)**: ⚠️ 失敗（ログ参照）`
     : v2TrainResult.skipped
     ? `🧠 **ML モデル(V2)**: ⭕ スキップ（${v2TrainResult.reason === 'no_data' ? 'データなし' : v2TrainResult.reason === 'no_new_data' ? '差分なし' : v2TrainResult.reason}）`
-    : `🧠 **ML モデル(V2)**: ✅ 学習完了 | success:${v2TrainResult.sampleCount}件 time:${v2TrainResult.timeSampleCount}件`;
+    : (() => {
+        let line = `🧠 **ML モデル(V2)**: ✅ 学習完了 | success:${v2TrainResult.sampleCount}件 time:${v2TrainResult.timeSampleCount}件`;
+        if (v2TrainResult.successDirectionalAcc !== null && v2TrainResult.successDirectionalAcc !== undefined)
+          line += ` | 方向性正解率:${(v2TrainResult.successDirectionalAcc * 100).toFixed(1)}%`;
+        if (v2TrainResult.timeMAPE !== null && v2TrainResult.timeMAPE !== undefined)
+          line += ` | MAPE:${v2TrainResult.timeMAPE.toFixed(1)}%`;
+        return line;
+      })();
 
   const message = [
     `🌙 **ナイトバッチ完了** (${new Date().toLocaleString('ja-JP')})`,

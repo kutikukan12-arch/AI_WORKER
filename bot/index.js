@@ -5592,12 +5592,19 @@ async function handleTrain(message) {
     aiPredictor.reloadWeights();
 
     const stats   = aiTrainer.getStats();
-    const accLine = stats?.accuracy?.avgTimeAccuracy !== null && stats?.accuracy?.avgTimeAccuracy !== undefined
-      ? `⏱️ 時間推定精度: **${(stats.accuracy.avgTimeAccuracy * 100).toFixed(1)}%**`
+    const acc = stats?.accuracy;
+    const accLine = acc?.avgTimeAccuracy !== null && acc?.avgTimeAccuracy !== undefined
+      ? `⏱️ 時間推定精度: **${(acc.avgTimeAccuracy * 100).toFixed(1)}%**`
       : '⏱️ 時間推定精度: N/A（データ不足）';
-    const succAccLine = stats?.accuracy?.avgSuccessAccuracy !== null && stats?.accuracy?.avgSuccessAccuracy !== undefined
-      ? `🎯 成功率予測精度: **${(stats.accuracy.avgSuccessAccuracy * 100).toFixed(1)}%**`
+    const succAccLine = acc?.avgSuccessAccuracy !== null && acc?.avgSuccessAccuracy !== undefined
+      ? `🎯 成功率予測精度: **${(acc.avgSuccessAccuracy * 100).toFixed(1)}%**`
       : '🎯 成功率予測精度: N/A（データ不足）';
+    const mapeLine = acc?.avgTimeMAPE !== null && acc?.avgTimeMAPE !== undefined
+      ? `📉 時間推定MAPE: **${acc.avgTimeMAPE.toFixed(1)}%**（低いほど精度高）`
+      : '📉 時間推定MAPE: N/A（データ不足）';
+    const dirAccLine = acc?.avgDirectionalAcc !== null && acc?.avgDirectionalAcc !== undefined
+      ? `🏹 方向性正解率: **${(acc.avgDirectionalAcc * 100).toFixed(1)}%**（50%超=ランダム比優位）`
+      : '🏹 方向性正解率: N/A（データ不足）';
 
     const typeLines = Object.entries(result.typeReport || {}).map(([type, r]) => {
       const adjSign = r.successAdj >= 0 ? '+' : '';
@@ -5610,6 +5617,8 @@ async function handleTrain(message) {
       `📊 サンプル数: **${result.sampleCount}件**`,
       accLine,
       succAccLine,
+      mapeLine,
+      dirAccLine,
       ``,
       typeLines.length > 0 ? `**タイプ別結果:**\n${typeLines.join('\n')}` : '（タイプ別データなし）',
       ``,
