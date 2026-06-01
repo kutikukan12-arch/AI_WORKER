@@ -107,6 +107,9 @@ const pendingPlans = require('./utils/pending-plans');
 
 // ─── AI Board Report ───
 const aiBoardReport = require('./utils/ai-board-report');
+
+// ─── CEO Report ───
+const ceoReport = require('./utils/ceo-report');
 const companyManager  = require('./utils/company-manager');
 const qualityGate     = require('./utils/quality-gate');
 
@@ -199,6 +202,8 @@ const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || '';
 
 // AI Board Report チャンネル（未設定時はコマンドチャンネルにフォールバック）
 const AI_BOARD_CHANNEL_ID = process.env.AI_BOARD_CHANNEL_ID || '';
+// CEO Report チャンネル（未設定時はコマンドチャンネルにフォールバック）
+const CEO_REPORT_CHANNEL_ID = process.env.CEO_REPORT_CHANNEL_ID || '';
 
 const NOTIFICATION_CHANNELS = Object.freeze({
   history:     HISTORY_CHANNEL_ID,
@@ -209,6 +214,7 @@ const NOTIFICATION_CHANNELS = Object.freeze({
   git:         GITHUB_LOG_CHANNEL_ID,
   pr:          PR_CHANNEL_ID,
   boardReport: AI_BOARD_CHANNEL_ID,
+  ceoReport:   CEO_REPORT_CHANNEL_ID,
 });
 
 // workspace パス
@@ -1549,6 +1555,31 @@ async function _teardown(ctx, prevPid) {
       await message.channel.send(reportText.slice(0, 1900)).catch(() => {});
     }
     logger.info(`[BoardReport] 送信完了: ${projectId} | status:${report.status}`);
+
+    // 3c. CEO Report（Board Report と同じ qa/runStats を流用）
+    try {
+      const ceoRpt = ceoReport.generateCeoReport(
+        projectId, runStats, qaForBoard, report.status, taskManager, projectManager
+      );
+      // 3パートに分けて送信
+      const parts = [
+        ceoReport.formatCeoReportPart1(ceoRpt),
+        ceoReport.formatCeoReportPart2(ceoRpt),
+        ceoReport.formatCeoReportPart3(ceoRpt),
+      ];
+      // 送信先: CEO_REPORT_CHANNEL_ID → sendNotification, 未設定 → コマンドチャンネル
+      const sendPart = async (text) => {
+        if (CEO_REPORT_CHANNEL_ID) {
+          await sendNotification('ceoReport', message.channel, text.slice(0, 1900)).catch(() => {});
+        } else {
+          await message.channel.send(text.slice(0, 1900)).catch(() => {});
+        }
+      };
+      for (const part of parts) await sendPart(part);
+      logger.info(`[CeoReport] 送信完了: ${projectId} | status:${ceoRpt.execStatus}`);
+    } catch (ceoErr) {
+      logger.warn(`[CeoReport] 生成エラー（続行）: ${ceoErr.message}`);
+    }
   } catch (brErr) {
     logger.warn(`[BoardReport] 生成エラー（続行）: ${brErr.message}`);
   }
@@ -3517,6 +3548,26 @@ async function handleNext(message) {
 //   refTaskId      - 継続モードの参照タスクID（通常null）
 //   source         - 'claude' | 'run-next'（ログ識別用）
 // ─────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────
+// resolveTaskTimeoutMs(size) — タスクサイズ別のタイムアウト(ms)
+//
+// 一律5分だと MEDIUM/LARGE のタスクが頻繁にタイムアウトしていたため、
+// サイズに応じて上限を伸ばす。各値は環境変数で上書き可能。
+//   SMALL  : TASK_TIMEOUT_SECONDS        (既定 300 = 5分)
+//   MEDIUM : TASK_TIMEOUT_MEDIUM_SECONDS (既定 600 = 10分)
+//   LARGE  : TASK_TIMEOUT_LARGE_SECONDS  (既定 900 = 15分)
+// ─────────────────────────────────────────────────────
+function resolveTaskTimeoutMs(size) {
+  const small  = parseInt(process.env.TASK_TIMEOUT_SECONDS) || 300;
+  const medium = parseInt(process.env.TASK_TIMEOUT_MEDIUM_SECONDS) || 600;
+  const large  = parseInt(process.env.TASK_TIMEOUT_LARGE_SECONDS) || 900;
+  const sec = size === taskManager.TASK_SIZES.LARGE ? large
+            : size === taskManager.TASK_SIZES.MEDIUM ? medium
+            : small;
+  return sec * 1000;
+}
+
 async function executeClaudeTask({
   message, prompt, taskId, projectId, taskType, taskSizeResult,
   taskWorkspace, refTaskId = null, source = 'claude',
@@ -3529,6 +3580,9 @@ async function executeClaudeTask({
     `Claude Code 実行開始: ${prompt.slice(0, 60)}`
   );
 
+  // タスクサイズ別タイムアウト（display と claudeRunner.run の両方で使う）
+  const taskTimeoutMs = resolveTaskTimeoutMs(taskSizeResult.size);
+
   let processingMsg = null;
   try {
     const phaseFlags = [
@@ -3537,7 +3591,7 @@ async function executeClaudeTask({
       ENABLE_CODEX  ? '🤖Codex' : '',
     ].filter(Boolean).join(' | ');
 
-    const timeoutMin = Math.floor((parseInt(process.env.TASK_TIMEOUT_SECONDS) || 300) / 60);
+    const timeoutMin = Math.floor(taskTimeoutMs / 60000);
 
     processingMsg = await message.channel.send(
       `▶️ **Claude Code が作業を開始しました**\n` +
@@ -3585,7 +3639,7 @@ async function executeClaudeTask({
     logger.info(`探索対象: ${explorationTargets} | TaskType:${taskType} | TaskSize:${taskSizeResult.size}`);
 
     const taskStartMs = Date.now();
-    const result = await claudeRunner.run(augmentedPrompt, taskWorkspace, AI_WORKER_ROOT);
+    const result = await claudeRunner.run(augmentedPrompt, taskWorkspace, AI_WORKER_ROOT, { timeoutMs: taskTimeoutMs });
 
     fs.writeFileSync(
       path.join(taskWorkspace, 'result.md'),
