@@ -3835,15 +3835,22 @@ async function prepareNextTask(message, source = 'run-next') {
   // ※ assessDanger より先に taskType を確定させる（非変更系タイプの誤ブロック防止）
   const taskType       = next.type || taskTypeUtil.detectTaskType(prompt);
 
-  // ─── 高危険度は自動実行しない（非変更系タイプは除外）───
-  const NON_CHANGING_TYPES = new Set(['REVIEW', 'RESEARCH', 'DOCS']);
-  const preDanger = codex.assessDanger(prompt, '', []);
-  if (preDanger === '高' && !NON_CHANGING_TYPES.has(String(taskType).toUpperCase())) {
+  // ─── autoPolicy で実行可否を判定（assessDanger による独自再計算を廃止）───
+  // assessDanger はプロンプト文字列だけを見るため AUTH/credential 等のキーワードを
+  // 含む無害なタスク（例: "errorType=AUTH のハンドリング修正"）を誤ってブロックしていた。
+  // autoPolicy.classifyTask は保存済み dangerLevel・type・size を総合判断するため信頼性が高い。
+  // BLOCKED / HUMAN_APPROVAL_REQUIRED のみ停止。AI_REVIEW_REQUIRED は自動実行可（レビュー付き）。
+  const prePolicy = autoPolicy.classifyTask(next, { danger: next.dangerLevel || '低' });
+  if (prePolicy === autoPolicy.AUTO_POLICY.BLOCKED ||
+      prePolicy === autoPolicy.AUTO_POLICY.HUMAN_APPROVAL_REQUIRED) {
     taskManager.releaseLease(next.id); // claim を解除
+    const policyLabel = prePolicy === autoPolicy.AUTO_POLICY.BLOCKED
+      ? '🚫 BLOCKED'
+      : '⚠️ 人間確認が必要 (HUMAN_APPROVAL_REQUIRED)';
     await message.reply(
-      `🔴 **高危険度タスクは自動実行できません**\n\n` +
+      `${policyLabel}\n\n` +
       `タスク: \`${next.id}\`\n\n` +
-      `高危険度タスクは \`!claude\` から直接実行し、承認フロー（\`!approve\`）を経てください。`
+      `このタスクは自動実行できません。\`!claude\` から直接実行し、承認フロー（\`!approve\`）を経てください。`
     ).catch(() => {});
     return { blocked: true };
   }
