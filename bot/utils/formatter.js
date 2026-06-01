@@ -273,6 +273,160 @@ function message(text, refPath = '') {
   return truncateMarkdown(text || '', MAX_MESSAGE, refPath);
 }
 
+// =====================================================
+// CEO 向けフォーマッター — Phase D-1 Communication Manager
+//
+// 目的: 通知を「CEO向け（非エンジニア）」と「技術詳細」に分離する。
+//   技術情報は消さず、平易な説明を上部に追加する。
+//
+// エントリポイント: formatForCEO(type, data)
+// =====================================================
+
+// ─── エラー種別 → 日本語翻訳 ───────────────────────────
+const ERROR_TYPE_TRANSLATION = {
+  TIMEOUT:    { label: '作業時間超過',     desc: 'AI がタスクを時間内に完了できませんでした。' },
+  AUTH:       { label: 'アクセス権問題',   desc: 'GitHub や外部サービスへのアクセスが拒否されました。' },
+  PERMISSION: { label: '操作禁止',         desc: '許可されていない操作が実行されようとしました。' },
+  SYNTAX:     { label: 'コード形式の問題', desc: '生成されたコードに文法エラーが含まれています。' },
+  UNKNOWN:    { label: '原因調査必要',     desc: '予期しない問題が発生しました。ログで詳細を確認してください。' },
+};
+
+function translateErrorType(errorType) {
+  return ERROR_TYPE_TRANSLATION[errorType] || ERROR_TYPE_TRANSLATION.UNKNOWN;
+}
+
+// ─── HUMAN_CHECK 理由 → 日本語翻訳 ─────────────────────
+function translateHumanCheckReason(reason) {
+  if (/AUTH|認証|token|credential/i.test(reason))
+    return 'GitHub や外部サービスへのアクセスに問題が発生しました。';
+  if (/PERMISSION|権限/i.test(reason))
+    return '許可されていない操作が必要になりました。';
+  if (/soft.*red|validator|未完了|completion/i.test(reason))
+    return 'AI が作業を完了できたか確認できませんでした。';
+  if (/timeout|タイムアウト/i.test(reason))
+    return 'AI が時間内に作業を完了できず、2回続けてタイムアウトしました。';
+  if (/AWAITING|人間確認待ち/i.test(reason))
+    return '前のステップで人間の確認が求められています。';
+  if (/AIレビュー|却下推奨/i.test(reason))
+    return 'AI のコードレビューで問題が検出されました。人間による判断が推奨されます。';
+  return reason;
+}
+
+// ─────────────────────────────────────────────────────
+// ① GitHub Push 失敗フォーマット
+//    data: { taskId, pushError }
+// ─────────────────────────────────────────────────────
+function formatGitHubPushFailed({ taskId = '', pushError = '' }) {
+  let techCategory = '認証または接続の問題';
+  if (/403|permission|denied/i.test(pushError))         techCategory = 'GitHub Token の権限不足 (403)';
+  else if (/404|not found/i.test(pushError))             techCategory = 'リポジトリが見つからない (404)';
+  else if (/timeout|timed/i.test(pushError))             techCategory = '接続タイムアウト';
+  else if (/network|connect|ENOTFOUND/i.test(pushError)) techCategory = 'ネットワーク接続エラー';
+
+  return (
+    `⚠️ **外部バックアップ失敗**\n\n` +
+    `**状況:** 作業内容はこの PC 内に保存済みです。GitHub へのバックアップだけ失敗しました。\n\n` +
+    `**影響:** PC が故障した場合、最新の変更（このタスク以降）を失う可能性があります。\n\n` +
+    `**放置すると:** バックアップなしで開発が続きます。チームへの共有もできません。\n\n` +
+    `**📋 AI おすすめ: 修復推奨**\n理由: 作業履歴の保護とチーム共有のため。\n\n` +
+    `**次の行動:**\n` +
+    `  1. \`!doctor\` でシステム診断\n` +
+    `  2. GitHub Personal Access Token を再発行して \`.env\` を更新\n` +
+    `  3. \`!restart\` で Bot を再起動\n\n` +
+    `━━━━━━━━━━━━━━━\n` +
+    `🔧 **技術詳細** | タスク: \`${taskId}\` | 分類: ${techCategory}`
+  );
+}
+
+// ─────────────────────────────────────────────────────
+// ② タスクエラーフォーマット
+//    data: { taskId, errorType, maskedErrMsg, taskWorkspace, taskType }
+// ─────────────────────────────────────────────────────
+function formatTaskError({ taskId = '', errorType = 'UNKNOWN', maskedErrMsg = '', taskType = '' }) {
+  const { label: errLabel, desc: errDesc } = translateErrorType(errorType);
+
+  const dataStatus = (errorType === 'TIMEOUT' || errorType === 'SYNTAX')
+    ? '途中まで生成されたファイルはワークスペースに保存されています。'
+    : '作業内容は保護されています（タスクは保留状態になりました）。';
+
+  const autoRecovery = errorType === 'TIMEOUT'
+    ? '次回実行時に自動でタスクが分割・再試行されます。'
+    : errorType === 'AUTH' || errorType === 'PERMISSION'
+    ? '認証情報を修正後、`!project run` または `!auto run 1` で再実行してください。'
+    : errorType === 'SYNTAX'
+    ? 'AI が次回実行時に修正タスクを自動生成します。'
+    : '内容を確認してから手動で再実行してください。';
+
+  const humanNeeded = (errorType === 'AUTH' || errorType === 'PERMISSION')
+    ? '⚠️ **人間の対応が必要** — 認証情報を確認してください。'
+    : errorType === 'TIMEOUT'
+    ? 'AI が自動で対処します（次回実行時に小タスクへ分割）。'
+    : '状況を確認してから判断してください。';
+
+  const nextCmd = errorType === 'AUTH' || errorType === 'PERMISSION'
+    ? `\`!doctor\` → 認証情報を確認・修正 → \`!restart\``
+    : errorType === 'TIMEOUT'
+    ? `\`!task list\` → タスク分割状況を確認 → \`!project run\``
+    : `\`!task list\` → タスク状況を確認 → \`!project run\` で再実行`;
+
+  return (
+    `🛑 **作業が止まりました**${taskType ? ` — ${taskType} タスク` : ''}\n\n` +
+    `**何が起きた:** ${errDesc}\n問題の種類: **${errLabel}**\n\n` +
+    `**作業データ:** ${dataStatus}\n\n` +
+    `**自動復旧:** ${autoRecovery}\n\n` +
+    `**人間対応:** ${humanNeeded}\n\n` +
+    `**次の行動:** ${nextCmd}\n\n` +
+    `━━━━━━━━━━━━━━━\n` +
+    `🔧 **技術詳細** | タスク: \`${taskId}\` | エラー種別: ${errorType} | ログ: \`logs/\``
+  );
+}
+
+// ─────────────────────────────────────────────────────
+// ③ HUMAN_CHECK フォーマット
+//    data: { taskId, projectId, reason, details, task }
+// ─────────────────────────────────────────────────────
+function formatHumanCheck({ taskId = '', projectId = '', reason = '', details = '', task = null }) {
+  const friendlyReason = translateHumanCheckReason(reason);
+  const taskPrompt     = (task?.prompt || '').slice(0, 60);
+  const taskType       = task?.type || '';
+  const taskDesc       = taskPrompt
+    ? `作業内容: ${taskPrompt}${taskType ? ` [${taskType}]` : ''}`
+    : `タスク: \`${taskId}\``;
+
+  return (
+    `⚠️ **AI が判断を止めました — 確認してください**\n\n` +
+    `Project: \`${projectId}\`\n${taskDesc}\n\n` +
+    `**何が起きた:** ${friendlyReason}\n` +
+    (details ? `補足: ${String(details).slice(0, 150)}\n` : '') +
+    `\n**承認すると:** → 処理が再開し、次のタスクへ進みます。\n\n` +
+    `**却下すると:** → このタスクをキャンセルし、Runner が安全に停止します。\n\n` +
+    `**放置すると:** → 処理は止まったままです。自動で動き出すことはありません。\n\n` +
+    `**操作:**\n\`\`\`\n` +
+    `!task show ${taskId}  → タスク詳細を確認\n` +
+    `!approve ${taskId}    → 承認して再開\n` +
+    `!deny   ${taskId}    → 却下して停止\n` +
+    `\`\`\`\n\n` +
+    `━━━━━━━━━━━━━━━\n` +
+    `🔧 **技術詳細** | 理由: ${reason} | タスクID: \`${taskId}\``
+  );
+}
+
+// ─────────────────────────────────────────────────────
+// メインエントリポイント
+// ─────────────────────────────────────────────────────
+/**
+ * formatForCEO(type, data)
+ *   type: 'github_push_failed' | 'task_error' | 'human_check'
+ */
+function formatForCEO(type, data = {}) {
+  switch (type) {
+    case 'github_push_failed': return formatGitHubPushFailed(data);
+    case 'task_error':         return formatTaskError(data);
+    case 'human_check':        return formatHumanCheck(data);
+    default: return `[${type}] ${JSON.stringify(data).slice(0, 100)}`;
+  }
+}
+
 module.exports = {
   // 文字数定数
   MAX_MESSAGE,
@@ -291,4 +445,11 @@ module.exports = {
   embedField,
   embedDesc,
   message,
+  // CEO 向けフォーマッター（Phase D-1）
+  formatForCEO,
+  formatGitHubPushFailed,
+  formatTaskError,
+  formatHumanCheck,
+  translateErrorType,
+  translateHumanCheckReason,
 };

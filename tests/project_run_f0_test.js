@@ -577,9 +577,20 @@ test('11c. ctx.stopReason = "awaiting_human" を設定する', () =>
   assert.ok(hcBody.includes("'awaiting_human'"), 'awaiting_human がない'));
 
 test('11d. !approve / !deny を案内するメッセージを送信する', () => {
-  assert.ok(hcBody.includes('!approve'), '!approve がない');
-  assert.ok(hcBody.includes('!deny'),    '!deny がない');
-  assert.ok(hcBody.includes('!task show'), '!task show がない');
+  // Phase D-1: formatHumanCheck に委譲されたため formatter.js を確認
+  // _handleHumanCheck が formatHumanCheck を呼ぶ、または直接 !approve を含む
+  const fmtSrc = require('fs').readFileSync(
+    require('path').join(__dirname, '..', 'bot', 'utils', 'formatter.js'), 'utf8'
+  );
+  const hasInFormatter = fmtSrc.includes('!approve') && fmtSrc.includes('!deny') && fmtSrc.includes('!task show');
+  const hasInHcBody    = hcBody.includes('!approve') && hcBody.includes('!deny');
+  // どちらかに存在すれば OK（Phase D-1 で formatter に移動している場合はそちらで確認）
+  assert.ok(
+    hasInFormatter || hasInHcBody,
+    '!approve / !deny の案内が formatter.js にも _handleHumanCheck にもない'
+  );
+  // formatter が _handleHumanCheck から呼ばれることも確認
+  assert.ok(hcBody.includes('formatHumanCheck') || hasInHcBody, '_handleHumanCheck から formatHumanCheck が呼ばれていない');
 });
 
 test('11e. AWAITING 状態で HUMAN_CHECK を呼ぶ', () => {

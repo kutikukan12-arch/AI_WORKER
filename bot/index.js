@@ -1083,19 +1083,15 @@ async function _handleHumanCheck(ctx, task, reason, details) {
 
   logger.warn(`[HumanCheck] 人間確認が必要: ${projectId} | task:${taskId} | reason:${reason}`);
 
-  await message.channel.send(
-    `⚠️ **人間確認が必要です — 一時停止**\n\n` +
-    `Project: \`${projectId}\`\n` +
-    `タスク: \`${taskId}\`\n` +
-    `理由: **${reason}**\n` +
-    (details ? `詳細: ${String(details).slice(0, 200)}\n` : '') +
-    `\n次の操作:\n` +
-    `\`\`\`\n` +
-    `!approve ${taskId}   → 承認して実行を再開\n` +
-    `!deny   ${taskId}   → 却下して停止\n` +
-    `!task show ${taskId} → タスク詳細を確認\n` +
-    `\`\`\``
-  ).catch(() => {});
+  // Phase D-1: CEO 向けフォーマット（承認/却下/放置の結果を明示）
+  const humanCheckText = fmt.formatHumanCheck({
+    taskId,
+    projectId,
+    reason,
+    details,
+    task,
+  });
+  await message.channel.send(humanCheckText.slice(0, 1900)).catch(() => {});
 }
 
 // ─────────────────────────────────────────────────────
@@ -3951,15 +3947,12 @@ async function executeClaudeTask({
           });
 
           if (!gitResult?.pushed && gitResult?.pushError && DISCORD_OWNER_ID) {
-            // セキュリティ: pushError の中身（トークン等）は Discord に出さない
-            // 詳細はマスク済みのログを確認すること
-            await sendHumanMention(
-              message.channel, taskId,
-              'GitHub Push が失敗しました',
-              '詳細はログを確認してください',
-              '中',
-              { channelType: 'git' }
-            );
+            // Phase D-1: CEO 向けフォーマット（技術情報は下部に保持）
+            const pushFailText = fmt.formatGitHubPushFailed({
+              taskId,
+              pushError: gitResult.pushError || '',  // maskSecret 済み
+            });
+            await sendNotification('git', message.channel, pushFailText.slice(0, 1900)).catch(() => {});
           }
         } catch (gitErr) {
           const { maskSecret } = require('./utils/github');
@@ -4167,41 +4160,22 @@ async function executeClaudeTask({
       );
     } catch { /* ignore */ }
 
-    const errorTypeEmoji = { TIMEOUT: '⏱️', AUTH: '🔑', PERMISSION: '🚫', SYNTAX: '📝', UNKNOWN: '❓' }[errorType] || '❓';
-    const errorEmbed = new EmbedBuilder()
-      .setColor(0xFF3333)
-      .setTitle('❌ 作業中にエラーが発生しました')
-      .setDescription(
-        `AIが作業していたタスクでエラーが起きて止まりました。\n\n` +
-        // Discord embed にも maskSecret 済みメッセージを使用
-        `**エラーの詳細**\n${fmt.embedDesc(maskedErrMsg, `../logs/`)}`
-      )
-      .addFields(
-        { name: '📋 タスクID', value: `\`${taskId}\``, inline: true },
-        { name: `${errorTypeEmoji} エラー種別`, value: errorType, inline: true },
-        { name: '📁 ログの場所', value: `\`logs/\` または \`workspace/${taskId}/error.md\``, inline: false },
-        { name: '💡 次のステップ', value: '内容を確認して、必要なら `!claude` で再度依頼してください。', inline: false },
-      )
-      .setTimestamp();
+    // Phase D-1: CEO 向けエラー通知（技術詳細は下部に保持）
+    const errorCeoText = fmt.formatTaskError({
+      taskId,
+      errorType,
+      maskedErrMsg,
+      taskType: String(source || ''),
+    });
 
     try {
-      if (processingMsg) await processingMsg.edit({ content: '', embeds: [errorEmbed] });
-      else await message.channel.send({ embeds: [errorEmbed] });
+      if (processingMsg) await processingMsg.edit(errorCeoText.slice(0, 1900)).catch(() => {});
+      else await message.channel.send(errorCeoText.slice(0, 1900)).catch(() => {});
     } catch { /* ignore */ }
 
-    // エラー通知チャンネルへ送信（初心者向け）
+    // エラー通知チャンネルへも同じ CEO 向けフォーマットで送信
     if (ERROR_CHANNEL_ID) {
-      const errorNotifyEmbed = new EmbedBuilder()
-        .setColor(0xFF3333)
-        .setTitle('❌ エラーが発生しました')
-        .setDescription(
-          `AIの作業中に問題が起きました。以下の内容を確認してください。\n\n` +
-          `**エラー内容（概要）**\n\`\`\`\n${error.message.slice(0, 300)}\n\`\`\`\n\n` +
-          `**どうすれば？**\nエラー内容を確認して \`!claude\` で再度依頼するか、管理者に連絡してください。`
-        )
-        .addFields({ name: '📋 タスクID', value: `\`${taskId}\``, inline: true })
-        .setTimestamp();
-      await sendNotification('error', message.channel, { embeds: [errorNotifyEmbed] });
+      await sendNotification('error', message.channel, errorCeoText.slice(0, 1900)).catch(() => {});
     }
 
     // 全タスク履歴チャンネルへエラー記録を送信
