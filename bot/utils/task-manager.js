@@ -1249,7 +1249,25 @@ function buildTypeGuard(taskType) {
   };
 
   const lines = GUARDS[type] || GUARDS[TASK_TYPES.IMPLEMENT];
-  return '\n---\n' + lines.join('\n');
+  return '\n---\n' + lines.join('\n') + buildCommonLessons();
+}
+
+// ─────────────────────────────────────────────────────
+// buildCommonLessons — 全タスク共通の再発防止ルール
+//
+// docs/LESSONS.md 由来（🅷 Claude H 管理）。プロンプト末尾に付与し、
+// 過去の高頻度失敗（タイムアウト/自己申告/証跡欠如）を予防する。
+// buildTypeGuard と Auto Runner の augmentedPrompt の両方から呼ぶ。
+// ─────────────────────────────────────────────────────
+function buildCommonLessons() {
+  const lines = [
+    '',
+    '【共通ルール（再発防止 / docs/LESSONS.md 参照）】',
+    '・[L-08] 5分制限が前提。完了しきれない規模と判断したら、着手前に作業を最小単位へ分割すること（タイムアウトが失敗の最多要因）',
+    '・[L-09] 成否・完了は推測で報告しない。git push 等の結果は実際にコマンドを実行し、その出力で裏取りしてから報告すること',
+    '・[L-10] 完了報告には根拠となる証跡（git status / git log / エラーログ全文 / 変更差分）を必ず添付すること',
+  ];
+  return '\n' + lines.join('\n');
 }
 
 // ─────────────────────────────────────────────────────
@@ -1355,6 +1373,7 @@ module.exports = {
   reapExpiredLeases,
   LEASE_TTL_MS,
   buildTypeGuard,
+  buildCommonLessons,
   createFixTaskFromReview,
   findFixTasksFromReview,
   generateSplitProposals,

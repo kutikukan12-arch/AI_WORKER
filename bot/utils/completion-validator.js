@@ -387,6 +387,19 @@ function isOperationLikePrompt(prompt = '') {
   return OPS_PROMPT_PATTERNS.some(re => re.test(prompt || ''));
 }
 
+// ─────────────────────────────────────────────────────
+// git/push 系の操作プロンプトか判定（L-09/L-10 証跡チェック対象）
+// ─────────────────────────────────────────────────────
+const GIT_PUSH_PROMPT_PATTERNS = [/\bpush\b/i, /\bgit\b/i, /プッシュ/, /GitHub/i, /コミット/, /commit/i];
+function isGitPushPrompt(prompt = '') {
+  return GIT_PUSH_PROMPT_PATTERNS.some(re => re.test(prompt || ''));
+}
+
+// 出力に git 実行の証跡（status/log/push結果等）が含まれるか
+function hasGitEvidence(output = '') {
+  return GIT_DIAGNOSTIC_PATTERNS.some(re => re.test(output || ''));
+}
+
 function findTaskOutputArtifact(repoPath, taskId, sinceMs) {
   if (!repoPath || !taskId) return null;
   const workspaceRoot = path.join(repoPath, 'workspace');
@@ -505,13 +518,21 @@ function validate(output, repoPath, taskId = '', passedFiles = null, beforeMs = 
     // DOCS: .md ファイルの作成・更新でも完了OK。出力内容チェックで判定。
     // OPS キーワード（診断/確認/push/status/調査）を含む場合: 会話応答ログがあれば完了
     if (operationLike) {
-      // 会話応答ログが取れなくてもプロセス正常終了で完了扱い
-      ok     = true;
-      reason = outputLength > 0
-        ? `OPSタスク完了（会話応答ログ${outputLength}文字）`
-        : outputArtifact
-          ? `OPSタスク完了（出力ファイルあり: ${path.basename(outputArtifact)}）`
-          : 'OPSタスク完了（Claude正常終了）';
+      // L-09/L-10: git/push 操作タスクは「成功した」という自己申告だけでは不可。
+      // 実行結果の証跡（git status/log/push結果）が出力にも出力ファイルにも
+      // 無ければ未完了とする（「push失敗を成功と誤報告」の再発防止）。
+      if (isGitPushPrompt(prompt) && !hasGitEvidence(output) && !outputArtifact) {
+        ok     = false;
+        reason = 'git/push 操作タスクですが、実行結果の証跡（git status / git log / push結果）が出力にありません。実際のコマンド出力を添付してください（再発防止 L-09/L-10）';
+      } else {
+        // 会話応答ログが取れなくてもプロセス正常終了で完了扱い
+        ok     = true;
+        reason = outputLength > 0
+          ? `OPSタスク完了（会話応答ログ${outputLength}文字）`
+          : outputArtifact
+            ? `OPSタスク完了（出力ファイルあり: ${path.basename(outputArtifact)}）`
+            : 'OPSタスク完了（Claude正常終了）';
+      }
     } else {
       const nonImplResult = validateNonImplement(output, normalizedTaskType);
       ok     = nonImplResult.ok;
@@ -597,6 +618,8 @@ module.exports = {
   validate,
   allowsNoCodeChange,
   isOperationLikePrompt,
+  isGitPushPrompt,
+  hasGitEvidence,
   getChangedFilesFromGit,
   getDiffStat,
   checkSyntaxOfChangedFiles,
