@@ -222,12 +222,21 @@ function train(samples) {
   const hitCount  = y.filter(v => v === 1).length;
   const missCount = y.filter(v => v === 0).length;
 
+  // 学習データ上での方向性正解率
+  let correct = 0;
+  for (let i = 0; i < X.length; i++) {
+    const pred = _sigmoid(_dot(weights, X[i])) >= 0.5 ? 1 : 0;
+    if (pred === y[i]) correct++;
+  }
+  const trainDirectionalAcc = Math.round(correct / X.length * 1000) / 1000;
+
   const modelData = {
-    weights:     Array.from(weights),
-    sampleCount: valid.length,
+    weights:            Array.from(weights),
+    sampleCount:        valid.length,
     hitCount,
     missCount,
-    trainedAt:   new Date().toISOString(),
+    trainDirectionalAcc,
+    trainedAt:          new Date().toISOString(),
   };
 
   const dir = path.dirname(MODEL_FILE);
@@ -235,7 +244,8 @@ function train(samples) {
   fs.writeFileSync(MODEL_FILE, JSON.stringify(modelData, null, 2));
 
   logger.info(
-    `[YouTubePredictor] 訓練完了: ${valid.length}件 (hit:${hitCount} miss:${missCount})`
+    `[YouTubePredictor] 訓練完了: ${valid.length}件 (hit:${hitCount} miss:${missCount}) ` +
+    `方向性正解率:${(trainDirectionalAcc * 100).toFixed(1)}%`
   );
   return modelData;
 }
@@ -246,11 +256,12 @@ function getModelStatus() {
   const data = _loadModel();
   if (!data) return { trained: false, sampleCount: 0 };
   return {
-    trained:     true,
-    sampleCount: data.sampleCount || 0,
-    hitCount:    data.hitCount    || 0,
-    missCount:   data.missCount   || 0,
-    trainedAt:   data.trainedAt,
+    trained:             true,
+    sampleCount:         data.sampleCount         || 0,
+    hitCount:            data.hitCount             || 0,
+    missCount:           data.missCount            || 0,
+    trainDirectionalAcc: data.trainDirectionalAcc  ?? null,
+    trainedAt:           data.trainedAt,
   };
 }
 

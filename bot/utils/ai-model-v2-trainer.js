@@ -145,7 +145,7 @@ function loadModels() {
 // ─────────────────────────────────────────────────────
 // _saveModels(meta, successModel, timeModel) — アトミック保存
 // ─────────────────────────────────────────────────────
-function _saveModels(meta, successModel, timeModel) {
+function _saveModels(meta, successModel, timeModel, metrics = {}) {
   const payload = {
     version: 2,
     sampleCount:    meta.sampleCount,
@@ -153,6 +153,10 @@ function _saveModels(meta, successModel, timeModel) {
     lastTrainedAt:  new Date().toISOString(),
     successModel:   successModel ? successModel.toJSON() : null,
     timeModel:      timeModel    ? timeModel.toJSON()    : null,
+    metrics: {
+      successDirectionalAcc: metrics.successDirectionalAcc ?? null,
+      timeMAPE:              metrics.timeMAPE              ?? null,
+    },
   };
 
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -214,22 +218,50 @@ function trainV2() {
     logger.info(`[V2Trainer] 時間モデルはサンプル不足でスキップ (${X_time.length}/${MIN_SAMPLES})`);
   }
 
+  // ─── 学習データ上での精度評価 ─────────────────────────────
+  let successDirectionalAcc = null;
+  if (successModel && X_success.length > 0) {
+    let correct = 0;
+    for (let i = 0; i < X_success.length; i++) {
+      const pred = successModel.predict(X_success[i]) >= 0.5 ? 1 : 0;
+      if (pred === y_success[i]) correct++;
+    }
+    successDirectionalAcc = Math.round(correct / X_success.length * 1000) / 1000;
+  }
+
+  let timeMAPE = null;
+  if (timeModel && X_time.length > 0) {
+    let mapeSum = 0, mapeCount = 0;
+    for (let i = 0; i < X_time.length; i++) {
+      if (y_time[i] > 0) {
+        mapeSum += Math.abs(timeModel.predict(X_time[i]) - y_time[i]) / y_time[i] * 100;
+        mapeCount++;
+      }
+    }
+    timeMAPE = mapeCount > 0 ? Math.round(mapeSum / mapeCount * 10) / 10 : null;
+  }
+
   const payload = _saveModels(
     { sampleCount: totalTasks, timeSampleCount: X_time.length },
     successModel,
     timeModel,
+    { successDirectionalAcc, timeMAPE },
   );
 
   logger.info(
     `[V2Trainer] 完了 | tasks:${totalTasks} | ` +
-    `successSamples:${X_success.length} | timeSamples:${X_time.length}`
+    `successSamples:${X_success.length} | timeSamples:${X_time.length} | ` +
+    `方向性正解率:${successDirectionalAcc !== null ? (successDirectionalAcc * 100).toFixed(1) + '%' : 'N/A'} | ` +
+    `MAPE:${timeMAPE !== null ? timeMAPE.toFixed(1) + '%' : 'N/A'}`
   );
 
   return {
-    skipped:         false,
-    sampleCount:     totalTasks,
-    timeSampleCount: X_time.length,
-    lastTrainedAt:   payload.lastTrainedAt,
+    skipped:              false,
+    sampleCount:          totalTasks,
+    timeSampleCount:      X_time.length,
+    lastTrainedAt:        payload.lastTrainedAt,
+    successDirectionalAcc,
+    timeMAPE,
   };
 }
 
@@ -305,6 +337,7 @@ function getV2Stats() {
     hasTimeModel:    !!m.timeModel,
     successTrainedAt: m.successModel?.trainedAt ?? null,
     timeTrainedAt:    m.timeModel?.trainedAt    ?? null,
+    metrics:          m.metrics ?? null,
   };
 }
 

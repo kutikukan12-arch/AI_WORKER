@@ -167,7 +167,13 @@ function defaultWeights() {
     routingAdjustments: { 'Codex': 1.0, 'ChatGPT': 1.0, 'Claude Code': 1.0 },
     typeSuccessAdjustments: {},
     typeTimeMultipliers: {},
-    accuracy: { outcomeSamples: 0, avgTimeAccuracy: null, avgSuccessAccuracy: null },
+    accuracy: {
+      outcomeSamples: 0,
+      avgTimeAccuracy: null,
+      avgSuccessAccuracy: null,
+      avgTimeMAPE: null,
+      avgDirectionalAcc: null,
+    },
   };
 }
 
@@ -208,6 +214,10 @@ function train() {
   let timeAccCount    = 0;
   let successAccTotal = 0;
   let successAccCount = 0;
+  let timeMAPETotal   = 0;
+  let timeMAPECount   = 0;
+  let dirAccTotal     = 0;
+  let dirAccCount     = 0;
   const typeReport    = {};
 
   for (const [type, s] of Object.entries(stats)) {
@@ -224,6 +234,11 @@ function train() {
       const sAcc = 1 - Math.abs(predictedRate - actualRate) / Math.max(predictedRate, actualRate, 1);
       successAccTotal += sAcc;
       successAccCount++;
+
+      // 方向性正解率: predicted と actual が 50% 閾値の同じ側にあるか
+      const dirMatch = (predictedRate >= 50) === (actualRate >= 50) ? 1 : 0;
+      dirAccTotal += dirMatch;
+      dirAccCount++;
     }
 
     // ── 時間推定乗数 ──
@@ -238,6 +253,12 @@ function train() {
       const acc = 1 - Math.abs(predictedMid - weightedAvg) / Math.max(predictedMid, weightedAvg, 1);
       timeAccTotal += acc;
       timeAccCount++;
+
+      // MAPE: |predicted - actual| / actual × 100
+      if (weightedAvg > 0) {
+        timeMAPETotal += Math.abs(predictedMid - weightedAvg) / weightedAvg * 100;
+        timeMAPECount++;
+      }
 
       timeMult          = Math.round((timeMult + (targetM - timeMult) * LEARNING_RATE) * 100) / 100;
       newTimeMult[type] = timeMult;
@@ -259,6 +280,14 @@ function train() {
     ? Math.round(successAccTotal / successAccCount * 1000) / 1000
     : current.accuracy?.avgSuccessAccuracy ?? null;
 
+  const avgTimeMAPE = timeMAPECount > 0
+    ? Math.round(timeMAPETotal / timeMAPECount * 10) / 10
+    : current.accuracy?.avgTimeMAPE ?? null;
+
+  const avgDirectionalAcc = dirAccCount > 0
+    ? Math.round(dirAccTotal / dirAccCount * 1000) / 1000
+    : current.accuracy?.avgDirectionalAcc ?? null;
+
   const trainedWeights = {
     version: 1,
     sampleCount: totalTasks,
@@ -266,7 +295,7 @@ function train() {
     routingAdjustments:     current.routingAdjustments,
     typeSuccessAdjustments: newSuccessAdj,
     typeTimeMultipliers:    newTimeMult,
-    accuracy: { outcomeSamples: totalTasks, avgTimeAccuracy, avgSuccessAccuracy },
+    accuracy: { outcomeSamples: totalTasks, avgTimeAccuracy, avgSuccessAccuracy, avgTimeMAPE, avgDirectionalAcc },
   };
 
   // アトミック書き込み: .tmp に書いてからリネーム（書き込み中クラッシュでファイル破損しない）
@@ -277,7 +306,9 @@ function train() {
   logger.info(
     `[Trainer] 完了 | samples:${totalTasks} | ` +
     `時間精度:${avgTimeAccuracy !== null ? (avgTimeAccuracy * 100).toFixed(1) + '%' : 'N/A'} | ` +
-    `成功率精度:${avgSuccessAccuracy !== null ? (avgSuccessAccuracy * 100).toFixed(1) + '%' : 'N/A'}`
+    `MAPE:${avgTimeMAPE !== null ? avgTimeMAPE.toFixed(1) + '%' : 'N/A'} | ` +
+    `成功率精度:${avgSuccessAccuracy !== null ? (avgSuccessAccuracy * 100).toFixed(1) + '%' : 'N/A'} | ` +
+    `方向性正解率:${avgDirectionalAcc !== null ? (avgDirectionalAcc * 100).toFixed(1) + '%' : 'N/A'}`
   );
 
   return { skipped: false, sampleCount: totalTasks, weights: trainedWeights, typeReport };
@@ -347,6 +378,10 @@ function trainIncremental() {
   let timeAccCount    = 0;
   let successAccTotal = 0;
   let successAccCount = 0;
+  let timeMAPETotal   = 0;
+  let timeMAPECount   = 0;
+  let dirAccTotal     = 0;
+  let dirAccCount     = 0;
   const typeReport    = {};
 
   for (const [type, s] of Object.entries(stats)) {
@@ -361,6 +396,10 @@ function trainIncremental() {
       const sAcc = 1 - Math.abs(predictedRate - actualRate) / Math.max(predictedRate, actualRate, 1);
       successAccTotal += sAcc;
       successAccCount++;
+
+      const dirMatch = (predictedRate >= 50) === (actualRate >= 50) ? 1 : 0;
+      dirAccTotal += dirMatch;
+      dirAccCount++;
     }
 
     let timeMult = current.typeTimeMultipliers[type] || 1.0;
@@ -373,6 +412,11 @@ function trainIncremental() {
       const acc = 1 - Math.abs(predictedMid - weightedAvg) / Math.max(predictedMid, weightedAvg, 1);
       timeAccTotal += acc;
       timeAccCount++;
+
+      if (weightedAvg > 0) {
+        timeMAPETotal += Math.abs(predictedMid - weightedAvg) / weightedAvg * 100;
+        timeMAPECount++;
+      }
 
       timeMult          = Math.round((timeMult + (targetM - timeMult) * LEARNING_RATE) * 100) / 100;
       newTimeMult[type] = timeMult;
@@ -394,6 +438,14 @@ function trainIncremental() {
     ? Math.round(successAccTotal / successAccCount * 1000) / 1000
     : current.accuracy?.avgSuccessAccuracy ?? null;
 
+  const avgTimeMAPE = timeMAPECount > 0
+    ? Math.round(timeMAPETotal / timeMAPECount * 10) / 10
+    : current.accuracy?.avgTimeMAPE ?? null;
+
+  const avgDirectionalAcc = dirAccCount > 0
+    ? Math.round(dirAccTotal / dirAccCount * 1000) / 1000
+    : current.accuracy?.avgDirectionalAcc ?? null;
+
   const totalSamples = (current.sampleCount || 0) + newTasks;
 
   const trainedWeights = {
@@ -403,7 +455,7 @@ function trainIncremental() {
     routingAdjustments:     current.routingAdjustments,
     typeSuccessAdjustments: newSuccessAdj,
     typeTimeMultipliers:    newTimeMult,
-    accuracy: { outcomeSamples: totalSamples, avgTimeAccuracy, avgSuccessAccuracy },
+    accuracy: { outcomeSamples: totalSamples, avgTimeAccuracy, avgSuccessAccuracy, avgTimeMAPE, avgDirectionalAcc },
   };
 
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -413,7 +465,9 @@ function trainIncremental() {
   logger.info(
     `[Trainer] インクリメンタル完了 | new:${newTasks} total:${totalSamples} | ` +
     `時間精度:${avgTimeAccuracy !== null ? (avgTimeAccuracy * 100).toFixed(1) + '%' : 'N/A'} | ` +
-    `成功率精度:${avgSuccessAccuracy !== null ? (avgSuccessAccuracy * 100).toFixed(1) + '%' : 'N/A'}`
+    `MAPE:${avgTimeMAPE !== null ? avgTimeMAPE.toFixed(1) + '%' : 'N/A'} | ` +
+    `成功率精度:${avgSuccessAccuracy !== null ? (avgSuccessAccuracy * 100).toFixed(1) + '%' : 'N/A'} | ` +
+    `方向性正解率:${avgDirectionalAcc !== null ? (avgDirectionalAcc * 100).toFixed(1) + '%' : 'N/A'}`
   );
 
   return {
