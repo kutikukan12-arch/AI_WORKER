@@ -95,24 +95,46 @@ function resolveClaudeCommandForDoctor() {
 
 function checkClaudeCommand() {
   const cmd = resolveClaudeCommandForDoctor();
+
+  // Try 1: 解決済み exe パスを直接実行（shell:false・絶対パス推奨）
+  // stdio: ['ignore','pipe','pipe'] で stdin を閉じる（claude-runner.js と同様）
   try {
-    // execFileSync は shell を使わず exe を直接呼ぶ（shell:false 相当）
     const { execFileSync: execFile2 } = require('child_process');
-    execFile2(cmd, ['--version'], { stdio: 'pipe', timeout: 5000 });
+    execFile2(cmd, ['--version'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 5000,
+    });
     return {
       label:  'Claude CLI',
       status: 'OK',
       detail: `起動確認済み | コマンド: ${path.basename(cmd)}`,
       action: '特になし',
     };
-  } catch {
+  } catch { /* Try 2 へ */ }
+
+  // Try 2: shell 経由で PATH から claude を探す
+  // .cmd ファイルは shell なしでは実行できないため、フォールバックとして必要
+  try {
+    const { execSync } = require('child_process');
+    execSync('claude --version', {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 5000,
+      shell: true,
+    });
     return {
       label:  'Claude CLI',
-      status: '要対応',
-      detail: `未検出 | コマンド: ${cmd}`,
-      action: 'npm install -g @anthropic-ai/claude-code を実行してください',
+      status: 'OK',
+      detail: `起動確認済み (PATH) | コマンド: claude`,
+      action: '特になし',
     };
-  }
+  } catch { /* 両方失敗 */ }
+
+  return {
+    label:  'Claude CLI',
+    status: '要対応',
+    detail: `未検出 | コマンド: ${cmd}`,
+    action: 'npm install -g @anthropic-ai/claude-code を実行してください',
+  };
 }
 
 // ─────────────────────────────────────────────────────
