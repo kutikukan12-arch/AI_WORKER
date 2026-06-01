@@ -80,6 +80,42 @@ function _ruleScore(video) {
   return { score, buzzRatio };
 }
 
+// ── 投稿前判定 ────────────────────────────────────────────
+// viewCount が 0 または未設定の場合は投稿前とみなす
+function _isPrePublication(video) {
+  return !video.viewCount || video.viewCount === 0;
+}
+
+// ── 投稿前ルールスコア（viewCount 不使用） ───────────────
+// 投稿前に得られる特徴量（title/tags/duration/subscriberCount）のみで採点
+function _ruleScorePrePub(video) {
+  const subs     = video.subscriberCount || 0;
+  const title    = video.title           || '';
+  const tags     = Array.isArray(video.tags) ? video.tags : [];
+  const duration = video.duration        || 0;
+
+  let score = 0.45; // ベースライン（投稿前データのみ）
+
+  // チャンネル規模（大きいほど初動が期待できる）
+  if      (subs >= 100000) score += 0.15;
+  else if (subs >=  10000) score += 0.08;
+  else if (subs >=   1000) score += 0.03;
+
+  // タイトル品質
+  if (title.length >= 8 && title.length <= 70) score += 0.06;
+  if (/[!！]/.test(title))                     score += 0.05;
+  if (/[?？]/.test(title))                     score += 0.02;
+
+  // タグ数（SEO・サジェスト露出）
+  if (tags.length >= 5)  score += 0.05;
+  if (tags.length >= 15) score += 0.03;
+
+  // 動画尺（5〜20 分が VOD 最適帯）
+  if (duration >= 300 && duration <= 1200) score += 0.05;
+
+  return { score: Math.min(score, 0.90), buzzRatio: null };
+}
+
 // ── 再生数レンジ推定 ──────────────────────────────────────
 
 // rawProbability (0..1) と confidence から再生数レンジ { low, median, high } を算出。

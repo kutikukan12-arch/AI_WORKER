@@ -38,6 +38,8 @@ const BATCH_CHANNEL_ID = process.env.BATCH_CHANNEL_ID || '';
 const MORNING_BATCH_HOUR    = parseInt(process.env.MORNING_BATCH_HOUR   || '8', 10);
 const MORNING_BATCH_MINUTE  = parseInt(process.env.MORNING_BATCH_MINUTE || '0', 10);
 const MORNING_BATCH_CHANNEL_ID = process.env.MORNING_BATCH_CHANNEL_ID || BATCH_CHANNEL_ID;
+// 社長向け日報の投稿先（#📊-日報）。未設定なら朝バッチchへフォールバック
+const CEO_REPORT_CHANNEL_ID = process.env.CEO_REPORT_CHANNEL_ID || '';
 
 // ─── パス ───
 const ROOT_DIR    = path.join(__dirname, '..', '..');
@@ -370,6 +372,19 @@ async function runMorningBatch(notifyFn = null) {
   ].filter(Boolean).join('\n');
 
   if (notifyFn) await notifyFn(MORNING_BATCH_CHANNEL_ID, lines);
+
+  // ─── 社長向け日報を #📊-日報 へ自動投稿 ───
+  if (notifyFn) {
+    try {
+      const ceoReport = require('./ceo-report');
+      const digest    = ceoReport.formatDailyDigest(taskManager);
+      await notifyFn(CEO_REPORT_CHANNEL_ID || MORNING_BATCH_CHANNEL_ID, digest);
+      logger.info('日報を #📊-日報 へ自動投稿しました');
+    } catch (e) {
+      logger.warn(`日報の自動投稿に失敗（朝バッチは継続）: ${e.message}`);
+    }
+  }
+
   logger.info(`朝バッチ完了 | アクティブ${active.length}件 | 優先度更新${updated.length}件`);
   return { active: active.length, updated, longAwaiting };
 }

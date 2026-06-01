@@ -24,8 +24,12 @@ const LOG_DIR = path.join(__dirname, '..', '..', 'logs');
 // 当日の台帳ファイルパス（logs/cost-YYYY-MM-DD.jsonl）
 // ─────────────────────────────────────────────────────
 function dailyFile(date = new Date()) {
-  const ymd = date.toISOString().slice(0, 10); // YYYY-MM-DD（UTC基準で日付固定）
-  return path.join(LOG_DIR, `cost-${ymd}.jsonl`);
+  // ローカル(JST)日付で YYYY-MM-DD を作る。bot の他ログ(logs/YYYY-MM-DD.log)と
+  // 日付の境界を揃えるため、UTC ではなくローカルタイムを使う。
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return path.join(LOG_DIR, `cost-${y}-${m}-${d}.jsonl`);
 }
 
 // ─────────────────────────────────────────────────────

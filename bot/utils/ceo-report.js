@@ -331,6 +331,65 @@ function formatCeoReportPart3(report) {
   );
 }
 
+// ─────────────────────────────────────────────────────
+// formatDailyDigest — 社長向け「毎日の日報」（非エンジニア向け・日本語）
+//
+// 朝バッチ（毎日8:00）から呼ばれ、#📊-日報 に投稿する想定。
+// 専門用語を使わず、「① 何が起きたか ② 良い/悪い ③ 今日やること」
+// が一目で分かる短文を返す。
+//
+// 引数:
+//   taskManager — task-manager モジュール
+// 戻り値:
+//   string（Discord 投稿用テキスト）
+// ─────────────────────────────────────────────────────
+function formatDailyDigest(taskManager) {
+  const S = taskManager.STATES;
+  let tasks = [];
+  try { tasks = taskManager.listTasks() || []; } catch { tasks = []; }
+
+  // 過去24時間に完了したタスク
+  const since24h = Date.now() - 24 * 60 * 60 * 1000;
+  const within24h = (t) => {
+    const ts = new Date(t.updatedAt || t.createdAt || 0).getTime();
+    return Number.isFinite(ts) && ts >= since24h;
+  };
+
+  const doneRecent = tasks.filter(t => t.state === S.DONE && within24h(t)).length;
+  const inProgress = tasks.filter(t => t.state === S.IN_PROGRESS || t.state === S.REVIEWING).length;
+  const awaiting   = tasks.filter(t => t.state === S.AWAITING).length;
+  const stuck      = tasks.filter(t => t.state === S.ON_HOLD).length;
+
+  // ひとこと判定（③放置可否が分かるように）
+  let verdict, todo;
+  if (stuck > 0) {
+    verdict = '🔴 止まっているものがあります';
+    todo = `⚠️ #🚨緊急 と #🔧技術ログ を確認するか、エンジニアに「${stuck}件 止まっている」と伝えてください。`;
+  } else if (awaiting > 0) {
+    verdict = '🟡 あなたの確認まちがあります';
+    todo = `✋ #承認-確認 を開いて、${awaiting}件を承認(approve)するか却下(deny)してください。`;
+  } else {
+    verdict = '🟢 順調です';
+    todo = '特に対応は要りません。このまま進めてOKです。';
+  }
+
+  const date = new Date().toLocaleString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+  return [
+    `📊 **今日の日報**　(${date})`,
+    ``,
+    `**ひとことで言うと：${verdict}**`,
+    ``,
+    `・昨日からの完了：**${doneRecent}件**`,
+    `・いま作業中：${inProgress}件`,
+    `・✋ 承認まち：${awaiting}件${awaiting > 0 ? '　← あなたの確認が必要' : ''}`,
+    `・⚠️ 止まっている：${stuck}件`,
+    ``,
+    `👉 **今日やること：**`,
+    `　${todo}`,
+  ].join('\n');
+}
+
 module.exports = {
   EXEC_STATUS,
   EXEC_EMOJI,
@@ -339,6 +398,7 @@ module.exports = {
   formatCeoReportPart1,
   formatCeoReportPart2,
   formatCeoReportPart3,
+  formatDailyDigest,
   // テスト用内部関数
   _boardStatusToExecStatus: boardStatusToExecStatus,
   _buildRoleEvaluations:    buildRoleEvaluations,
