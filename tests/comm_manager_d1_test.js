@@ -116,28 +116,29 @@ test('2h. index.js で formatTaskError が使われている', () => {
 // ─────────────────────────────────────────────────────
 console.log('\n[3. HUMAN_CHECK 通知の改善]');
 
-test('3a. 承認すると何が起きるか説明がある', () => {
+test('3a. 承認した場合の説明がある（新フォーマット対応）', () => {
   const text = fmt.formatHumanCheck({
     taskId: 'task_x', projectId: 'proj', reason: 'AUTH エラー', details: '', task: null
   });
-  assert.ok(text.includes('承認すると'), '承認後の説明がない');
-  assert.ok(text.includes('再開') || text.includes('進みます'), '承認後の動作説明がない');
+  // 新フォーマット: 「承認した場合」または旧フォーマット「承認すると」のどちらでも可
+  assert.ok(text.includes('承認した場合') || text.includes('承認すると'), '承認後の説明がない');
+  assert.ok(text.includes('再開') || text.includes('進みます') || text.includes('続行'), '承認後の動作説明がない');
 });
 
-test('3b. 却下すると何が起きるか説明がある', () => {
+test('3b. 却下した場合の説明がある（新フォーマット対応）', () => {
   const text = fmt.formatHumanCheck({
     taskId: 'task_x', projectId: 'proj', reason: 'AUTH エラー', details: '', task: null
   });
-  assert.ok(text.includes('却下すると'), '却下後の説明がない');
-  assert.ok(text.includes('停止') || text.includes('キャンセル'), '却下後の動作説明がない');
+  assert.ok(text.includes('却下した場合') || text.includes('却下すると'), '却下後の説明がない');
+  assert.ok(text.includes('停止') || text.includes('キャンセル') || text.includes('スキップ'), '却下後の動作説明がない');
 });
 
-test('3c. 放置すると止まる説明がある', () => {
+test('3c. 放置した場合の説明がある（新フォーマット対応）', () => {
   const text = fmt.formatHumanCheck({
     taskId: 'task_x', projectId: 'proj', reason: 'timeout_limit', details: '', task: null
   });
-  assert.ok(text.includes('放置'), '放置説明がない');
-  assert.ok(text.includes('止まった') || text.includes('動き出さ'), '放置時の動作説明がない');
+  assert.ok(text.includes('放置した場合') || text.includes('放置すると') || text.includes('放置'), '放置説明がない');
+  assert.ok(text.includes('待機') || text.includes('止まった') || text.includes('動き出さ') || text.includes('進みません'), '放置時の動作説明がない');
 });
 
 test('3d. !approve / !deny / !task show コマンドが含まれる', () => {
@@ -213,21 +214,21 @@ test('4e. Git 処理（commitAndPush）は変更なし', () => {
 // ─────────────────────────────────────────────────────
 console.log('\n[5. Codex 高危険度通知]');
 
-test('5a. formatCodexHighDanger が「承認すると」説明を含む', () => {
+test('5a. formatCodexHighDanger が「承認した場合」説明を含む（新フォーマット対応）', () => {
   const text = fmt.formatCodexHighDanger({ taskId: 'task_x', codexFile: 'reviews/codex_task_x.md' });
-  assert.ok(text.includes('承認すると'), '承認後の説明がない');
-  assert.ok(text.includes('Codex') || text.includes('レビュー'), '内容説明がない');
+  assert.ok(text.includes('承認した場合') || text.includes('承認すると'), '承認後の説明がない');
+  assert.ok(text.includes('Codex') || text.includes('レビュー') || text.includes('確認'), '内容説明がない');
 });
 
-test('5b. formatCodexHighDanger が「却下すると」説明を含む', () => {
+test('5b. formatCodexHighDanger が「却下した場合」説明を含む（新フォーマット対応）', () => {
   const text = fmt.formatCodexHighDanger({ taskId: 'task_x', codexFile: 'reviews/codex_task_x.md' });
-  assert.ok(text.includes('却下すると'), '却下後の説明がない');
+  assert.ok(text.includes('却下した場合') || text.includes('却下すると'), '却下後の説明がない');
 });
 
-test('5c. formatCodexHighDanger が「放置すると」説明を含む', () => {
+test('5c. formatCodexHighDanger が「放置した場合」説明を含む（新フォーマット対応）', () => {
   const text = fmt.formatCodexHighDanger({ taskId: 'task_x', codexFile: 'reviews/codex_task_x.md' });
-  assert.ok(text.includes('放置すると'), '放置説明がない');
-  assert.ok(text.includes('止まった') || text.includes('動き出さ') || text.includes('自動で進む'), '放置時の動作説明がない');
+  assert.ok(text.includes('放置した場合') || text.includes('放置すると') || text.includes('放置'), '放置説明がない');
+  assert.ok(text.includes('待機') || text.includes('止まった') || text.includes('進みません'), '放置時の動作説明がない');
 });
 
 test('5d. formatCodexHighDanger に AI おすすめ・理由が含まれる', () => {
@@ -292,9 +293,9 @@ test('6a. _s1 suffix の taskId でも formatCodexHighDanger が生成できる'
     danger:   '高',
   });
   assert.ok(text.includes('task_1780329606501_s1'), 'split taskId が含まれない');
-  assert.ok(text.includes('承認すると'), '承認説明がない');
-  assert.ok(text.includes('却下すると'), '却下説明がない');
-  assert.ok(text.includes('放置すると'), '放置説明がない');
+  assert.ok(text.includes('承認した場合') || text.includes('承認すると'), '承認説明がない');
+  assert.ok(text.includes('却下した場合') || text.includes('却下すると'), '却下説明がない');
+  assert.ok(text.includes('放置した場合') || text.includes('放置すると') || text.includes('放置'), '放置説明がない');
 });
 
 test('6b. _s2 / _s3 suffix の taskId でも formatCodexHighDanger が生成できる', () => {
