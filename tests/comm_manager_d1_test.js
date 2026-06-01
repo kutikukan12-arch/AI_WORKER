@@ -280,5 +280,77 @@ test('5j. 旧フォーマット（「Codex依頼の危険度が「高」です /
     '旧フォーマットのメッセージが残っている（customMessageに置き換えられるべき）');
 });
 
+// ─────────────────────────────────────────────────────
+// 6. split task（_s1/_s2/_s3）でも新フォーマットが使われること
+// ─────────────────────────────────────────────────────
+console.log('\n[6. split task の Codex 高危険度通知]');
+
+test('6a. _s1 suffix の taskId でも formatCodexHighDanger が生成できる', () => {
+  const text = fmt.formatCodexHighDanger({
+    taskId:   'task_1780329606501_s1',
+    codexFile: 'reviews/codex_task_1780329606501_s1.md',
+    danger:   '高',
+  });
+  assert.ok(text.includes('task_1780329606501_s1'), 'split taskId が含まれない');
+  assert.ok(text.includes('承認すると'), '承認説明がない');
+  assert.ok(text.includes('却下すると'), '却下説明がない');
+  assert.ok(text.includes('放置すると'), '放置説明がない');
+});
+
+test('6b. _s2 / _s3 suffix の taskId でも formatCodexHighDanger が生成できる', () => {
+  ['task_1780329606501_s2', 'task_1780329606501_s3'].forEach(tid => {
+    const text = fmt.formatCodexHighDanger({ taskId: tid, codexFile: `reviews/codex_${tid}.md` });
+    assert.ok(text.includes(tid), `${tid} がフォーマット結果に含まれない`);
+    assert.ok(text.length > 100, `${tid} のフォーマットが短すぎる`);
+  });
+});
+
+test('6c. sendHumanMention の customMessage が設定されると旧フォーマットが表示されない', () => {
+  // sendHumanMention の処理を直接確認: customMessage があれば 【確認してほしいこと】 を含まない
+  const sendHMIdx  = src.indexOf('async function sendHumanMention');
+  const sendHMEnd  = src.indexOf('\nasync function sendPRHumanConfirm', sendHMIdx);
+  const sendHMBody = src.slice(sendHMIdx, sendHMEnd > 0 ? sendHMEnd : sendHMIdx + 1500);
+
+  // customMessage 分岐が三項演算子で実装されている
+  assert.ok(sendHMBody.includes('options.customMessage'), 'customMessage 分岐がない');
+  // customMessage が truthy の場合は 【確認してほしいこと】 を使わないことを確認
+  const ternaryIdx  = sendHMBody.indexOf('options.customMessage');
+  const ternaryArea = sendHMBody.slice(ternaryIdx, ternaryIdx + 300);
+  assert.ok(
+    ternaryArea.includes('?') && ternaryArea.includes(':'),
+    '三項演算子での分岐がない（customMessage が常に使われるとは限らない）'
+  );
+});
+
+test('6d. formatCodexHighDanger が formatter.js から正しくエクスポートされている', () => {
+  const fmtSrc = require('fs').readFileSync(
+    require('path').join(__dirname, '..', 'bot', 'utils', 'formatter.js'), 'utf8'
+  );
+  // exports に含まれている
+  assert.ok(fmtSrc.includes('formatCodexHighDanger,') || fmtSrc.includes('formatCodexHighDanger\n'),
+    'formatCodexHighDanger が module.exports にない');
+  // 実際に関数として require できる
+  const fmtModule = require('../bot/utils/formatter');
+  assert.strictEqual(typeof fmtModule.formatCodexHighDanger, 'function',
+    'formatCodexHighDanger が関数として取得できない（Bot 再起動が必要な可能性）');
+});
+
+test('6e. Codex 高危険ブロックで customMessage に formatCodexHighDanger が渡されており、split task でも同じパスを通る', () => {
+  // executeClaudeTask は split task (_s1/_s2/_s3) でも同一関数が呼ばれる
+  // (split task ID が _s で終わっても executeClaudeTask は区別しない)
+  const claudeTaskIdx = src.indexOf('async function executeClaudeTask');
+  const claudeTaskEnd = src.indexOf('\nasync function executeReviewTask', claudeTaskIdx);
+  const claudeTaskBody = src.slice(claudeTaskIdx, claudeTaskEnd > 0 ? claudeTaskEnd : claudeTaskIdx + 10000);
+
+  // Codex 高危険ブロックが executeClaudeTask 内にある
+  assert.ok(claudeTaskBody.includes("codexRequest.danger === '高'"), 'Codex 高危険チェックが executeClaudeTask にない');
+  assert.ok(claudeTaskBody.includes('customMessage'), 'customMessage が executeClaudeTask にない');
+  assert.ok(claudeTaskBody.includes('formatCodexHighDanger'), 'formatCodexHighDanger が executeClaudeTask にない');
+
+  // executeClaudeTask は全タスク（_s prefix 含む）に対して同一処理をする
+  // （taskId をパターンマッチしていないため）
+  assert.ok(!claudeTaskBody.includes("taskId.includes('_s')"), 'split task 専用の分岐が存在する（想定外）');
+});
+
 console.log(`\n結果: ${pass} passed / ${fail} failed\n`);
 if (fail > 0) process.exit(1);

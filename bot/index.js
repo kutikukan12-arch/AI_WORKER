@@ -4068,22 +4068,32 @@ async function executeClaudeTask({
       );
 
       if (codexRequest.danger === '高' && DISCORD_OWNER_ID) {
-        // Phase D-1 追加対象: CEO 向けフォーマット（承認/却下/放置を明示）
-        await sendHumanMention(
-          message.channel, taskId,
-          'Codex 依頼の危険度が「高」です',
-          `reviews/codex_${taskId}.md を確認してください。`,
-          '高',
-          {
-            channelType:   'codexReview',
-            customMessage: fmt.formatCodexHighDanger({
+        // Phase D-1: CEO 向けフォーマット（承認/却下/放置を明示）
+        // split task (_s1/_s2/_s3) も executeClaudeTask を通るため同じパスで処理される。
+        // title/detail 引数は recordHumanConfirm / createApproval の内部記録用。
+        // Discord 表示は customMessage で上書きされる（旧フォーマットは表示されない）。
+        // 注意: Bot が未再起動の場合は fmt.formatCodexHighDanger が undefined になる可能性あり。
+        //       その場合は customMessage: undefined → 旧フォーマットがフォールバック表示される。
+        //       → !restart コマンドで Bot を再起動してください。
+        const codexCEOMsg = typeof fmt.formatCodexHighDanger === 'function'
+          ? fmt.formatCodexHighDanger({
               taskId,
               codexFile: `reviews/codex_${taskId}.md`,
               danger:    '高',
               taskType:  String(taskType || ''),
-            }),
+            })
+          : null; // 旧バージョンとの互換フォールバック（null → 旧フォーマット使用）
+        await sendHumanMention(
+          message.channel, taskId,
+          'Codex 依頼の危険度が「高」です',       // recordHumanConfirm / createApproval 用
+          `reviews/codex_${taskId}.md を確認してください。`, // 内部記録用（Discord 表示は customMessage）
+          '高',
+          {
+            channelType:   'codexReview',
+            customMessage: codexCEOMsg,
           }
         );
+        logger.info(`[D-1] Codex高危険通知: ${taskId} | formatCodexHighDanger=${typeof fmt.formatCodexHighDanger === 'function' ? 'OK' : 'undefined(要再起動)'}`);
       }
     }
 
