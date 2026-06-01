@@ -1,12 +1,12 @@
 {
-  "totalUsd": 13.241561,
+  "totalUsd": 13.248271,
   "bySource": {
     "claude": 13.2264,
-    "openai": 0.015161
+    "openai": 0.021871
   },
   "byProject": {
-    "unknown": 0.015161
+    "unknown": 0.021871
   },
-  "taskCount": 2,
-  "lastUpdated": "2026-06-01T18:57:03.267Z"
+  "taskCount": 3,
+  "lastUpdated": "2026-06-01T19:01:18.334Z"
 }
