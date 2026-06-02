@@ -44,13 +44,16 @@ const USD_TO_JPY = 155;
 
 // ─── デフォルト設定 ──────────────────────────────────
 const DEFAULT_CONFIG = {
-  monthlyBudgetJPY: 5000,   // 月予算（円）
-  warningRate:      0.50,   // 50% で WARNING
-  approvalRate:     0.80,   // 80% で APPROVAL 必要
-  hardStopRate:     1.00,   // 100% で HARD STOP
-  perRunLimitJPY:   500,    // 1実行あたりの上限（円）
-  enabled:          true,   // ゲート有効/無効
-  updatedAt:        null,
+  monthlyBudgetJPY:    5000,   // 月予算（円）— 実課金のみ対象
+  warningRate:         0.50,   // 50% で WARNING
+  approvalRate:        0.80,   // 80% で APPROVAL 必要
+  hardStopRate:        1.00,   // 100% で HARD STOP
+  perRunLimitJPY:      500,    // 1実行あたりの上限（円）
+  fixedMonthlyCostJPY: 0,      // Claudeプランなど固定費（円・表示専用）
+  enabled:             true,   // ゲート有効/無効
+  updatedAt:           null,
+  // 重要: Finance Gate の判定は actualCostUsd のみ使用
+  //       Claude Code 換算額は実課金でないためゲート判定に含めない
 };
 
 // ─────────────────────────────────────────────────────
@@ -86,19 +89,35 @@ function ensureConfigFile() {
 }
 
 // ─────────────────────────────────────────────────────
-// 今月の使用額を取得（USD + JPY換算）
+// 今月の実課金使用額を取得（Finance Gate の判定用）
+//
+// 重要:
+//   ・Claude Code 換算額は含めない（実課金ではないため）
+//   ・actualCostUsd（OpenAI API 等）のみ使用
 // ─────────────────────────────────────────────────────
 function getMonthlyUsage() {
   try {
-    const summary = financeManager.getTodaySummary();
-    const monthly = summary.monthlyTotalUsd || 0;
+    // getCostSummary があれば使用（Rev.2 以降）
+    const fm = financeManager;
+    let actualUsd = 0;
+
+    if (typeof fm.getCostSummary === 'function') {
+      const cs = fm.getCostSummary();
+      actualUsd = cs.actual?.usd || 0;
+    } else {
+      // 後方互換: 旧 getTodaySummary
+      const summary = fm.getTodaySummary();
+      actualUsd = summary.actualMonthlyUsd || summary.monthlyTotalUsd || 0;
+    }
+
     return {
-      usd:       Math.round(monthly * 10000) / 10000,
-      jpy:       Math.round(monthly * USD_TO_JPY),
-      isEstimate: true,  // Claude Code の実費が取れない場合も推定として扱う
+      usd:        Math.round(actualUsd * 10000) / 10000,
+      jpy:        Math.round(actualUsd * USD_TO_JPY),
+      isEstimate: true,         // USD→JPY 換算は概算
+      isActualOnly: true,       // Claude Code 換算額を含まないことを明示
     };
   } catch {
-    return { usd: 0, jpy: 0, isEstimate: true };
+    return { usd: 0, jpy: 0, isEstimate: true, isActualOnly: true };
   }
 }
 
@@ -274,12 +293,28 @@ function formatBudgetSection() {
     const barStr     = buildBudgetBar(rate);
     const estimateMark = usage.isEstimate ? '（推定値）' : '（実費）';
 
+    // 換算情報を追加
+    let equivLine = '';
+    try {
+      const fm = require('./finance-manager');
+      if (typeof fm.getCostSummary === 'function') {
+        const cs = fm.getCostSummary();
+        if (cs.equivalent?.jpy > 0) {
+          equivLine = `\n参考換算: ¥${cs.equivalent.jpy.toLocaleString()}相当（Claude Code・実請求でない）`;
+        }
+      }
+    } catch { /* ignore */ }
+
+    const fixedLine = config.fixedMonthlyCostJPY > 0
+      ? `\n固定費: Claudeプラン ¥${config.fixedMonthlyCostJPY.toLocaleString()}/月（別途）`
+      : '';
+
     const lines = [
       `💰 **月次予算 — Finance Gate**`,
       ``,
       `状態: ${levelEmoji} **${level}**`,
-      `${barStr} ${ratePercent}% 消化${estimateMark}`,
-      `使用額: ¥${usage.jpy.toLocaleString()} / ¥${budgetJPY.toLocaleString()}（月予算）`,
+      `${barStr} ${ratePercent}% 消化（実課金のみ）`,
+      `実課金: ¥${usage.jpy.toLocaleString()} / ¥${budgetJPY.toLocaleString()}（月予算）` + equivLine + fixedLine,
       `残り: ¥${remaining.toLocaleString()}`,
     ];
 
@@ -291,8 +326,8 @@ function formatBudgetSection() {
       lines.push(``, `🔴 予算上限に達しました。自動実行は停止されます。\`!finance config\` で予算を見直してください。`);
     }
 
-    lines.push(``, `> ⚠️ 費用は推定値です。実際の請求は各APIダッシュボードでご確認ください。`);
-    lines.push(`> Claude: console.anthropic.com | OpenAI: platform.openai.com/usage`);
+    lines.push(``, `> ⚠️ 予算判定は**実課金（OpenAI API 等）のみ**です。Claude Code換算額はゲート判定に含みません。`);
+    lines.push(`> 確定額: console.anthropic.com（プラン）/ platform.openai.com/usage（API）`);
 
     return lines.join('\n');
   } catch {
@@ -315,16 +350,27 @@ function formatFinanceStatus() {
       ? `承認済み（期限: ${new Date(appr.expiresAt).toLocaleString('ja-JP')}）`
       : '未承認';
 
+    // Claude Code 換算と固定費を取得
+    let equivJPY = 0, fixedJPY = config.fixedMonthlyCostJPY || 0;
+    try {
+      const fm = require('./finance-manager');
+      if (typeof fm.getCostSummary === 'function') {
+        equivJPY = fm.getCostSummary().equivalent?.jpy || 0;
+      }
+    } catch { /* ignore */ }
+
     return [
       `💰 **Finance Gate ステータス**`,
       ``,
-      `${levelEmoji} 状態: **${level}**`,
-      `${barStr} ${ratePercent}%（推定）`,
+      `${levelEmoji} 状態: **${level}**（実課金ベース）`,
+      `${barStr} ${ratePercent}%`,
       ``,
-      `📊 **今月の使用状況**`,
-      `  使用額: ¥${usage.jpy.toLocaleString()}（推定・$${usage.usd.toFixed(4)} USD）`,
-      `  月予算: ¥${budgetJPY.toLocaleString()}`,
-      `  残り:   ¥${remaining.toLocaleString()}`,
+      `📊 **今月のコスト内訳**`,
+      `  💳 実課金（OpenAI API 等）: ¥${usage.jpy.toLocaleString()}（推定 $${usage.usd.toFixed(4)}）`,
+      `  🤖 参考換算（Claude Code）:  ${equivJPY > 0 ? `約¥${equivJPY.toLocaleString()}相当` : '取得不可'}（実請求でない）`,
+      `  🔒 固定費（Claudeプラン）:   ${fixedJPY > 0 ? `¥${fixedJPY.toLocaleString()}/月` : '未設定（console.anthropic.com 参照）'}`,
+      `  📅 月予算（実課金上限）:      ¥${budgetJPY.toLocaleString()}`,
+      `  💰 残り:                      ¥${remaining.toLocaleString()}`,
       ``,
       `⚙️ **設定**`,
       `  WARNING:   ${Math.round(config.warningRate  * 100)}%（¥${Math.round(budgetJPY * config.warningRate).toLocaleString()}）`,

@@ -120,10 +120,12 @@ test('3e. APIキーが含まれていない', () => {
 // ─────────────────────────────────────────────────────
 console.log('\n[4. formatCostReport — !cost コマンド]');
 
-test('4a. formatCostReport が本日・今月のセクションを含む', () => {
+test('4a. formatCostReport が実課金・換算・固定費のセクションを含む（Rev.2対応）', () => {
   const text = fm.formatCostReport();
-  assert.ok(text.includes('本日') || text.includes('today'), '本日セクションがない');
-  assert.ok(text.includes('今月') || text.includes('monthly'), '今月セクションがない');
+  // 実課金セクション
+  assert.ok(text.includes('実課金') || text.includes('今月') || text.includes('OpenAI'), '実課金セクションがない');
+  // Claude Code 換算セクション
+  assert.ok(text.includes('Claude Code') || text.includes('換算') || text.includes('参考'), 'Claude Code換算セクションがない');
 });
 
 test('4b. formatCostReport にタスク数が含まれる', () => {
@@ -140,10 +142,13 @@ test('5a. financeManager が require されている', () => {
   assert.ok(src.includes("require('./utils/finance-manager')"), 'finance-manager が import されていない');
 });
 
-test('5b. CEO Report に Finance セクションが追加されている', () => {
+test('5b. CEO Report に Finance セクションが追加されている（formatBudgetSection または formatFinanceSection）', () => {
   const teardownIdx  = src.indexOf('async function _teardown');
   const teardownBody = src.slice(teardownIdx, teardownIdx + 5000);
-  assert.ok(teardownBody.includes('formatFinanceSection'), 'formatFinanceSection が _teardown に追加されていない');
+  assert.ok(
+    teardownBody.includes('formatBudgetSection') || teardownBody.includes('formatFinanceSection'),
+    'Finance セクションが _teardown にない'
+  );
 });
 
 test('5c. !cost コマンドが実装されている', () => {

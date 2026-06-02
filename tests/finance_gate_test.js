@@ -122,9 +122,13 @@ test('3a. formatBudgetSection が予算バーを含む', () => {
   assert.ok(text.includes('█') || text.includes('░'), '予算バーがない');
 });
 
-test('3b. formatBudgetSection に「推定値」注記がある', () => {
+test('3b. formatBudgetSection に実課金・確認先の注記がある（Rev.2対応）', () => {
   const text = fg.formatBudgetSection();
-  assert.ok(text.includes('推定'), '推定値注記がない');
+  // 実課金ベースであることの注記がある
+  assert.ok(
+    text.includes('実課金') || text.includes('確定額') || text.includes('console.anthropic'),
+    '実課金・確認先の注記がない'
+  );
 });
 
 test('3c. formatBudgetSection に月予算・使用額・残りが含まれる', () => {
