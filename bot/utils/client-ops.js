@@ -195,80 +195,97 @@ const SCOPE_ACTION = {
 };
 
 // ─── スコープ肥大シグナル定義 ───────────────────────
-// HIGH シグナル（1件で score += 3 → 単独で HIGH 到達）
+//
+// 判定優先順位:
+//   1. HIGH シグナルがあれば → 即 HIGH（hasHighSignal フラグ）
+//   2. MEDIUM シグナルがあれば → MEDIUM
+//   3. HIGH/MEDIUM シグナルが何もない + LOW シグナルあり → LOW
+//   4. 何もなければ → LOW
+//
+// NOTE: 旧実装の LOW 短絡（先頭で即 LOW）を廃止。
+//       HIGH シグナルは「決済機能の追加、ついでにバグ修正も」のように
+//       軽微語が混在しても HIGH を維持する。
+
+// HIGH シグナル（1件でも hasHighSignal=true → 即 HIGH）
 const HIGH_SCOPE_SIGNALS = [
   { pattern: /決済|クレジット|stripe|payjp|payment/i,
     reason: '決済機能の追加（別システム級）' },
-  { pattern: /ログイン|認証|ユーザー管理|会員登録|パスワード/i,
+  { pattern: /ログイン|認証|auth[^o]|ユーザー管理|会員登録|パスワード.*管理/i,
     reason: 'ログイン・認証機能の追加（セキュリティ設計必要）' },
-  { pattern: /スマホアプリ|スマホ対応.*アプリ|アプリ化|ios.*アプリ|android.*アプリ|react\s*native|flutter/i,
+  { pattern: /スマホアプリ|アプリ化|ios.*アプリ|android.*アプリ|react\s*native|flutter/i,
     reason: 'スマホアプリ化（別プラットフォーム）' },
-  { pattern: /本番.*db|本番.*データベース|本番環境.*db|production.*db/i,
-    reason: '本番DBへの対応（インフラ設計必要）' },
-  { pattern: /個人情報.*管理|顧客情報.*db|会員.*データ|マイナンバー/i,
+  { pattern: /本番.*db|本番.*データベース|本番環境.*db|production.*db|本番.*に直接/i,
+    reason: '本番DBへの直接接続・対応（インフラ設計必要）' },
+  { pattern: /個人情報.*管理|個人情報.*も|顧客情報.*db|会員.*データ|マイナンバー/i,
     reason: '個人情報管理（セキュリティ・法的要件）' },
+  { pattern: /外部.*公開|一般.*公開|インターネット.*公開|公開.*サービス/i,
+    reason: '外部公開サービス化（セキュリティ要件増大）' },
   { pattern: /別.*システム|システム.*作り直し|全面.*リニューアル|一から作り直し/i,
     reason: '別システム化・全面作り直し' },
+  { pattern: /大幅.*仕様.*変更|仕様.*全.*変更|設計.*から.*変更/i,
+    reason: '大幅な仕様変更（別案件相当）' },
   { pattern: /最初.*違う|話が違う|聞いてない|そんな.*頼んで/i,
     reason: '当初要件との乖離（認識相違）' },
 ];
 
 // MEDIUM シグナル（1件で score += 2 → 単独で MEDIUM 到達）
 const MEDIUM_SCOPE_SIGNALS = [
-  { pattern: /メール.*送信|メール.*機能|send.*mail|smtp/i,
+  { pattern: /メール.*送信|メール.*機能|send.*mail|smtp|メール.*も/i,
     reason: 'メール送信機能の追加' },
-  { pattern: /pdf.*出力|pdf.*作成|pdf.*生成|export.*pdf/i,
+  { pattern: /pdf.*出力|pdf.*作成|pdf.*生成|export.*pdf|pdf.*も/i,
     reason: 'PDF出力機能の追加' },
   { pattern: /グラフ.*追加|chart|可視化.*追加|ダッシュボード.*追加/i,
     reason: 'グラフ・可視化機能の追加' },
-  { pattern: /line.*連携|line.*通知|line.*bot/i,
+  { pattern: /line.*連携|line.*通知|line.*bot|line.*も/i,
     reason: 'LINE連携の追加（外部API）' },
   { pattern: /slack.*連携|discord.*連携|webhook.*追加/i,
     reason: '外部サービス連携の追加' },
-  { pattern: /管理画面.*追加|admin.*画面|管理.*ページ/i,
+  { pattern: /管理画面.*追加|admin.*画面|管理.*ページ|管理画面.*も/i,
     reason: '管理画面の追加' },
   { pattern: /api.*連携.*追加|外部.*api.*追加|新しい.*連携/i,
     reason: '新規API連携の追加' },
   { pattern: /スマホ.*対応|モバイル.*対応|レスポンシブ.*対応/i,
     reason: 'スマホ・モバイル対応' },
-  { pattern: /ついでに.*機能|〜も.*機能|〜も追加|機能.*も.*ほしい/i,
-    reason: '「ついでに」系の追加要求' },
   { pattern: /追加機能|新機能|新しい.*機能|機能.*追加/i,
     reason: '新機能の追加要求' },
   { pattern: /画面.*追加|ページ.*追加|新しい.*画面|新しい.*ページ/i,
     reason: '画面・ページの追加' },
+  // 「ついでに」「〜も追加」「〜も対応」などのクリープ表現
+  { pattern: /ついでに|ついでですが|追加で|できれば.*追加|あと.*も|それと.*も/i,
+    reason: '「ついでに」系の追加要求' },
+  { pattern: /も追加|も対応|も欲しい|もお願い|も管理|も連携|も出力|も作成|もできるように/i,
+    reason: '「〜も」系の追加要求' },
 ];
 
-// LOW シグナル（score += 0 / LOW 維持）
+// LOW シグナル（HIGH/MEDIUM が何もない場合にのみ LOW 判定に使用）
 const LOW_SCOPE_SIGNALS = [
   /文言.*修正|文言.*変更|テキスト.*修正|テキスト.*変更/i,
   /軽微|小さな.*修正|ちょっと.*修正|少し.*直/i,
   /色.*変更|デザイン.*少し|レイアウト.*少し/i,
   /バグ.*修正|不具合.*修正|エラー.*修正/i,
+  /軽微なバグ|ちょっとした修正|小さい修正/i,
 ];
 
 function _estimateScopeRisk(original, newReq) {
-  const t = newReq;  // 元の大文字小文字を保持（日本語）
-  let score = 0;
+  const t = newReq;
   const reasons = [];
 
-  // LOW シグナルが優先 — 明らかに軽微なら即 LOW
-  const hasLowSignal = LOW_SCOPE_SIGNALS.some(p => p.test(t));
-  if (hasLowSignal && t.length < 60) {
-    // 短い文言修正・軽微修正は即 LOW
-    reasons.push('軽微な変更・文言修正');
-    return { level: SCOPE_LEVEL.LOW, score: 0, reasons };
-  }
-
-  // HIGH シグナル（score += 3 each）
+  // ─ STEP 1: HIGH シグナルをまずチェック ─
+  // HIGH が1件でも検出された場合は即 HIGH（軽微語の混在は無視）
+  let hasHighSignal = false;
   for (const sig of HIGH_SCOPE_SIGNALS) {
     if (sig.pattern.test(t)) {
-      score += 3;
+      hasHighSignal = true;
       reasons.push(sig.reason);
     }
   }
+  if (hasHighSignal) {
+    const uniqueReasons = [...new Set(reasons)];
+    return { level: SCOPE_LEVEL.HIGH, score: 99, reasons: uniqueReasons, hasHighSignal: true };
+  }
 
-  // MEDIUM シグナル（score += 2 each）
+  // ─ STEP 2: MEDIUM シグナルをチェック ─
+  let score = 0;
   for (const sig of MEDIUM_SCOPE_SIGNALS) {
     if (sig.pattern.test(t)) {
       score += 2;
@@ -276,24 +293,25 @@ function _estimateScopeRisk(original, newReq) {
     }
   }
 
-  // 汎用シグナル（旧来のシグナルを残す）
-  if (/やり直し|全部.*やり直し/.test(t))                  { score += 3; reasons.push('大幅な作り直し'); }
-  if (/急ぎ|至急|今日中/.test(t))                         { score += 1; reasons.push('緊急対応'); }
-  if (/全部|全て|すべて.*やって|なんでも/.test(t))        { score += 2; reasons.push('「全部やって」系の曖昧な要求'); }
-  if (/ついでに|〜も|〜も.*ほしい|〜も.*お願い/.test(t))  { score += 2; reasons.push('「ついでに」追加要求'); }
+  // 汎用スコープクリープ表現
+  if (/やり直し|全部.*やり直し/.test(t))           { score += 3; reasons.push('大幅な作り直し'); }
+  if (/急ぎ|至急|今日中/.test(t))                  { score += 1; reasons.push('緊急対応'); }
+  if (/全部|全て|すべて.*やって|なんでも/.test(t)) { score += 2; reasons.push('「全部やって」系の曖昧な要求'); }
+  if (newReq.length > 300)                         { score += 2; reasons.push('追加依頼の内容が多い'); }
+  else if (newReq.length > 100)                    { score += 1; reasons.push('追加依頼あり'); }
 
-  // 長文 = 要求が多い
-  if (newReq.length > 300) { score += 2; reasons.push('追加依頼の内容が多い'); }
-  else if (newReq.length > 100) { score += 1; reasons.push('追加依頼あり'); }
+  // MEDIUM 到達？
+  if (score >= 2) {
+    const uniqueReasons = [...new Set(reasons)];
+    return { level: SCOPE_LEVEL.MEDIUM, score, reasons: uniqueReasons };
+  }
 
-  // 判定：HIGH=5以上 / MEDIUM=2以上 / LOW
-  let level = SCOPE_LEVEL.LOW;
-  if (score >= 5)      level = SCOPE_LEVEL.HIGH;
-  else if (score >= 2) level = SCOPE_LEVEL.MEDIUM;
+  // ─ STEP 3: HIGH/MEDIUM が何もない場合に LOW シグナルを確認 ─
+  // LOW シグナルがあれば LOW、なければ LOW（何もないデフォルト）
+  const hasLowSignal = LOW_SCOPE_SIGNALS.some(p => p.test(t));
+  const lowReason = hasLowSignal ? '軽微な変更・文言修正' : '追加依頼が軽微または情報不足';
 
-  // 重複除去
-  const uniqueReasons = [...new Set(reasons)];
-  return { level, score, reasons: uniqueReasons };
+  return { level: SCOPE_LEVEL.LOW, score: 0, reasons: [lowReason] };
 }
 
 /**

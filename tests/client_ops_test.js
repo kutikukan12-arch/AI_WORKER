@@ -143,41 +143,63 @@ test('3f. CEO最終判断の注意書きがある', () => {
 });
 
 // ─────────────────────────────────────────────────────
-// 3g〜3k. NEED_FIX 必須テスト（scope 改善後）
+// 3g〜3p. NEED_FIX 必須テスト（hasHighSignal + LOW短絡廃止後）
 // ─────────────────────────────────────────────────────
-console.log('\n[3g〜3k. !scope NEED_FIX 必須テスト]');
+console.log('\n[3g〜3p. !scope NEED_FIX 必須テスト]');
 
 const ORIG = 'CSVグラフ化Excelマクロ';
 
+// --- 旧テスト（維持）---
 test('3g. ついでにメール送信機能も → MEDIUM 以上', () => {
   const r = checkScopeCreep(ORIG, 'ついでにメール送信機能も追加してほしい');
-  assert.ok(
-    r.level === SCOPE_LEVEL.MEDIUM || r.level === SCOPE_LEVEL.HIGH,
-    `期待:MEDIUM/HIGH 実際:${r.level}`
-  );
+  assert.ok(r.level !== SCOPE_LEVEL.LOW, `LOWになった: ${r.level}`);
 });
 
 test('3h. 決済とスマホアプリ化も → HIGH', () => {
-  const r = checkScopeCreep(ORIG, '決済とスマホアプリ化も対応してほしい');
-  assert.strictEqual(r.level, SCOPE_LEVEL.HIGH, `期待:HIGH 実際:${r.level}`);
+  assert.strictEqual(
+    checkScopeCreep(ORIG, '決済とスマホアプリ化も対応してほしい').level, SCOPE_LEVEL.HIGH);
 });
 
 test('3i. 文言を少し直したい → LOW', () => {
-  const r = checkScopeCreep(ORIG, '文言を少し直したい');
-  assert.strictEqual(r.level, SCOPE_LEVEL.LOW, `期待:LOW 実際:${r.level}`);
+  assert.strictEqual(
+    checkScopeCreep(ORIG, '文言を少し直したい').level, SCOPE_LEVEL.LOW);
 });
 
 test('3j. PDF出力も追加 → MEDIUM 以上', () => {
   const r = checkScopeCreep(ORIG, 'PDF出力機能も追加してほしい');
-  assert.ok(
-    r.level === SCOPE_LEVEL.MEDIUM || r.level === SCOPE_LEVEL.HIGH,
-    `期待:MEDIUM/HIGH 実際:${r.level}`
-  );
+  assert.ok(r.level !== SCOPE_LEVEL.LOW, `LOWになった: ${r.level}`);
 });
 
 test('3k. ログイン機能も追加 → HIGH', () => {
-  const r = checkScopeCreep(ORIG, 'ログイン機能も追加してほしい');
-  assert.strictEqual(r.level, SCOPE_LEVEL.HIGH, `期待:HIGH 実際:${r.level}`);
+  assert.strictEqual(
+    checkScopeCreep(ORIG, 'ログイン機能も追加してほしい').level, SCOPE_LEVEL.HIGH);
+});
+
+// --- 新必須テスト（hasHighSignal / LOW短絡廃止確認）---
+test('3l. 本番DBに直接つないで → HIGH', () => {
+  assert.strictEqual(
+    checkScopeCreep(ORIG, '本番DBに直接つないでデータを取得したい').level, SCOPE_LEVEL.HIGH);
+});
+
+test('3m. 個人情報も管理したい → HIGH', () => {
+  assert.strictEqual(
+    checkScopeCreep(ORIG, '個人情報も管理したい').level, SCOPE_LEVEL.HIGH);
+});
+
+test('3n. 決済機能を追加＋バグ修正（HIGH と軽微の混在）→ HIGH を維持', () => {
+  // 旧実装: LOW短絡で LOW になってしまっていた
+  const r = checkScopeCreep(ORIG, '決済機能を追加、ついでにバグ修正も');
+  assert.strictEqual(r.level, SCOPE_LEVEL.HIGH, `HIGH のはずが ${r.level}`);
+});
+
+test('3o. 本番DB連携＋エラー修正（HIGH と軽微の混在）→ HIGH を維持', () => {
+  const r = checkScopeCreep(ORIG, '本番DB連携とエラー修正お願いします');
+  assert.strictEqual(r.level, SCOPE_LEVEL.HIGH, `HIGH のはずが ${r.level}`);
+});
+
+test('3p. 軽微なバグ修正だけ → LOW', () => {
+  assert.strictEqual(
+    checkScopeCreep(ORIG, '軽微なバグ修正だけお願いします').level, SCOPE_LEVEL.LOW);
 });
 
 // ─────────────────────────────────────────────────────
