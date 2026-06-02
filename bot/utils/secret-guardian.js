@@ -254,45 +254,67 @@ function writeSecurityReport(violations, repoPath = '') {
 }
 
 // ─────────────────────────────────────────────────────
-// guardCommit(repoPath) — commit 前ガード（メインエントリ）
+// guardCommit(repoPath) — commit 前ガード（フェイルクローズ）
 //
-// 戻り値: { allowed: boolean, report: string|null, reportFile: string|null }
+// 方針: 秘密情報保護は可用性より優先する。
+//   スキャン例外時も allowed:false を返し、commit を止める。
+//   Bot 全体は落とさない（呼び出し元で try-catch すること）。
+//
+// 戻り値: { allowed: boolean, report: string|null, reportFile: string|null, guardError?: boolean }
 // ─────────────────────────────────────────────────────
 function guardCommit(repoPath) {
-  const result     = scanStagedFiles(repoPath);
-  const report     = formatViolationReport(result.violations);
-  const reportFile = result.violations.length > 0
-    ? writeSecurityReport(result.violations, repoPath)
-    : null;
+  try {
+    const result     = scanStagedFiles(repoPath);
+    const report     = formatViolationReport(result.violations);
+    const reportFile = result.violations.length > 0
+      ? writeSecurityReport(result.violations, repoPath)
+      : null;
 
-  return {
-    allowed:    result.ok,
-    violations: result.violations,
-    summary:    result.summary,
-    report,
-    reportFile,
-  };
+    return {
+      allowed:    result.ok,
+      violations: result.violations,
+      summary:    result.summary,
+      report,
+      reportFile,
+    };
+  } catch (scanErr) {
+    // スキャン自体が例外 → fail-closed: commit を止めて CEO に通知
+    // 例外内容はログに記録するが値は表示しない
+    const { logger: _lg } = (() => {
+      try { return { logger: require('./logger') }; } catch { return { logger: console }; }
+    })();
+    _lg.error(`[SecretGuardian] guardCommit スキャンエラー（fail-closed）: ${scanErr.message?.slice(0, 100)}`);
+
+    const report = (
+      `🚨 **Secret Guardian — スキャンエラーのため commit を停止しました**\n\n` +
+      `スキャン中に予期しないエラーが発生しました。安全のため commit を差し止めています。\n\n` +
+      `エラー概要: ${String(scanErr.message || '不明').slice(0, 80)}\n\n` +
+      `対処: ログを確認し、問題を解決してから再実行してください。\n` +
+      `> 秘密情報の値は表示されません。`
+    );
+
+    return {
+      allowed:    false,   // fail-closed
+      violations: [],
+      summary:    `スキャンエラー（fail-closed）`,
+      report,
+      reportFile: null,
+      guardError: true,    // エラー由来であることを示す
+    };
+  }
 }
 
 // ─────────────────────────────────────────────────────
-// guardDiscordContent(content) — Discord 投稿前ガード
+// guardDiscordContent(content) — Discord 投稿前ガード（フェイルクローズ）
 //
-// 目的:
-//   sendNotification / sendHumanMention 等の Discord 送信直前に呼び出し、
-//   秘密情報が含まれていれば投稿を差し止める。
-//
-// 引数:
-//   content — string | object (Discord Embed など)
-//   context — { type: string } 送信種別（ログ用）
+// 方針: 秘密情報保護は可用性より優先する。
+//   スキャン例外時は allowed:false + redact 済みコンテンツを返す。
+//   Bot 全体は落とさない。
 //
 // 戻り値:
-//   { allowed: boolean, violations: [...], alertText: string|null }
-//
-// セーフガード:
-//   - 値は絶対に表示しない
-//   - 検出時は security レポートに記録
-//   - このガード自体のエラーは全て握りつぶして allowed:true を返す
-//     （Bot 全体を落とさない）
+//   { allowed: boolean, violations: [...], alertText: string|null,
+//     redactedContent?: any,    // redact 済みコンテンツ（スキャン失敗時に使用）
+//     guardError?: boolean }    // スキャンエラー時に true
 // ─────────────────────────────────────────────────────
 function guardDiscordContent(content, context = {}) {
   try {
@@ -324,10 +346,43 @@ function guardDiscordContent(content, context = {}) {
     );
 
     return { allowed: false, violations, alertText };
-  } catch {
-    // ガード自体のエラーは Bot を落とさない
-    return { allowed: true, violations: [], alertText: null };
+  } catch (scanErr) {
+    // スキャン例外 → fail-closed
+    // 可能であれば redact() でマスクした上で送信を許可する
+    // redact 自体も失敗したら完全ブロック
+    try {
+      const { redact } = require('./redact');
+      const redactedContent = _redactContent(content, redact);
+      // redact 後のコンテンツで再スキャンは行わない（無限ループ防止）
+      return {
+        allowed:         false,       // fail-closed: 元のコンテンツは送らない
+        violations:      [],
+        alertText:       null,
+        redactedContent,              // 呼び出し元が masked バージョンを送れるよう提供
+        guardError:      true,
+      };
+    } catch {
+      // redact も失敗 → 完全ブロック
+      return {
+        allowed:    false,
+        violations: [],
+        alertText:  null,
+        guardError: true,
+      };
+    }
   }
+}
+
+// content を redact 関数で再帰的にマスクするヘルパー
+function _redactContent(content, redactFn) {
+  if (typeof content === 'string') return redactFn(content);
+  if (!content || typeof content !== 'object') return content;
+  if (Array.isArray(content)) return content.map(c => _redactContent(c, redactFn));
+  const result = {};
+  for (const [k, v] of Object.entries(content)) {
+    result[k] = _redactContent(v, redactFn);
+  }
+  return result;
 }
 
 // テキスト抽出ヘルパー（string / embed object / 配列 を再帰処理）

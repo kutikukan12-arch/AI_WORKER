@@ -412,21 +412,36 @@ async function sendToChannel(channelId, fallback, content) {
 async function sendNotification(type, fallback, content) {
   const channelId = NOTIFICATION_CHANNELS[type] || '';
 
-  // ─── Secret Guard: Discord 投稿前に秘密情報チェック ───
+  // ─── Secret Guard: Discord 投稿前に秘密情報チェック（フェイルクローズ）───
+  // 方針: 秘密情報保護は可用性より優先。guardError 時も元コンテンツは送らない。
   try {
     const { guardDiscordContent } = require('./utils/secret-guardian');
     const guard = guardDiscordContent(content, { type });
     if (!guard.allowed) {
-      logger.error(`[SecretGuard][NOTIFY] type=${type} 秘密情報検出 → 投稿差し止め (${guard.violations.length}件)`);
-      // CEO にアラートを直接送信（フォールバックチャンネル使用・無限ループ防止のため素の send）
-      if (guard.alertText) {
-        try {
-          await fallback.send(guard.alertText.slice(0, 1900));
-        } catch { /* アラート送信失敗は無視 */ }
+      if (guard.guardError) {
+        // スキャン例外 → redactedContent があればそちらを送信、なければ完全ブロック
+        logger.warn(`[SecretGuard][NOTIFY] type=${type} スキャンエラー（fail-closed）`);
+        if (guard.redactedContent) {
+          // マスク済みコンテンツで通常フローへ続行
+          content = guard.redactedContent;
+          // fall-through: マスク済み content で送信
+        } else {
+          // redact も失敗 → 完全ブロック
+          return;
+        }
+      } else {
+        logger.error(`[SecretGuard][NOTIFY] type=${type} 秘密情報検出 → 投稿差し止め (${guard.violations.length}件)`);
+        if (guard.alertText) {
+          try { await fallback.send(guard.alertText.slice(0, 1900)); } catch { /* ignore */ }
+        }
+        return; // 元の content は送信しない
       }
-      return; // 元の content は送信しない
     }
-  } catch { /* ガードのエラーは無視して通常送信へ */ }
+  } catch (guardErr) {
+    // ガード自体が予期しない例外 → fail-closed: 送信しない
+    logger.error(`[SecretGuard][NOTIFY] type=${type} ガード予期外例外 → fail-closed: ${guardErr.message?.slice(0, 80)}`);
+    return;
+  }
 
   // ─── 送信前ログ ───
   const preview = typeof content === 'string'
@@ -508,18 +523,29 @@ async function sendHumanMention(channel, taskId, title, detail, danger = '中', 
       `✅ 承認: \`!approve ${taskId}\`　❌ 却下: \`!deny ${taskId}\``
     );
 
-  // ─── Secret Guard: 人間通知の投稿前チェック ────────
+  // ─── Secret Guard: 人間通知の投稿前チェック（フェイルクローズ）────────
   try {
     const { guardDiscordContent } = require('./utils/secret-guardian');
     const guard = guardDiscordContent(mentionMessage, { type: 'humanMention' });
     if (!guard.allowed) {
-      logger.error(`[SecretGuard][MENTION] 秘密情報検出 → 投稿差し止め (${guard.violations.length}件)`);
-      if (guard.alertText) {
-        try { await channel.send(guard.alertText.slice(0, 1900)); } catch { /* ignore */ }
+      if (guard.guardError && guard.redactedContent) {
+        // スキャンエラー + redact 済み → マスク済みで送信
+        mentionMessage = typeof guard.redactedContent === 'string'
+          ? guard.redactedContent
+          : String(guard.redactedContent);
+        // fall-through: マスク済み mentionMessage で送信
+      } else {
+        logger.error(`[SecretGuard][MENTION] ${guard.guardError ? 'スキャンエラー' : '秘密情報検出'} → 投稿差し止め`);
+        if (guard.alertText) {
+          try { await channel.send(guard.alertText.slice(0, 1900)); } catch { /* ignore */ }
+        }
+        return;
       }
-      return;
     }
-  } catch { /* ガードのエラーは無視 */ }
+  } catch (guardErr) {
+    logger.error(`[SecretGuard][MENTION] ガード予期外例外 → fail-closed: ${guardErr.message?.slice(0, 80)}`);
+    return;
+  }
 
   try {
     if (NOTIFICATION_CHANNELS.humanCheck) {
@@ -1652,21 +1678,27 @@ async function _runProjectLoop(ctx) {
     const typeEmoji  = taskManager.TYPE_EMOJI[storedType] || '📋';
     const sizeEmoji  = taskManager.SIZE_EMOJI[storedSize] || '🟡';
 
-    // ─ Auto Policy チェック ─
-    const prePolicy = autoPolicy.classifyTask(next, {});
+    // ─ Auto Policy チェック（prepareNextTask と同じ基準）─
+    // F-1: dangerLevel を渡して「危険な操作」と「危険単語の言及」を正しく分離する。
+    //   AI_REVIEW_REQUIRED → 停止しない（レビュー付きで実行可）
+    //   BLOCKED / HUMAN_APPROVAL_REQUIRED → 停止
+    //   LARGE_TASK → 大きすぎる（LARGE サイズと同一扱い）
+    const prePolicy = autoPolicy.classifyTask(next, { danger: next.dangerLevel || '低' });
     if (prePolicy === autoPolicy.AUTO_POLICY.LARGE_TASK) {
       ctx.stopReason = 'large_task';
       await message.channel.send(
-        `🔴 **LARGE** \`${next.id}\` [${storedType}/${storedSize}]\n` +
-        `このタスクは大きすぎます。\n` +
-        `おすすめ: \`!task split preview ${next.id}\` / \`!task split ${next.id}\``
+        `🔴 **LARGE タスク** \`${next.id}\` [${storedType}/${storedSize}]\n` +
+        `このタスクは大きすぎます。分割してから再実行してください。\n` +
+        `\`!task split preview ${next.id}\` / \`!task split ${next.id}\``
       ).catch(() => {});
       break;
     }
     if (prePolicy === autoPolicy.AUTO_POLICY.BLOCKED) {
-      ctx.stopReason = `security_blocked_${storedType}`;
+      ctx.stopReason = `blocked_${storedType}`;
       await message.channel.send(
-        `🚫 **SECURITY BLOCKED** \`${next.id}\` [${storedType}/${storedSize}]\n安全上停止しました。`
+        `🚫 **BLOCKED** \`${next.id}\` [${storedType}/${storedSize}]\n` +
+        `このタスクは自動実行できません（force push / rm -rf 等の危険操作を含む可能性）。\n` +
+        `内容を確認してから \`!claude\` で直接実行してください。`
       ).catch(() => {});
       break;
     }
@@ -1674,10 +1706,11 @@ async function _runProjectLoop(ctx) {
       ctx.stopReason = 'human_approval_required';
       await message.channel.send(
         `⚠️ **人間確認が必要** \`${next.id}\` [${storedType}/${storedSize}]\n` +
-        `\`!approve ${next.id}\` または \`!deny ${next.id}\` してください。`
+        `\`!approve ${next.id}\` → 承認して実行 | \`!deny ${next.id}\` → 却下`
       ).catch(() => {});
       break;
     }
+    // AI_REVIEW_REQUIRED → ログのみ（停止しない・レビュー付きで続行）
 
     // ─ タイプ別振り分け ─
     logger.info(`[ProjectLoop] [${i + 1}] ${next.id} [${storedType}/${storedSize}] policy=${prePolicy}`);
