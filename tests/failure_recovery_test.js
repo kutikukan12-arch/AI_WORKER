@@ -135,8 +135,18 @@ test('5a. index.js に classifyErrorType の呼び出しがある', () =>
   assert.ok(src.includes('classifyErrorType'), 'classifyErrorType 呼び出しなし'));
 test('5b. index.js に setTaskError の呼び出しがある', () =>
   assert.ok(src.includes('setTaskError'), 'setTaskError 呼び出しなし'));
-test('5c. index.js に errorType がembed表示されている', () =>
-  assert.ok(src.includes('errorTypeEmoji') && src.includes('エラー種別'), 'embed表示なし'));
+test('5c. errorType が CEO 向けフォーマットで表示されている（D-1 Communication Manager 対応）', () => {
+  // 旧: index.js に errorTypeEmoji + エラー種別 を含む embed
+  // 新: formatTaskError() 経由で CEO 向けテキストに移行（formatter.js に「エラー種別」あり）
+  const fmtSrc = fs.readFileSync(path.join(__dirname, '..', 'bot', 'utils', 'formatter.js'), 'utf8');
+  // index.js が formatTaskError を呼び出している
+  assert.ok(src.includes('formatTaskError'), 'index.js が formatTaskError を呼び出していない');
+  // formatter.js の formatTaskError に「エラー種別」が含まれる（機能は生きている）
+  assert.ok(fmtSrc.includes('エラー種別'), 'formatter.js の formatTaskError にエラー種別表示がない');
+  // errorType が formatTaskError に渡されている
+  const catchBlock = src.slice(src.lastIndexOf('classifyErrorType'), src.lastIndexOf('classifyErrorType') + 300);
+  assert.ok(catchBlock.includes('errorType'), 'errorType が取得・使用されていない');
+});
 
 // ─────────────────────────────────────────────────────
 // 6. C1 Secret Masking — トークン類がマスクされる
