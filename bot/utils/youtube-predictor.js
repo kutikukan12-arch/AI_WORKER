@@ -376,6 +376,42 @@ function _buildReasons(video, isPrePub, buzzRatio) {
   }));
 }
 
+// ── 改善提案ビルダー ──────────────────────────────────────
+
+function _buildSuggestions(video, result) {
+  const suggestions = [];
+  for (const reason of result.reasons) {
+    if (reason.impact !== 'negative') continue;
+    switch (reason.factor) {
+      case 'チャンネル規模':
+        suggestions.push('コラボ・SNS告知・既存動画の最適化などで登録者を増やす');
+        break;
+      case 'タイトル品質':
+        suggestions.push('タイトルを8〜70文字にし、感嘆符（!）や数字を入れてクリック率を高める');
+        break;
+      case 'タグ数（SEO）':
+        suggestions.push('関連タグを5〜15個追加してサジェスト・SEO露出を改善する');
+        break;
+      case '動画尺':
+        suggestions.push('動画尺を5〜20分（300〜1200秒）に調整してVOD最適帯に合わせる');
+        break;
+      case 'いいね率':
+        suggestions.push('エンドカードや概要欄で「いいね！」を呼びかけてエンゲージメントを高める');
+        break;
+      case 'コメント率':
+        suggestions.push('動画内で視聴者へ質問を投げかけてコメントを促す演出を加える');
+        break;
+      case '視聴数/登録者比(buzz)':
+        suggestions.push('サムネイル・タイトルを見直してクリック率を改善し外部トラフィックを増やす');
+        break;
+    }
+  }
+  if (!result.usedML) {
+    suggestions.push('`!youtube bulk-collect <genre>` → `!youtube train` でMLデータを追加すると予測精度が上がります');
+  }
+  return suggestions.slice(0, 3);
+}
+
 // ── Discord 表示用サマリー ─────────────────────────────────
 
 const LABEL_JP = { hit: '伸びやすい', miss: '伸びにくい', unknown: '判定保留' };
@@ -438,6 +474,26 @@ function buildSummary(video, result) {
   } else {
     lines.push(`📏 ルールベース予測 (MLデータ不足)`);
   }
+
+  // 注意点
+  lines.push(``);
+  lines.push(`⚠️ **注意点**`);
+  lines.push(`  ・統計モデルによる推定値です。再生数の保証・約束ではありません`);
+  lines.push(`  ・サムネイル・投稿時間・アルゴリズムなど、本モデルが考慮しない要因があります`);
+  if (!result.usedML) {
+    lines.push(`  ・MLデータ不足のため現在はルールベース予測です（参考値としてご利用ください）`);
+  }
+
+  // 次の改善提案
+  const suggestions = _buildSuggestions(video, result);
+  if (suggestions.length > 0) {
+    lines.push(``);
+    lines.push(`💡 **次の改善提案**`);
+    for (const s of suggestions) {
+      lines.push(`  • ${s}`);
+    }
+  }
+
   return lines.join('\n');
 }
 

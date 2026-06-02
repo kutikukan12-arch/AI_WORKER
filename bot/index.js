@@ -5958,15 +5958,14 @@ async function handleYoutube(message, args) {
           ? `${Math.floor(video.duration / 60)}分${video.duration % 60}秒`
           : '未指定';
 
-        await message.reply(
-          summary + '\n\n' +
+        const prePubMeta =
           `📝 **投稿前予測モード** (再生数・エンゲージメントなし)\n` +
           `🏷️ タイトル: ${video.title || '（未入力）'}\n` +
           `🏷️ タグ: ${tagsArr.length}個  ` +
           `⏱️ 長さ: ${durStr}  ` +
           `👥 登録者: ${video.subscriberCount.toLocaleString()}` +
-          (kw.genre ? `\n🎮 ジャンル: \`${kw.genre}\`` : '')
-        );
+          (kw.genre ? `\n🎮 ジャンル: \`${kw.genre}\`` : '');
+        await message.reply(prePubMeta + '\n\n' + summary);
       } catch (err) {
         logger.error(`!youtube predict (kwarg) エラー: ${err.message}`);
         await message.reply(
@@ -5988,8 +5987,13 @@ async function handleYoutube(message, args) {
       if (!YOUTUBE_API_KEY) {
         await processingMsg.edit(
           '❌ **YOUTUBE_API_KEY が未設定です**\n\n' +
-          '`.env` に `YOUTUBE_API_KEY=` を設定してください。\n' +
-          '取得方法: Google Cloud Console → YouTube Data API v3 を有効化'
+          '**設定手順（初回のみ）:**\n' +
+          '1. Google Cloud Console でプロジェクトを作成\n' +
+          '2. 「APIとサービス」→「ライブラリ」→「YouTube Data API v3」を有効化\n' +
+          '3. 「認証情報」→「APIキーを作成」でキーを発行\n' +
+          '4. `.env` に `YOUTUBE_API_KEY=発行したキー` を追記してBotを再起動\n\n' +
+          '⚠️ APIキーはコードやチャットに直接貼らず `.env` に保存してください\n' +
+          '💡 APIキー不要の投稿前予測: `!youtube predict title="タイトル" subs=5000`'
         );
         return;
       }
@@ -6015,14 +6019,13 @@ async function handleYoutube(message, args) {
       const result = youtubePredictor.predict(video);
       const summary = youtubePredictor.buildSummary(video, result);
 
-      await processingMsg.edit(
-        summary + '\n\n' +
-        `📺 **${video.title?.slice(0, 60)}**\n` +
+      const videoMeta =
+        `📺 **${(video.title || '（タイトル不明）').slice(0, 60)}**\n` +
         `👁️ 再生数: ${video.viewCount.toLocaleString()}  ` +
         `👥 登録者: ${subscriberCount.toLocaleString()}\n` +
         `⏱️ 長さ: ${Math.floor(video.duration / 60)}分${video.duration % 60}秒  ` +
-        `🏷️ タグ: ${video.tags.length}個`
-      );
+        `🏷️ タグ: ${video.tags.length}個`;
+      await processingMsg.edit(videoMeta + '\n\n' + summary);
     } catch (err) {
       logger.error(`!youtube predict エラー: ${err.message}`);
       const errMsg = err.message || '';
@@ -6041,26 +6044,56 @@ async function handleYoutube(message, args) {
         ? new YouTubeApiClient(YOUTUBE_API_KEY).getQuotaStatus()
         : { used: 0, date: '(API Key 未設定)' };
 
-      const keyStatus   = YOUTUBE_API_KEY ? '✅ 設定済み' : '❌ 未設定';
-      const mlStatus    = modelStatus.trained && modelStatus.sampleCount >= 20
+      const keyStatus = YOUTUBE_API_KEY ? '✅ 設定済み' : '❌ 未設定';
+      const mlStatus  = modelStatus.trained && modelStatus.sampleCount >= 20
         ? `🤖 ML有効 (usedML=true)` : `📏 ルールベース (MLデータ不足)`;
-      const modelLine   = modelStatus.trained
+      const modelLine = modelStatus.trained
         ? `✅ 訓練済み (${modelStatus.sampleCount}件: hit=${modelStatus.hitCount} miss=${modelStatus.missCount})  ${mlStatus}`
         : '⭕ 未訓練（シードデータを収集してください）';
 
+      const accLine = (modelStatus.trained && modelStatus.trainDirectionalAcc != null)
+        ? `\n  📐 方向性正解率: ${(modelStatus.trainDirectionalAcc * 100).toFixed(1)}% (学習データ上の参考値)`
+        : '';
+      const trainedAtLine = modelStatus.trainedAt
+        ? `\n  🕐 最終訓練: ${new Date(modelStatus.trainedAt).toLocaleString('ja-JP')}`
+        : '';
+
+      const readiness = !YOUTUBE_API_KEY
+        ? '⛔ **APIキー未設定** — `!youtube predict <URL>` は実行できません'
+        : !modelStatus.trained
+        ? '🟡 **セットアップ未完了** — シードデータ収集・訓練が必要です'
+        : modelStatus.sampleCount < 20
+        ? '🟡 **データ不足** — もう少しサンプルが必要です (20件以上でML有効)'
+        : '🟢 **使用可能** — 予測を実行できます';
+
+      const nextSteps = YOUTUBE_API_KEY
+        ? (modelStatus.trained && modelStatus.sampleCount >= 20
+          ? `✅ セットアップ完了！\n` +
+            `\`!youtube predict <URL>\` — 投稿済み動画を予測\n` +
+            `\`!youtube predict title="..." subs=10000\` — 投稿前に予測（APIキー不要）`
+          : `① \`!youtube bulk-collect vtuber\` — シードデータ収集（推奨 / 数分）\n` +
+            `② \`!youtube train\` — モデル訓練\n` +
+            `③ \`!youtube predict <URL>\` — 予測\n\n` +
+            `💡 APIキーなしでも投稿前予測は今すぐ使えます:\n` +
+            `   \`!youtube predict title="タイトル" subs=5000 sec=600\`\n\n` +
+            `利用可能ジャンル: ${Object.keys(GENRE_PRESETS).join(', ')}`)
+        : `**APIキー設定手順（初回のみ）:**\n` +
+          `1. Google Cloud Console でプロジェクトを作成\n` +
+          `2. 「APIとサービス」→「ライブラリ」→「YouTube Data API v3」を有効化\n` +
+          `3. 「認証情報」→「APIキーを作成」でキーを発行\n` +
+          `4. \`.env\` に \`YOUTUBE_API_KEY=発行したキー\` を追記してBotを再起動\n\n` +
+          `⚠️ APIキーはコードやチャットに直接貼らず \`.env\` に保存してください\n` +
+          `💡 APIキー不要の投稿前予測は今すぐ使えます:\n` +
+          `   \`!youtube predict title="タイトル" subs=5000 sec=600\``;
+
       await message.reply(
-        `📊 **YouTube 予測 AI ステータス**\n\n` +
+        `📊 **YouTube 視聴予測 AI — ステータス**\n` +
+        `> 動画URLまたは投稿前データから「ヒットしやすいか」を統計的に予測するAIです\n\n` +
+        `**状態:** ${readiness}\n\n` +
         `🔑 API Key: ${keyStatus}\n` +
         `📡 クォータ: ${quotaStatus.used} / 10,000 units  (${quotaStatus.date})\n` +
-        `🤖 モデル: ${modelLine}\n\n` +
-        `次のステップ:\n` +
-        (YOUTUBE_API_KEY
-          ? `\`!youtube bulk-collect <genre>\` — 数百件一括収集（推奨）\n` +
-            `\`!youtube collect <genre> <query>\` — 1クエリ収集\n` +
-            `\`!youtube train\` — モデル訓練\n` +
-            `\`!youtube predict <URL>\` — 予測\n\n` +
-            `利用可能ジャンル: ${Object.keys(GENRE_PRESETS).join(', ')}`
-          : `.env に \`YOUTUBE_API_KEY=\` を設定してください`)
+        `🤖 モデル: ${modelLine}${accLine}${trainedAtLine}\n\n` +
+        `**次のステップ:**\n` + nextSteps
       );
     } catch (err) {
       logger.error(`!youtube status エラー: ${err.message}`);
