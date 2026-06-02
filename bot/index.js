@@ -120,6 +120,9 @@ const aiBoardReport = require('./utils/ai-board-report');
 // ─── CEO Report ───
 const ceoReport = require('./utils/ceo-report');
 
+// ─── CEO Command Layer Phase 1 ───
+const ceoCommands = require('./utils/ceo-commands');
+
 // ─── Finance Manager ───
 const financeManager = require('./utils/finance-manager');
 
@@ -526,6 +529,44 @@ async function sendPRHumanConfirm(channel, taskId, prResult, dangerLevel) {
 }
 
 // ─────────────────────────────────────────────────────
+// !ceo コマンド — CEO Command Layer Phase 1
+//
+// !ceo [status]               全体状況サマリー
+// !ceo investigate [project]  調査レポート
+// !ceo design [project]       設計提案
+// ─────────────────────────────────────────────────────
+async function handleCeo(message, args) {
+  const sub       = (args[0] || 'status').toLowerCase();
+  const projectId = args[1] || null;
+
+  try {
+    if (sub === 'status' || sub === '') {
+      const text = ceoCommands.buildCeoStatus(taskManager, qualityGate, autoProjectRunner, projectManager);
+      await message.reply(text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    if (sub === 'investigate' || sub === 'inv') {
+      const text = ceoCommands.buildCeoInvestigate(projectId, taskManager, qualityGate, autoProjectRunner);
+      await message.reply(text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    if (sub === 'design' || sub === 'des') {
+      const text = ceoCommands.buildCeoDesign(projectId, taskManager, projectManager);
+      await message.reply(text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // 未知のサブコマンド
+    await message.reply(ceoCommands.buildCeoHelp()).catch(() => {});
+  } catch (err) {
+    logger.error(`[CEO] エラー: ${err.message}`);
+    await message.reply(`⚠️ CEO コマンドでエラーが発生しました: ${err.message}`).catch(() => {});
+  }
+}
+
+// ─────────────────────────────────────────────────────
 // !help コマンド
 // ─────────────────────────────────────────────────────
 async function handleHelp(message) {
@@ -649,6 +690,16 @@ async function handleHelp(message) {
           '`!youtube collect <genre> <query>` — シードデータ収集（管理者・API Key必須）',
           '`!youtube train` — 収集データでモデル訓練（管理者）',
           '予測結果: `hit`=高再生 / `miss`=低再生 / `unknown`=不明',
+        ].join('\n'),
+        inline: false,
+      },
+      // ── CEO コマンド ──────────────────────────────────────
+      {
+        name: '👑 !ceo — CEO Command Layer（調査・設計）',
+        value: [
+          '`!ceo` / `!ceo status` — 全体状況サマリー（非エンジニア向け）',
+          '`!ceo investigate [projectId]` — 調査: 問題・ボトルネック分析',
+          '`!ceo design [projectId]` — 設計: 次に実装すべき機能の提案',
         ].join('\n'),
         inline: false,
       },
@@ -6756,6 +6807,13 @@ client.on('messageCreate', async (message) => {
   if (content.startsWith('!codex')) {
     const userContent = content.slice('!codex'.length).trim();
     await handleCodex(message, userContent);
+    return;
+  }
+
+  // ── CEO Command Layer Phase 1 ──
+  if (content.startsWith('!ceo')) {
+    const ceoArgs = content.slice('!ceo'.length).trim().split(/\s+/).filter(Boolean);
+    await handleCeo(message, ceoArgs);
     return;
   }
 
