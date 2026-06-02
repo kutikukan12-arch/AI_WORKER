@@ -314,28 +314,213 @@ function translateHumanCheckReason(reason) {
 }
 
 // ─────────────────────────────────────────────────────
-// ① GitHub Push 失敗フォーマット
-//    data: { taskId, pushError }
+// Push 失敗の原因分類
 // ─────────────────────────────────────────────────────
-function formatGitHubPushFailed({ taskId = '', pushError = '' }) {
-  let techCategory = '認証または接続の問題';
-  if (/403|permission|denied/i.test(pushError))         techCategory = 'GitHub Token の権限不足 (403)';
-  else if (/404|not found/i.test(pushError))             techCategory = 'リポジトリが見つからない (404)';
-  else if (/timeout|timed/i.test(pushError))             techCategory = '接続タイムアウト';
-  else if (/network|connect|ENOTFOUND/i.test(pushError)) techCategory = 'ネットワーク接続エラー';
+const PUSH_FAIL_TYPES = {
+  SECRET_BLOCK:      'SECRET_BLOCK',       // Secret Guardian による安全停止
+  AUTH_403:          'AUTH_403',           // 認証エラー（Token 権限不足）
+  AUTH_401:          'AUTH_401',           // 認証エラー（Token 無効）
+  REMOTE_NOT_FOUND:  'REMOTE_NOT_FOUND',   // リポジトリ URL 間違い（404）
+  NON_FAST_FORWARD:  'NON_FAST_FORWARD',   // リモートが先行（要 pull）
+  INDEX_LOCK:        'INDEX_LOCK',         // .git/index.lock 競合
+  NETWORK:           'NETWORK',            // ネットワーク接続エラー
+  SECRET_SCAN_BLOCK: 'SECRET_SCAN_BLOCK',  // GitHub Push Protection（remote block）
+  UNKNOWN:           'UNKNOWN',
+};
+
+/**
+ * classifyPushError(pushError) — push エラー文字列から原因を分類
+ * @param {string} pushError — maskSecret 済みのエラー文字列
+ * @returns {string} PUSH_FAIL_TYPES のいずれか
+ */
+function classifyPushError(pushError = '') {
+  if (!pushError || typeof pushError !== 'string') return PUSH_FAIL_TYPES.UNKNOWN;
+  const e = pushError.toLowerCase();
+  // Secret Guardian による停止（最優先）
+  if (/secret.*guardian|secretguardian|秘密情報.*検出|commit.*停止/i.test(pushError))
+    return PUSH_FAIL_TYPES.SECRET_BLOCK;
+  // GitHub Push Protection（GH013 / push cannot contain secrets）
+  if (/push.*protection|gh013|secret.*scanning|push.*cannot.*contain.*secret/i.test(pushError))
+    return PUSH_FAIL_TYPES.SECRET_SCAN_BLOCK;
+  // 認証エラー
+  if (/403|permission.*denied|denied.*permission/i.test(e))
+    return PUSH_FAIL_TYPES.AUTH_403;
+  if (/401|unauthorized|invalid.*token|bad.*credential/i.test(e))
+    return PUSH_FAIL_TYPES.AUTH_401;
+  // ネットワーク（ENOTFOUND は REMOTE_NOT_FOUND より先にチェック）
+  if (/enotfound|econnrefused|network|timed.*out|timeout|unable.*connect/i.test(e))
+    return PUSH_FAIL_TYPES.NETWORK;
+  // リポジトリが見つからない（ENOTFOUND を除外済み）
+  if (/\b404\b|repository.*not.*exist|remote.*not.*found|not.*found.*repository/i.test(e))
+    return PUSH_FAIL_TYPES.REMOTE_NOT_FOUND;
+  // non-fast-forward（リモートが先行）
+  if (/non-fast-forward|fetch.*first|rejected.*behind|rejected.*non-fast-forward/i.test(e))
+    return PUSH_FAIL_TYPES.NON_FAST_FORWARD;
+  // index.lock 競合
+  if (/index\.lock|lock.*file/i.test(e))
+    return PUSH_FAIL_TYPES.INDEX_LOCK;
+  return PUSH_FAIL_TYPES.UNKNOWN;
+}
+
+// 原因別の CEO 向けメッセージ定義
+const PUSH_FAIL_MESSAGES = {
+  SECRET_BLOCK: {
+    emoji:  '🛡️',
+    title:  '安全停止 — 秘密情報が検出されました',
+    status: 'コードに APIキーやトークンが含まれている可能性があるため、自動的に commit を差し止めました。作業内容は PC 内に保存されています。',
+    impact: 'コードが外部に公開されると、APIキーが悪用されるリスクがあります。',
+    ignore: '秘密情報がソースコードに残り、次回以降も commit がブロックされます。',
+    steps:  [
+      '`logs/security-*.json` で検出箇所（ファイル名・行番号のみ）を確認',
+      '該当ファイルから秘密情報を削除し、`.env` または環境変数に移す',
+      '漏洩の可能性があるトークンを**今すぐ再発行**する',
+      '修正後に再度タスクを実行する',
+    ],
+    recommend: '即時対応推奨',
+    techLabel: 'Secret Guardian BLOCK',
+  },
+  SECRET_SCAN_BLOCK: {
+    emoji:  '🔒',
+    title:  'GitHub Push Protection — 秘密情報が検出されました',
+    status: 'GitHub のセキュリティ機能がコード内の秘密情報（APIキー等）を検出し、push を拒否しました。',
+    impact: 'コミット履歴に秘密情報が残り、外部公開リポジトリでは漏洩リスクがあります。',
+    ignore: 'push がブロックされ続けます。秘密情報がコードに残ったままになります。',
+    steps:  [
+      '問題のコミットから秘密情報を削除（git rebase が必要な場合は管理者に依頼）',
+      '漏洩した可能性のあるトークンを**今すぐ再発行**する',
+      'または GitHub の「Allow secret」URLで bypass する（非推奨）',
+    ],
+    recommend: '即時対応推奨',
+    techLabel: 'GitHub Push Protection (GH013)',
+  },
+  AUTH_403: {
+    emoji:  '🔑',
+    title:  '認証エラー — GitHub アクセス権がありません',
+    status: '使用している GitHub トークンに、このリポジトリへの書き込み権限がありません。',
+    impact: '作業内容は PC 内に保存済みです。GitHub へのバックアップだけ失敗しました。',
+    ignore: 'バックアップなしで開発が続きます。PC が壊れると変更を失う可能性があります。',
+    steps:  [
+      '`!doctor` でシステム診断を実行',
+      '新しい GitHub Personal Access Token を発行（`repo` スコープが必要）',
+      '`.env` の `GITHUB_TOKEN` を新しい値に更新',
+      '`!restart` で Bot を再起動',
+    ],
+    recommend: '修復推奨',
+    techLabel: '403 Forbidden',
+  },
+  AUTH_401: {
+    emoji:  '🔑',
+    title:  '認証エラー — GitHub トークンが無効です',
+    status: 'GitHub トークンが無効または期限切れです。',
+    impact: '作業内容は PC 内に保存済みです。',
+    ignore: 'バックアップが取れない状態が続きます。',
+    steps:  [
+      '新しい GitHub Personal Access Token を発行',
+      '`.env` の `GITHUB_TOKEN` を更新',
+      '`!restart` で Bot を再起動',
+    ],
+    recommend: '修復推奨',
+    techLabel: '401 Unauthorized',
+  },
+  REMOTE_NOT_FOUND: {
+    emoji:  '📡',
+    title:  'リポジトリが見つかりません',
+    status: '`.env` の `GITHUB_REPO` に設定されたリポジトリが存在しないか、アクセスできません。',
+    impact: 'push ができない状態です。',
+    ignore: '全ての push が失敗し続けます。',
+    steps:  [
+      '`.env` の `GITHUB_REPO` を正しいリポジトリ名（`ユーザー名/リポジトリ名`）に修正',
+      'リポジトリが存在するか GitHub で確認',
+      '`!restart` で Bot を再起動',
+    ],
+    recommend: '設定修正推奨',
+    techLabel: '404 Not Found',
+  },
+  NON_FAST_FORWARD: {
+    emoji:  '🔄',
+    title:  'リモートが先行しています',
+    status: 'GitHub 側のコードがローカルより進んでいるため、そのまま push できません。',
+    impact: '作業内容は PC 内に保存済みです。',
+    ignore: 'リモートとの差分が広がり、後で解決が難しくなります。',
+    steps:  [
+      'PowerShell で `cd "D:\\璃蘭\\AI_WORKER"` を実行',
+      '`git pull origin master` でリモートの変更を取り込む',
+      '競合があれば手動で解決',
+      '`git push origin master` で再 push',
+    ],
+    recommend: 'git pull 推奨',
+    techLabel: 'non-fast-forward',
+  },
+  INDEX_LOCK: {
+    emoji:  '🔒',
+    title:  'git のロックファイルが残っています',
+    status: '`.git/index.lock` が残っており、git の操作が競合しています。',
+    impact: 'commit / push が一時的にできない状態です。',
+    ignore: '全ての git 操作がブロックされます。',
+    steps:  [
+      'しばらく（1〜2分）待ってから再試行',
+      'それでも解決しない場合は PowerShell で `Remove-Item ".git/index.lock" -Force` を実行',
+      '※ 他の git 操作が走っている場合は完了まで待つ',
+    ],
+    recommend: '待機または手動削除',
+    techLabel: 'index.lock 競合',
+  },
+  NETWORK: {
+    emoji:  '🌐',
+    title:  'ネットワーク接続エラー',
+    status: 'インターネット接続または GitHub のサーバーに問題があります。',
+    impact: '作業内容は PC 内に保存済みです。',
+    ignore: 'ネットワークが回復するまで push が続けて失敗します。',
+    steps:  [
+      'インターネット接続を確認',
+      'VPN 使用時は接続状態を確認',
+      '`!doctor` で診断',
+      '接続回復後に自動で再試行されます',
+    ],
+    recommend: 'ネットワーク確認推奨',
+    techLabel: 'Network error',
+  },
+  UNKNOWN: {
+    emoji:  '⚠️',
+    title:  'GitHub バックアップ失敗（原因不明）',
+    status: '予期しないエラーで push が失敗しました。作業内容は PC 内に保存済みです。',
+    impact: 'GitHub へのバックアップが取れていません。',
+    ignore: 'バックアップなしで開発が続きます。',
+    steps:  [
+      '`!doctor` でシステム診断を実行',
+      'ログを確認して詳細を把握',
+      '問題が続く場合は管理者に連絡',
+    ],
+    recommend: '診断推奨',
+    techLabel: '不明なエラー',
+  },
+};
+
+// ─────────────────────────────────────────────────────
+// ① GitHub Push 失敗フォーマット（原因分類対応版）
+//    data: { taskId, pushError, isSecretBlock? }
+// ─────────────────────────────────────────────────────
+function formatGitHubPushFailed({ taskId = '', pushError = '', isSecretBlock = false }) {
+  // Secret Guardian による安全停止は強制的に SECRET_BLOCK 分類
+  const failType = isSecretBlock
+    ? PUSH_FAIL_TYPES.SECRET_BLOCK
+    : classifyPushError(pushError);
+
+  const msg = PUSH_FAIL_MESSAGES[failType] || PUSH_FAIL_MESSAGES.UNKNOWN;
+
+  const stepsText = msg.steps
+    .map((s, i) => `  ${i + 1}. ${s}`)
+    .join('\n');
 
   return (
-    `⚠️ **外部バックアップ失敗**\n\n` +
-    `**状況:** 作業内容はこの PC 内に保存済みです。GitHub へのバックアップだけ失敗しました。\n\n` +
-    `**影響:** PC が故障した場合、最新の変更（このタスク以降）を失う可能性があります。\n\n` +
-    `**放置すると:** バックアップなしで開発が続きます。チームへの共有もできません。\n\n` +
-    `**📋 AI おすすめ: 修復推奨**\n理由: 作業履歴の保護とチーム共有のため。\n\n` +
-    `**次の行動:**\n` +
-    `  1. \`!doctor\` でシステム診断\n` +
-    `  2. GitHub Personal Access Token を再発行して \`.env\` を更新\n` +
-    `  3. \`!restart\` で Bot を再起動\n\n` +
+    `${msg.emoji} **${msg.title}**\n\n` +
+    `**📌 状況:**\n${msg.status}\n\n` +
+    `**📊 影響:**\n${msg.impact}\n\n` +
+    `**⏸ 放置すると:**\n${msg.ignore}\n\n` +
+    `**✅ 次のアクション:**\n${stepsText}\n\n` +
+    `**🤖 AI おすすめ: ${msg.recommend}**\n\n` +
     `━━━━━━━━━━━━━━━\n` +
-    `🔧 **技術詳細** | タスク: \`${taskId}\` | 分類: ${techCategory}`
+    `🔧 **技術詳細** | タスク: \`${taskId}\` | 原因: ${msg.techLabel}`
   );
 }
 
@@ -631,10 +816,11 @@ function classifyDiscordError(errMsg) {
  */
 function formatForCEO(type, data = {}) {
   switch (type) {
-    case 'github_push_failed': return formatGitHubPushFailed(data);
-    case 'task_error':         return formatTaskError(data);
-    case 'human_check':        return formatHumanCheck(data);
-    case 'codex_high_danger':  return formatCodexHighDanger(data);
+    case 'github_push_failed':        return formatGitHubPushFailed(data);
+    case 'github_push_secret_block':  return formatGitHubPushFailed({ ...data, isSecretBlock: true });
+    case 'task_error':                return formatTaskError(data);
+    case 'human_check':               return formatHumanCheck(data);
+    case 'codex_high_danger':         return formatCodexHighDanger(data);
     default: return `[${type}] ${JSON.stringify(data).slice(0, 100)}`;
   }
 }
@@ -665,5 +851,8 @@ module.exports = {
   formatCodexHighDanger,
   translateErrorType,
   translateHumanCheckReason,
+  // Push 失敗分類（テスト・index.js 共用）
+  classifyPushError,
+  PUSH_FAIL_TYPES,
   classifyDiscordError,
 };

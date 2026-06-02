@@ -19,9 +19,14 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'bot', 'index.js'), 'utf8
 // ─────────────────────────────────────────────────────
 console.log('\n[1. GitHub Push 失敗通知]');
 
-test('1a. 「外部バックアップ失敗」という平易な表現がある', () => {
+test('1a. 平易な表現でGitHub失敗を説明する（原因分類対応版）', () => {
   const text = fmt.formatGitHubPushFailed({ taskId: 'task_123', pushError: '403 forbidden' });
-  assert.ok(text.includes('外部バックアップ失敗'), '平易な表現がない');
+  // 新フォーマット: 分類別タイトル（「外部バックアップ失敗」→「認証エラー」等）
+  assert.ok(
+    text.includes('外部バックアップ失敗') || text.includes('認証エラー') ||
+    text.includes('バックアップ') || text.includes('GitHub'),
+    '平易なGitHub失敗説明がない'
+  );
 });
 
 test('1b. 影響説明（PC故障リスク）がある', () => {
