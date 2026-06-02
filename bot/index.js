@@ -126,6 +126,9 @@ const ceoCommands = require('./utils/ceo-commands');
 // ─── Finance Manager ───
 const financeManager = require('./utils/finance-manager');
 
+// ─── Finance Gate ───
+const financeGate = require('./utils/finance-gate');
+
 const companyManager  = require('./utils/company-manager');
 const qualityGate     = require('./utils/quality-gate');
 
@@ -1205,6 +1208,25 @@ async function handleProjectRun(message, projectId) {
     return;
   }
 
+  // ─── Finance Gate: 予算チェック ──────────────────────────
+  try {
+    const budgetCheck = financeGate.checkRunnerStart();
+    if (!budgetCheck.allowed) {
+      await message.reply(
+        `💰 **Finance Gate — 実行停止**\n\n` +
+        (budgetCheck.message || '予算チェックで停止しました。') + '\n\n' +
+        `詳細: \`!finance status\``
+      ).catch(() => {});
+      return;
+    }
+    if (budgetCheck.message) {
+      // WARNING 等の非停止メッセージ
+      await message.channel.send(budgetCheck.message).catch(() => {});
+    }
+  } catch (fgErr) {
+    logger.warn(`[FinanceGate] チェックエラー（続行）: ${fgErr.message}`);
+  }
+
   // ─── H1: PRE-RUN Quality Gate チェック ────────────────
   try {
     const qa = qualityGate.assessQuality(projectId);
@@ -1272,11 +1294,20 @@ async function handleProjectRun(message, projectId) {
   const preview = gatherRunnerPreview(projectId);
   const previewText = formatRunnerPreview(preview, projectId);
 
-  // 開始メッセージ（見通し込み）
+  // 予算状況（1行）
+  const budgetLine = (() => {
+    try {
+      const eval_ = financeGate.evaluateBudget();
+      return financeGate.formatBudgetLine(eval_);
+    } catch { return null; }
+  })();
+
+  // 開始メッセージ（見通し + 予算状況）
   await message.reply(
     `🚀 **Project Runner 開始**\n\n` +
     `Project: **${project.name}** (\`${projectId}\`)${staffText}\n\n` +
     previewText + '\n\n' +
+    (budgetLine ? budgetLine + '\n\n' : '') +
     `停止: \`!project stop ${projectId}\` | 状態: \`!project runner status\``
   ).catch(() => {});
 
@@ -1880,7 +1911,7 @@ async function _teardown(ctx, prevPid) {
         ceoReport.formatCeoReportPart1(ceoRpt),
         ceoReport.formatCeoReportPart2(ceoRpt),
         ceoReport.formatCeoReportPart3(ceoRpt),
-        financeManager.formatFinanceSection(),  // 💰 Finance セクション
+        financeGate.formatBudgetSection(),       // 💰 Finance Gate 予算セクション
       ];
       // 送信先: CEO_REPORT_CHANNEL_ID → sendNotification, 未設定 → コマンドチャンネル
       const sendPart = async (text) => {
@@ -6814,6 +6845,95 @@ client.on('messageCreate', async (message) => {
   if (content === '!cost') {
     const costText = financeManager.formatCostReport();
     await message.reply(costText.slice(0, 1900)).catch(() => {});
+    return;
+  }
+
+  // !finance — Finance Gate コマンド
+  if (content.startsWith('!finance')) {
+    const fArgs = content.split(/\s+/).slice(1);
+    const fSub  = fArgs[0] || 'status';
+
+    // !finance status
+    if (fSub === 'status') {
+      await message.reply(financeGate.formatFinanceStatus().slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // !finance approve — Owner のみ。APPROVAL レベル時の超過承認（24h 有効）
+    if (fSub === 'approve') {
+      if (!DISCORD_OWNER_ID || message.author.id !== DISCORD_OWNER_ID) {
+        await message.reply('🚫 `!finance approve` は Owner のみ実行できます。').catch(() => {});
+        return;
+      }
+      financeGate.approveBudgetOverrun(message.author.id);
+      await message.reply(
+        `✅ **予算超過を承認しました（24時間有効）**\n\n` +
+        `\`!project run\` で再実行できます。\n` +
+        `> ⚠️ 予算の見直しは \`!finance config set monthlyBudgetJPY <金額>\` で行ってください。`
+      ).catch(() => {});
+      return;
+    }
+
+    // !finance config — 設定表示 / 変更（Owner のみ変更可）
+    if (fSub === 'config') {
+      const configSub = fArgs[1] || 'show';
+      if (configSub === 'show') {
+        const cfg = financeGate.loadConfig();
+        await message.reply(
+          `⚙️ **Finance Gate 設定**\n\`\`\`json\n${JSON.stringify(cfg, null, 2)}\n\`\`\``
+        ).catch(() => {});
+        return;
+      }
+      if (configSub === 'set') {
+        if (!DISCORD_OWNER_ID || message.author.id !== DISCORD_OWNER_ID) {
+          await message.reply('🚫 `!finance config set` は Owner のみ実行できます。').catch(() => {});
+          return;
+        }
+        const key = fArgs[2];
+        const val = fArgs[3];
+        if (!key || !val) {
+          await message.reply('使い方: `!finance config set <key> <value>`\n例: `!finance config set monthlyBudgetJPY 8000`').catch(() => {});
+          return;
+        }
+        const numericKeys = ['monthlyBudgetJPY', 'warningRate', 'approvalRate', 'hardStopRate', 'perRunLimitJPY'];
+        const boolKeys    = ['enabled'];
+        const cfg = financeGate.loadConfig();
+        if (numericKeys.includes(key)) {
+          cfg[key] = parseFloat(val);
+        } else if (boolKeys.includes(key)) {
+          cfg[key] = val === 'true';
+        } else {
+          await message.reply(`❌ 不明なキー: \`${key}\``).catch(() => {});
+          return;
+        }
+        financeGate.saveConfig(cfg);
+        await message.reply(`✅ **設定更新** \`${key}\` = \`${cfg[key]}\``).catch(() => {});
+        logger.info(`[FinanceGate] 設定変更: ${key}=${cfg[key]} | by:${message.author.id}`);
+        return;
+      }
+    }
+
+    // !finance reset-approval — Owner のみ
+    if (fSub === 'reset-approval') {
+      if (!DISCORD_OWNER_ID || message.author.id !== DISCORD_OWNER_ID) {
+        await message.reply('🚫 Owner のみ').catch(() => {});
+        return;
+      }
+      financeGate.resetApproval();
+      await message.reply('✅ Finance Gate 承認をリセットしました。').catch(() => {});
+      return;
+    }
+
+    // ヘルプ
+    await message.reply(
+      '**!finance コマンド:**\n```\n' +
+      '!finance status              → 予算状況表示\n' +
+      '!finance approve             → 予算超過を承認（Owner・24h有効）\n' +
+      '!finance config show         → 設定確認\n' +
+      '!finance config set <k> <v>  → 設定変更（Owner）\n' +
+      '!finance reset-approval      → 承認リセット（Owner）\n' +
+      '```'
+    ).catch(() => {});
     return;
   }
 

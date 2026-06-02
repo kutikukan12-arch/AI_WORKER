@@ -69,3 +69,5 @@ data/workers.json
 data/quality-gates.json
 data/pending-plans.json
 data/project-insights.json
+data/finance-config.json
+data/finance-approval.json
