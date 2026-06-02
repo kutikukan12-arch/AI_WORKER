@@ -201,5 +201,49 @@ test('5b. レポートに severity / file / line のみ保存（値なし）', (
   assert.ok(!src.includes('content:') || src.includes('// 値は保存しない'), '値が保存されている可能性');
 });
 
+// ─────────────────────────────────────────────────────
+// 6. github.js の fail-open 経路修正確認（F-2追加対応）
+// ─────────────────────────────────────────────────────
+console.log('\n[6. github.js fail-closed 確認]');
+
+test('6a. github.js の guardCommit catch が fail-closed になっている', () => {
+  const ghSrc = fs.readFileSync(path.join(__dirname, '..', 'bot', 'utils', 'github.js'), 'utf8');
+  assert.ok(!ghSrc.includes("スキャンエラー（続行）"), '旧 fail-open パターンが残っている');
+  assert.ok(ghSrc.includes('fail-closed'), 'fail-closed コメントがない');
+  assert.ok(ghSrc.includes('throw fcErr'), '予期外例外時の throw がない');
+});
+
+test('6b. github.js の guardCommit catch も secretViolations を設定する', () => {
+  const ghSrc = fs.readFileSync(path.join(__dirname, '..', 'bot', 'utils', 'github.js'), 'utf8');
+  const catchIdx = ghSrc.lastIndexOf('} catch (sgErr)');
+  const catchBody = ghSrc.slice(catchIdx, catchIdx + 500);
+  assert.ok(catchBody.includes('fcErr.secretViolations'), 'fcErr に secretViolations がない');
+});
+
 console.log(`\n結果: ${pass} passed / ${fail} failed\n`);
 if (fail > 0) process.exit(1);
+
+// ─────────────────────────────────────────────────────
+// 6. github.js の fail-open 経路修正確認
+// ─────────────────────────────────────────────────────
+console.log('\n[6. github.js fail-closed 確認（F-2追加対応）]');
+
+test('6a. github.js の guardCommit catch が fail-closed になっている', () => {
+  const ghSrc = require('fs').readFileSync(
+    require('path').join(__dirname, '..', 'bot', 'utils', 'github.js'), 'utf8'
+  );
+  // 旧 fail-open: logger.warn して続行
+  assert.ok(!ghSrc.includes("スキャンエラー（続行）"), '旧 fail-open パターンが残っている');
+  // 新 fail-closed: throw して停止
+  assert.ok(ghSrc.includes('fail-closed'), 'fail-closed コメントがない');
+  assert.ok(ghSrc.includes('throw fcErr'), '予期外例外時の throw がない');
+});
+
+test('6b. github.js の guardCommit catch も secretViolations を設定する', () => {
+  const ghSrc = require('fs').readFileSync(
+    require('path').join(__dirname, '..', 'bot', 'utils', 'github.js'), 'utf8'
+  );
+  const catchIdx = ghSrc.lastIndexOf('} catch (sgErr)');
+  const catchBody = ghSrc.slice(catchIdx, catchIdx + 500);
+  assert.ok(catchBody.includes('fcErr.secretViolations'), 'fcErr に secretViolations がない');
+});

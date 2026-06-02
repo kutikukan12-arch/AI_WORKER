@@ -346,7 +346,14 @@ async function commitAndPush(prompt, taskId) {
     logger.info(`[SecretGuardian] ${guard.summary}`);
   } catch (sgErr) {
     if (sgErr.secretViolations) throw sgErr; // 検出エラーはそのまま上位へ
-    logger.warn(`[SecretGuardian] スキャンエラー（続行）: ${sgErr.message.slice(0, 80)}`);
+    // F-2 修正: guardCommit 自体の予期外例外 → fail-closed: commit を止める
+    // （旧: logger.warn して commit 続行 = fail-open）
+    logger.error(`[SecretGuardian] guardCommit 予期外例外 → fail-closed: ${sgErr.message?.slice(0, 80)}`);
+    const fcErr = new Error(`[SecretGuardian] スキャンエラーのため commit を停止しました（安全のため）。\n${sgErr.message?.slice(0, 100)}`);
+    fcErr.secretViolations = [];
+    fcErr.secretReport     = `🚨 **Secret Guardian スキャンエラー — commit 停止**\nエラー: ${sgErr.message?.slice(0, 80)}\n詳細はログを確認してください。`;
+    fcErr.secretReportFile = null;
+    throw fcErr;
   }
 
   // コミットメッセージを一時ファイル経由で渡す（日本語文字化け防止）
