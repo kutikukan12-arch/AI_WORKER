@@ -409,6 +409,22 @@ async function sendToChannel(channelId, fallback, content) {
 async function sendNotification(type, fallback, content) {
   const channelId = NOTIFICATION_CHANNELS[type] || '';
 
+  // ─── Secret Guard: Discord 投稿前に秘密情報チェック ───
+  try {
+    const { guardDiscordContent } = require('./utils/secret-guardian');
+    const guard = guardDiscordContent(content, { type });
+    if (!guard.allowed) {
+      logger.error(`[SecretGuard][NOTIFY] type=${type} 秘密情報検出 → 投稿差し止め (${guard.violations.length}件)`);
+      // CEO にアラートを直接送信（フォールバックチャンネル使用・無限ループ防止のため素の send）
+      if (guard.alertText) {
+        try {
+          await fallback.send(guard.alertText.slice(0, 1900));
+        } catch { /* アラート送信失敗は無視 */ }
+      }
+      return; // 元の content は送信しない
+    }
+  } catch { /* ガードのエラーは無視して通常送信へ */ }
+
   // ─── 送信前ログ ───
   const preview = typeof content === 'string'
     ? content.replace(/\n/g, ' ').slice(0, 80)
@@ -488,6 +504,19 @@ async function sendHumanMention(channel, taskId, title, detail, danger = '中', 
       `（タスクID: \`${taskId}\`）\n` +
       `✅ 承認: \`!approve ${taskId}\`　❌ 却下: \`!deny ${taskId}\``
     );
+
+  // ─── Secret Guard: 人間通知の投稿前チェック ────────
+  try {
+    const { guardDiscordContent } = require('./utils/secret-guardian');
+    const guard = guardDiscordContent(mentionMessage, { type: 'humanMention' });
+    if (!guard.allowed) {
+      logger.error(`[SecretGuard][MENTION] 秘密情報検出 → 投稿差し止め (${guard.violations.length}件)`);
+      if (guard.alertText) {
+        try { await channel.send(guard.alertText.slice(0, 1900)); } catch { /* ignore */ }
+      }
+      return;
+    }
+  } catch { /* ガードのエラーは無視 */ }
 
   try {
     if (NOTIFICATION_CHANNELS.humanCheck) {

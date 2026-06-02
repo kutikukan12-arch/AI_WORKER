@@ -274,12 +274,102 @@ function guardCommit(repoPath) {
   };
 }
 
+// ─────────────────────────────────────────────────────
+// guardDiscordContent(content) — Discord 投稿前ガード
+//
+// 目的:
+//   sendNotification / sendHumanMention 等の Discord 送信直前に呼び出し、
+//   秘密情報が含まれていれば投稿を差し止める。
+//
+// 引数:
+//   content — string | object (Discord Embed など)
+//   context — { type: string } 送信種別（ログ用）
+//
+// 戻り値:
+//   { allowed: boolean, violations: [...], alertText: string|null }
+//
+// セーフガード:
+//   - 値は絶対に表示しない
+//   - 検出時は security レポートに記録
+//   - このガード自体のエラーは全て握りつぶして allowed:true を返す
+//     （Bot 全体を落とさない）
+// ─────────────────────────────────────────────────────
+function guardDiscordContent(content, context = {}) {
+  try {
+    // テキスト抽出: string / object (embed等) / 配列 を再帰的に処理
+    const text = extractText(content);
+    if (!text) return { allowed: true, violations: [], alertText: null };
+
+    const violations = scanContent('discord:' + (context.type || 'message'), text);
+    if (violations.length === 0) {
+      return { allowed: true, violations: [], alertText: null };
+    }
+
+    // security レポートに記録（値は保存しない）
+    writeSecurityReport(
+      violations.map(v => ({ ...v, file: 'discord:' + (context.type || 'message') })),
+      'discord'
+    );
+
+    // CEO 向けアラートテキスト（値は絶対含まない）
+    const critical = violations.filter(v => v.severity === 'CRITICAL').length;
+    const high     = violations.filter(v => v.severity === 'HIGH').length;
+    const alertText = (
+      `🚨 **Secret Guardian — Discord 投稿を差し止めました**\n\n` +
+      `秘密情報と思われる文字列が Discord 投稿内容に含まれていたため、送信をブロックしました。\n\n` +
+      `**検出数:** CRITICAL ${critical}件 / HIGH ${high}件\n` +
+      `**送信種別:** ${context.type || '不明'}\n\n` +
+      `> 値は表示されません。\`logs/security-*.json\` でファイル名・種類のみ確認できます。\n` +
+      `> 秘密情報が混入した経緯を確認し、トークンを再発行してください。`
+    );
+
+    return { allowed: false, violations, alertText };
+  } catch {
+    // ガード自体のエラーは Bot を落とさない
+    return { allowed: true, violations: [], alertText: null };
+  }
+}
+
+// テキスト抽出ヘルパー（string / embed object / 配列 を再帰処理）
+function extractText(content) {
+  if (typeof content === 'string') return content;
+  if (!content || typeof content !== 'object') return '';
+
+  const parts = [];
+
+  // { content: '...' } 形式
+  if (typeof content.content === 'string') parts.push(content.content);
+
+  // embeds 配列
+  if (Array.isArray(content.embeds)) {
+    for (const embed of content.embeds) {
+      if (typeof embed.title       === 'string') parts.push(embed.title);
+      if (typeof embed.description === 'string') parts.push(embed.description);
+      if (Array.isArray(embed.fields)) {
+        embed.fields.forEach(f => {
+          if (typeof f.name  === 'string') parts.push(f.name);
+          if (typeof f.value === 'string') parts.push(f.value);
+        });
+      }
+    }
+  }
+
+  // 配列 (複数 embed)
+  if (Array.isArray(content)) {
+    content.forEach(item => { const t = extractText(item); if (t) parts.push(t); });
+  }
+
+  return parts.join('\n');
+}
+
 module.exports = {
   guardCommit,
+  guardDiscordContent,
   scanContent,
   scanStagedFiles,
   formatViolationReport,
   writeSecurityReport,
   SECRET_PATTERNS,   // テスト用
   SAFE_FILE_PATTERNS,
+  _extractText: extractText,   // テスト用
 };
