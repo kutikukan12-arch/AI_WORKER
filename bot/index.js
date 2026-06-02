@@ -7014,6 +7014,100 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  // ─── コトノハ Store Growth Manager (Phase 4) ─────────
+
+  // !store — 出品ページ監査
+  if (content.startsWith('!store')) {
+    const sg = require('./utils/store-growth');
+    const storeArgs = content.split(/\s+/).slice(1);
+    const storeSub  = storeArgs[0] || 'help';
+    if (storeSub === 'audit') {
+      const pageText = storeArgs.slice(1).join(' ').trim();
+      if (!pageText) {
+        await message.reply('使い方: `!store audit <出品文>`\n例: `!store audit CSV集計を自動化します。`').catch(() => {});
+        return;
+      }
+      const r = sg.auditStorePage(pageText);
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+    await message.reply('**!store コマンド**\n\n`!store audit <出品文>` — 出品ページ監査').catch(() => {});
+    return;
+  }
+
+  // !persona — 顧客ペルソナ分析
+  if (content.startsWith('!persona')) {
+    const { buildPersona } = require('./utils/store-growth');
+    const persText = content.slice('!persona'.length).trim();
+    if (!persText) {
+      await message.reply('使い方: `!persona <サービス説明>`\n例: `!persona CSV集計を自動化するExcelマクロ`').catch(() => {});
+      return;
+    }
+    const r = buildPersona(persText);
+    await message.reply(r.text.slice(0, 1900)).catch(() => {});
+    return;
+  }
+
+  // !faq — FAQ 生成
+  if (content.startsWith('!faq')) {
+    const { buildFAQ } = require('./utils/store-growth');
+    const faqText = content.slice('!faq'.length).trim();
+    if (!faqText) {
+      await message.reply('使い方: `!faq <サービス説明>`\n例: `!faq Excel自動集計マクロ`').catch(() => {});
+      return;
+    }
+    const r = buildFAQ(faqText);
+    await message.reply(r.text.slice(0, 1900)).catch(() => {});
+    return;
+  }
+
+  // !inquiry — 問い合わせ分析
+  if (content.startsWith('!inquiry')) {
+    const { analyzeInquiry } = require('./utils/store-growth');
+    const iqText = content.slice('!inquiry'.length).trim();
+    if (!iqText) {
+      await message.reply('使い方: `!inquiry <問い合わせ文>`\n例: `!inquiry CSV集計を依頼したいのですが料金を教えてください`').catch(() => {});
+      return;
+    }
+    const r = analyzeInquiry(iqText);
+    await message.reply(r.text.slice(0, 1900)).catch(() => {});
+    return;
+  }
+
+  // !sales — 営業学習データ管理
+  if (content.startsWith('!sales')) {
+    const sg = require('./utils/store-growth');
+    const salesArgs = content.split(/\s+/).slice(1);
+    const salesSub  = salesArgs[0] || 'help';
+
+    if (salesSub === 'learn') {
+      const resultText = salesArgs.slice(1).join(' ').trim();
+      if (!resultText) {
+        await message.reply(
+          '使い方: `!sales learn <結果>`\n例: `!sales learn 成約。CSV集計で初案件。要件が明確だとスムーズ`\n\n> ⚠️ 個人情報・秘密情報は自動的にマスクされます。'
+        ).catch(() => {});
+        return;
+      }
+      const r = sg.recordSalesLesson(resultText);
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    if (salesSub === 'list') {
+      const r = sg.listSalesLessons();
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    await message.reply(
+      '**!sales コマンド**\n\n' +
+      '`!sales learn <結果>` — 営業結果を学習データとして保存\n' +
+      '`!sales list` — 蓄積データ一覧\n\n' +
+      '> ⚠️ 個人情報・顧客名・連絡先は自動マスクされます。'
+    ).catch(() => {});
+    return;
+  }
+
   // ─── コトノハ案件対応コマンド (Phase 2) ─────────────
 
   // !client — Client Project Tracker / Timeline / Review

@@ -70,6 +70,7 @@ data/quality-gates.json
 data/pending-plans.json
 data/project-insights.json
 data/client-projects.json
+data/sales-learning.json
 
 # ─── 顧客案件学習データ（個人情報漏洩防止）───
 learning/
