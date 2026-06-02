@@ -292,6 +292,94 @@ test('7g. client-projects.json が .gitignore に追加されている', () => {
   assert.ok(gi.includes('client-projects.json'), '.gitignore に client-projects.json がない');
 });
 
+// ─────────────────────────────────────────────────────
+// 8. NEED_FIX — redact 適用・PII マスク・gitignore
+// ─────────────────────────────────────────────────────
+console.log('\n[8. NEED_FIX: redact 保存前適用]');
+
+const { redact, PII_MASK } = require('../bot/utils/redact');
+
+test('8a. !client note に ghp_ トークン → 保存値がマスクされる', () => {
+  resetProjects();
+  const p       = ct.createProject('トークンテスト').project;
+  const fakeGhp = 'ghp_' + 'A'.repeat(36);
+  ct.addNote(p.id, `アクセストークン: ${fakeGhp}`);
+  const saved = ct._loadProjects().find(pr => pr.id === p.id);
+  const note  = saved.timeline.find(t => t.type === 'note');
+  assert.ok(!note.text.includes(fakeGhp), 'ghp_ トークンが raw 保存されている');
+  assert.ok(note.text.includes('[MASKED]') || note.text.includes('[PII]'), 'マスクが適用されていない');
+});
+
+test('8b. !client note に sk- OpenAI Key → 保存値がマスクされる', () => {
+  resetProjects();
+  const p      = ct.createProject('OpenAI キーテスト').project;
+  const fakeKey = 'sk-proj-' + 'C'.repeat(92);
+  ct.addNote(p.id, `使用キー: ${fakeKey}`);
+  const saved = ct._loadProjects().find(pr => pr.id === p.id);
+  const note  = saved.timeline.find(t => t.type === 'note');
+  assert.ok(!note.text.includes(fakeKey), 'OpenAI Key が raw 保存されている');
+});
+
+test('8c. !client note にメールアドレス → 保存値がマスクされる', () => {
+  resetProjects();
+  const p = ct.createProject('メールテスト').project;
+  ct.addNote(p.id, '連絡先: customer@example.com 宛に送ってください');
+  const saved = ct._loadProjects().find(pr => pr.id === p.id);
+  const note  = saved.timeline.find(t => t.type === 'note');
+  assert.ok(!note.text.includes('customer@example.com'), 'メールアドレスが raw 保存されている');
+  assert.ok(note.text.includes(PII_MASK) || note.text.includes('[MASKED]'), 'PII マスクが適用されていない');
+});
+
+test('8d. !client note に電話番号 → 保存値がマスクされる', () => {
+  resetProjects();
+  const p = ct.createProject('電話番号テスト').project;
+  ct.addNote(p.id, '電話番号: 090-1234-5678 で連絡ください');
+  const saved = ct._loadProjects().find(pr => pr.id === p.id);
+  const note  = saved.timeline.find(t => t.type === 'note');
+  assert.ok(!note.text.includes('090-1234-5678'), '電話番号が raw 保存されている');
+  assert.ok(note.text.includes(PII_MASK) || note.text.includes('[MASKED]'), 'PII マスクが適用されていない');
+});
+
+test('8e. !client note に顧客名っぽい表現 → マスクされる', () => {
+  resetProjects();
+  const p = ct.createProject('顧客名テスト').project;
+  ct.addNote(p.id, '顧客 山田太郎 さんから要件変更の連絡がありました');
+  const saved = ct._loadProjects().find(pr => pr.id === p.id);
+  const note  = saved.timeline.find(t => t.type === 'note');
+  // 「山田太郎」がそのまま残らないこと（マスクまたは一部除去）
+  assert.ok(
+    !note.text.includes('山田太郎') || note.text.includes(PII_MASK),
+    '顧客名が raw 保存されている可能性'
+  );
+});
+
+test('8f. generateReview が redact 済み内容で出力する', () => {
+  resetProjects();
+  const p      = ct.createProject('review redact テスト').project;
+  const fakeGhp = 'ghp_' + 'B'.repeat(36);
+  ct.addNote(p.id, `ghp token: ${fakeGhp}`);
+  // review 生成（ノートの内容が redact 済みで出力されるか）
+  const r = ct.generateReview(p.id);
+  assert.ok(!r.text.includes(fakeGhp), 'review テキストに生トークンが含まれている');
+});
+
+test('8g. learning/ が .gitignore に追加されている', () => {
+  const gi = fs.readFileSync(path.join(__dirname, '..', '.gitignore'), 'utf8');
+  assert.ok(gi.includes('learning/'), '.gitignore に learning/ がない');
+});
+
+test('8h. redact が PII_MASK を export している', () => {
+  assert.ok(typeof PII_MASK === 'string' && PII_MASK.length > 0, 'PII_MASK が空');
+});
+
+test('8i. client-tracker.js が redact を require している', () => {
+  const trackerSrc = fs.readFileSync(
+    path.join(__dirname, '..', 'bot', 'utils', 'client-tracker.js'), 'utf8'
+  );
+  assert.ok(trackerSrc.includes("require('./redact')"), 'redact が require されていない');
+  assert.ok(trackerSrc.includes('redact('), 'redact() が呼ばれていない');
+});
+
 // クリーンアップ
 resetProjects();
 

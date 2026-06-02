@@ -18,6 +18,9 @@
 const fs   = require('fs');
 const path = require('path');
 
+// redact: 秘密情報 + PII を保存前にマスクする（scanContent に頼らない）
+const { redact } = require('./redact');
+
 const DATA_DIR     = path.join(__dirname, '..', '..', 'data');
 const LEARNING_DIR = path.join(__dirname, '..', '..', 'learning', 'client');
 const PROJECTS_FILE = path.join(DATA_DIR, 'client-projects.json');
@@ -97,7 +100,7 @@ function createProject(name, opts = {}) {
   const now = new Date().toISOString();
   const project = {
     id,
-    name:       name.trim().slice(0, 80),
+    name:       redact(name.trim()).slice(0, 80),  // 案件名から秘密情報・PII を除去
     status:     STATUS.INQUIRY,
     createdAt:  now,
     updatedAt:  now,
@@ -236,7 +239,9 @@ function addNote(id, noteText) {
   if (!p) return { ok: false, text: `案件 \`${id}\` が見つかりません。` };
 
   const now  = new Date().toISOString();
-  const note = { at: now, type: 'note', text: noteText.trim().slice(0, 300) };
+  // 保存前に redact() で秘密情報・PII をマスク（scanContent に頼らない）
+  const sanitizedText = redact(noteText.trim()).slice(0, 300);
+  const note = { at: now, type: 'note', text: sanitizedText };
   p.timeline.push(note);
   p.noteCount = (p.noteCount || 0) + 1;
   p.updatedAt = now;
@@ -293,9 +298,10 @@ function generateReview(id) {
     `> 手動で回答を記入して蓄積させてください。`,
   ];
 
-  const reviewText = lines.join('\n');
+  // review 出力にも redact() を適用（既存ノートに秘密が残っていても raw 出力しない）
+  const reviewText = redact(lines.join('\n'));
 
-  // learning/client/ に保存
+  // learning/client/ に保存（redact 済みのみ保存）
   try {
     if (!fs.existsSync(LEARNING_DIR)) fs.mkdirSync(LEARNING_DIR, { recursive: true });
     const reviewFile = path.join(LEARNING_DIR, `${p.id}_review.md`);
