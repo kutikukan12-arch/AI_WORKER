@@ -143,6 +143,44 @@ test('3f. CEO最終判断の注意書きがある', () => {
 });
 
 // ─────────────────────────────────────────────────────
+// 3g〜3k. NEED_FIX 必須テスト（scope 改善後）
+// ─────────────────────────────────────────────────────
+console.log('\n[3g〜3k. !scope NEED_FIX 必須テスト]');
+
+const ORIG = 'CSVグラフ化Excelマクロ';
+
+test('3g. ついでにメール送信機能も → MEDIUM 以上', () => {
+  const r = checkScopeCreep(ORIG, 'ついでにメール送信機能も追加してほしい');
+  assert.ok(
+    r.level === SCOPE_LEVEL.MEDIUM || r.level === SCOPE_LEVEL.HIGH,
+    `期待:MEDIUM/HIGH 実際:${r.level}`
+  );
+});
+
+test('3h. 決済とスマホアプリ化も → HIGH', () => {
+  const r = checkScopeCreep(ORIG, '決済とスマホアプリ化も対応してほしい');
+  assert.strictEqual(r.level, SCOPE_LEVEL.HIGH, `期待:HIGH 実際:${r.level}`);
+});
+
+test('3i. 文言を少し直したい → LOW', () => {
+  const r = checkScopeCreep(ORIG, '文言を少し直したい');
+  assert.strictEqual(r.level, SCOPE_LEVEL.LOW, `期待:LOW 実際:${r.level}`);
+});
+
+test('3j. PDF出力も追加 → MEDIUM 以上', () => {
+  const r = checkScopeCreep(ORIG, 'PDF出力機能も追加してほしい');
+  assert.ok(
+    r.level === SCOPE_LEVEL.MEDIUM || r.level === SCOPE_LEVEL.HIGH,
+    `期待:MEDIUM/HIGH 実際:${r.level}`
+  );
+});
+
+test('3k. ログイン機能も追加 → HIGH', () => {
+  const r = checkScopeCreep(ORIG, 'ログイン機能も追加してほしい');
+  assert.strictEqual(r.level, SCOPE_LEVEL.HIGH, `期待:HIGH 実際:${r.level}`);
+});
+
+// ─────────────────────────────────────────────────────
 // 4. buildDeliveryChecklist — 納品チェック
 // ─────────────────────────────────────────────────────
 console.log('\n[4. buildDeliveryChecklist]');
