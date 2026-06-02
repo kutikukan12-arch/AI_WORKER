@@ -6925,6 +6925,97 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  // ─── コトノハ案件対応コマンド (Phase 1) ─────────────
+
+  // !request — 要件整理
+  if (content.startsWith('!request')) {
+    const { analyzeRequest } = require('./utils/client-ops');
+    const reqText = content.slice('!request'.length).trim();
+    if (!reqText) {
+      await message.reply(
+        '**!request — 要件整理**\n\n' +
+        '使い方: `!request <依頼内容>`\n\n' +
+        '例:\n```\n!request お客さんから「毎月のCSVを自動でグラフ化したい」と依頼が来ました\n```'
+      ).catch(() => {});
+      return;
+    }
+    const result = analyzeRequest(reqText);
+    await message.reply(result.text.slice(0, 1900)).catch(() => {});
+    return;
+  }
+
+  // !proposal — 返信案作成
+  if (content.startsWith('!proposal')) {
+    const { buildProposal } = require('./utils/client-ops');
+    const projText = content.slice('!proposal'.length).trim();
+    if (!projText) {
+      await message.reply(
+        '**!proposal — 返信案作成**\n\n' +
+        '使い方: `!proposal <案件内容>`\n\n' +
+        '例:\n```\n!proposal ExcelのVBAマクロで月次集計を自動化してほしい\n```\n\n' +
+        '> ⚠️ 生成された返信は CEO 確認後に送信してください。'
+      ).catch(() => {});
+      return;
+    }
+    const result = buildProposal(projText);
+    await message.reply(result.text.slice(0, 1900)).catch(() => {});
+    return;
+  }
+
+  // !scope — 作業範囲肥大防止
+  if (content.startsWith('!scope')) {
+    const { checkScopeCreep } = require('./utils/client-ops');
+    const scopeInput = content.slice('!scope'.length).trim();
+    if (!scopeInput || !scopeInput.includes('|')) {
+      await message.reply(
+        '**!scope — 作業範囲チェック**\n\n' +
+        '使い方: `!scope <元の仕様> | <追加依頼>`\n\n' +
+        '例:\n```\n!scope CSVをグラフ化するExcelマクロを作る | ついでにメール送信機能も追加してほしい\n```'
+      ).catch(() => {});
+      return;
+    }
+    const sepIdx  = scopeInput.indexOf('|');
+    const original  = scopeInput.slice(0, sepIdx).trim();
+    const newReq    = scopeInput.slice(sepIdx + 1).trim();
+    const result    = checkScopeCreep(original, newReq);
+    await message.reply(result.text.slice(0, 1900)).catch(() => {});
+    return;
+  }
+
+  // !delivery — 納品チェックリスト
+  if (content.startsWith('!delivery')) {
+    const { buildDeliveryChecklist } = require('./utils/client-ops');
+    const args     = content.split(/\s+/).slice(1);
+    const sub      = args[0] || '';
+    if (sub !== 'check') {
+      await message.reply(
+        '**!delivery — 納品チェック**\n\n' +
+        '使い方: `!delivery check [プロジェクト名]`\n\n' +
+        '例: `!delivery check CSV自動集計ツール`'
+      ).catch(() => {});
+      return;
+    }
+    const projName = args.slice(1).join(' ') || '（プロジェクト名未指定）';
+    const result   = buildDeliveryChecklist(projName);
+    await message.reply(result.text.slice(0, 1900)).catch(() => {});
+    return;
+  }
+
+  // !close — 日次クロージング
+  if (content === '!close' || /^!close\b/.test(content)) {
+    const { buildClosingSummary } = require('./utils/client-ops');
+    const currentPid = projectManager.getCurrentProject(message.channelId);
+    const result = buildClosingSummary({
+      taskManager,
+      projectManager,
+      projectId: currentPid || undefined,
+    });
+    await message.reply(result.text.slice(0, 1900)).catch(() => {});
+    return;
+  }
+
+  // ─────────────────────────────────────────────────────
+
   // !finance — Finance Gate コマンド
   if (content.startsWith('!finance')) {
     const fArgs = content.split(/\s+/).slice(1);
