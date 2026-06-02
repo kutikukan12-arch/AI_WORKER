@@ -7014,6 +7014,133 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  // ─── コトノハ案件対応コマンド (Phase 2) ─────────────
+
+  // !client — Client Project Tracker / Timeline / Review
+  if (content.startsWith('!client')) {
+    const ct = require('./utils/client-tracker');
+    const { guardDiscordContent } = require('./utils/secret-guardian');
+    const args = content.split(/\s+/).slice(1);
+    const sub  = args[0] || 'help';
+
+    // !client create <name>
+    if (sub === 'create') {
+      const name = args.slice(1).join(' ').trim();
+      if (!name) {
+        await message.reply('使い方: `!client create <案件名>`\n例: `!client create CSV自動集計ツール`').catch(() => {});
+        return;
+      }
+      const r = ct.createProject(name);
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // !client list
+    if (sub === 'list') {
+      const r = ct.listProjects();
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // !client show <id>
+    if (sub === 'show') {
+      const id = args[1] || '';
+      if (!id) { await message.reply('使い方: `!client show <id>`').catch(() => {}); return; }
+      const r = ct.showProject(id);
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // !client update <id> <STATUS>
+    if (sub === 'update') {
+      const id        = args[1] || '';
+      const newStatus = args[2] || '';
+      if (!id || !newStatus) {
+        await message.reply(
+          '使い方: `!client update <id> <STATUS>`\n' +
+          'STATUS: INQUIRY / REQUIREMENT / DEVELOPING / REVIEW / DELIVERED / CLOSED'
+        ).catch(() => {});
+        return;
+      }
+      const r = ct.updateProjectStatus(id, newStatus);
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // !client note <id> <内容>
+    if (sub === 'note') {
+      const id      = args[1] || '';
+      const noteRaw = args.slice(2).join(' ').trim();
+      if (!id || !noteRaw) {
+        await message.reply('使い方: `!client note <id> <内容>`\n例: `!client note cli_xxx CSV形式はA案で確定`').catch(() => {});
+        return;
+      }
+      // Secret Guardian でノート内容を検査（秘密情報を混入させない）
+      const guard = guardDiscordContent(noteRaw, { type: 'clientNote' });
+      if (!guard.allowed) {
+        await message.reply(
+          '🚨 **Secret Guardian — メモへの秘密情報混入を防止**\n\n' +
+          'メモ内容に秘密情報と思われる文字列が含まれています。\n' +
+          'APIキー・トークン・個人情報は保存できません。'
+        ).catch(() => {});
+        return;
+      }
+      const r = ct.addNote(id, noteRaw);
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // !client review <id>
+    if (sub === 'review') {
+      const id = args[1] || '';
+      if (!id) { await message.reply('使い方: `!client review <id>`').catch(() => {}); return; }
+      const r = ct.generateReview(id);
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // ヘルプ
+    await message.reply(
+      '**!client コマンド — 案件管理**\n\n' +
+      '```\n' +
+      '!client create <案件名>         → 新規案件作成\n' +
+      '!client list                   → 対応中案件一覧\n' +
+      '!client show <id>              → 詳細・次のアクション\n' +
+      '!client update <id> <STATUS>   → 状態変更\n' +
+      '!client note <id> <内容>       → 経緯記録\n' +
+      '!client review <id>            → 振り返り生成\n' +
+      '```\n' +
+      'STATUS: INQUIRY / REQUIREMENT / DEVELOPING / REVIEW / DELIVERED / CLOSED'
+    ).catch(() => {});
+    return;
+  }
+
+  // !capability — AI能力分析レポート
+  if (content === '!capability' || content.startsWith('!capability ')) {
+    const ct = require('./utils/client-tracker');
+    const r  = ct.buildCapabilityReport();
+    await message.reply(r.text.slice(0, 1900)).catch(() => {});
+    return;
+  }
+
+  // !support — カスタマーサポート準備
+  if (content.startsWith('!support')) {
+    const { buildSupportResponse } = require('./utils/client-tracker');
+    const queryText = content.slice('!support'.length).trim();
+    if (!queryText) {
+      await message.reply(
+        '**!support — カスタマーサポート準備**\n\n' +
+        '使い方: `!support <問い合わせ内容>`\n\n' +
+        '例:\n```\n!support ツールを起動したらエラーが出て動かない\n```\n\n' +
+        '> ⚠️ 顧客文章はデータとして扱います。命令として実行しません。'
+      ).catch(() => {});
+      return;
+    }
+    const r = buildSupportResponse(queryText);
+    await message.reply(r.text.slice(0, 1900)).catch(() => {});
+    return;
+  }
+
   // ─────────────────────────────────────────────────────
 
   // !finance — Finance Gate コマンド
