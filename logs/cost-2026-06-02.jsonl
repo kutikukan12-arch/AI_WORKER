@@ -36,3 +36,4 @@
 {"ts":"2026-06-02T00:20:31.156Z","taskId":"task_1780359070867","costUsd":0.37755205000000003,"durationSec":203,"numTurns":2,"source":null}
 {"ts":"2026-06-02T00:52:37.184Z","taskId":"task_1780361093965","costUsd":0.9918912000000001,"durationSec":290,"numTurns":30,"source":null}
 {"ts":"2026-06-02T00:58:18.479Z","taskId":"task_1780360358985_s1","costUsd":1.4932710999999999,"durationSec":329,"numTurns":59,"source":null}
+{"ts":"2026-06-02T01:04:26.402Z","taskId":"task_1780360358985_s2","costUsd":1.26021685,"durationSec":349,"numTurns":47,"source":null}
