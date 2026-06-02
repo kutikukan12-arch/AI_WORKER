@@ -1,0 +1,833 @@
+{
+  "date": "2026-06-03",
+  "events": [
+    {
+      "ts": "2026-06-02T15:23:15.666Z",
+      "repo": "/test/repo",
+      "count": 1,
+      "findings": [
+        {
+          "file": "bot/config.js",
+          "line": 3,
+          "name": "OpenAI API Key",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T15:24:33.589Z",
+      "repo": ".",
+      "count": 1,
+      "findings": [
+        {
+          "file": "_sg_realtest.tmp.js",
+          "line": 1,
+          "name": "Discord Bot Token",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T15:38:15.334Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:test",
+          "line": 1,
+          "name": "GitHub Personal Access Token (fine-grained)",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T15:38:15.335Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:test",
+          "line": 1,
+          "name": "OpenAI API Key",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T15:38:15.335Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:test",
+          "line": 1,
+          "name": "Discord Bot Token",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T15:38:15.336Z",
+      "repo": "discord",
+      "count": 2,
+      "findings": [
+        {
+          "file": "discord:embed",
+          "line": 2,
+          "name": "GitHub Personal Access Token (fine-grained)",
+          "severity": "CRITICAL"
+        },
+        {
+          "file": "discord:embed",
+          "line": 2,
+          "name": "Generic Secret Assignment",
+          "severity": "HIGH"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T15:38:15.336Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:ceoReport",
+          "line": 1,
+          "name": "GitHub Personal Access Token (fine-grained)",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T15:38:15.337Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:humanMention",
+          "line": 1,
+          "name": "Discord Bot Token",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T15:38:48.426Z",
+      "repo": "/test/repo",
+      "count": 1,
+      "findings": [
+        {
+          "file": "bot/config.js",
+          "line": 3,
+          "name": "OpenAI API Key",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:08:57.165Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:test",
+          "line": 1,
+          "name": "GitHub Personal Access Token (fine-grained)",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:08:57.166Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:test",
+          "line": 1,
+          "name": "OpenAI API Key",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:08:57.167Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:test",
+          "line": 1,
+          "name": "Discord Bot Token",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:08:57.167Z",
+      "repo": "discord",
+      "count": 2,
+      "findings": [
+        {
+          "file": "discord:embed",
+          "line": 2,
+          "name": "GitHub Personal Access Token (fine-grained)",
+          "severity": "CRITICAL"
+        },
+        {
+          "file": "discord:embed",
+          "line": 2,
+          "name": "Generic Secret Assignment",
+          "severity": "HIGH"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:08:57.167Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:ceoReport",
+          "line": 1,
+          "name": "GitHub Personal Access Token (fine-grained)",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:08:57.168Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:humanMention",
+          "line": 1,
+          "name": "Discord Bot Token",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:10:33.900Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:test",
+          "line": 1,
+          "name": "GitHub Personal Access Token (fine-grained)",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:10:33.901Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:test",
+          "line": 1,
+          "name": "OpenAI API Key",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:10:33.901Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:test",
+          "line": 1,
+          "name": "Discord Bot Token",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:10:33.902Z",
+      "repo": "discord",
+      "count": 2,
+      "findings": [
+        {
+          "file": "discord:embed",
+          "line": 2,
+          "name": "GitHub Personal Access Token (fine-grained)",
+          "severity": "CRITICAL"
+        },
+        {
+          "file": "discord:embed",
+          "line": 2,
+          "name": "Generic Secret Assignment",
+          "severity": "HIGH"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:10:33.902Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:ceoReport",
+          "line": 1,
+          "name": "GitHub Personal Access Token (fine-grained)",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:10:33.903Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:humanMention",
+          "line": 1,
+          "name": "Discord Bot Token",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:10:34.177Z",
+      "repo": "/test/repo",
+      "count": 1,
+      "findings": [
+        {
+          "file": "bot/config.js",
+          "line": 3,
+          "name": "OpenAI API Key",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:12:59.444Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:test",
+          "line": 1,
+          "name": "GitHub Personal Access Token (fine-grained)",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:12:59.445Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:test",
+          "line": 1,
+          "name": "OpenAI API Key",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:12:59.445Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:test",
+          "line": 1,
+          "name": "Discord Bot Token",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:12:59.446Z",
+      "repo": "discord",
+      "count": 2,
+      "findings": [
+        {
+          "file": "discord:embed",
+          "line": 2,
+          "name": "GitHub Personal Access Token (fine-grained)",
+          "severity": "CRITICAL"
+        },
+        {
+          "file": "discord:embed",
+          "line": 2,
+          "name": "Generic Secret Assignment",
+          "severity": "HIGH"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:12:59.446Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:ceoReport",
+          "line": 1,
+          "name": "GitHub Personal Access Token (fine-grained)",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:12:59.447Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:humanMention",
+          "line": 1,
+          "name": "Discord Bot Token",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:12:59.624Z",
+      "repo": "/test/repo",
+      "count": 1,
+      "findings": [
+        {
+          "file": "bot/config.js",
+          "line": 3,
+          "name": "OpenAI API Key",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:13:28.289Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:test",
+          "line": 1,
+          "name": "GitHub Personal Access Token (fine-grained)",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:13:28.291Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:test",
+          "line": 1,
+          "name": "OpenAI API Key",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:13:28.291Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:test",
+          "line": 1,
+          "name": "Discord Bot Token",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:13:28.291Z",
+      "repo": "discord",
+      "count": 2,
+      "findings": [
+        {
+          "file": "discord:embed",
+          "line": 2,
+          "name": "GitHub Personal Access Token (fine-grained)",
+          "severity": "CRITICAL"
+        },
+        {
+          "file": "discord:embed",
+          "line": 2,
+          "name": "Generic Secret Assignment",
+          "severity": "HIGH"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:13:28.292Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:ceoReport",
+          "line": 1,
+          "name": "GitHub Personal Access Token (fine-grained)",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:13:28.292Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:humanMention",
+          "line": 1,
+          "name": "Discord Bot Token",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:15:25.658Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:test",
+          "line": 1,
+          "name": "GitHub Personal Access Token (fine-grained)",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:15:25.660Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:test",
+          "line": 1,
+          "name": "OpenAI API Key",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:15:25.660Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:test",
+          "line": 1,
+          "name": "Discord Bot Token",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:15:25.660Z",
+      "repo": "discord",
+      "count": 2,
+      "findings": [
+        {
+          "file": "discord:embed",
+          "line": 2,
+          "name": "GitHub Personal Access Token (fine-grained)",
+          "severity": "CRITICAL"
+        },
+        {
+          "file": "discord:embed",
+          "line": 2,
+          "name": "Generic Secret Assignment",
+          "severity": "HIGH"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:15:25.661Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:ceoReport",
+          "line": 1,
+          "name": "GitHub Personal Access Token (fine-grained)",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:15:25.661Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:humanMention",
+          "line": 1,
+          "name": "Discord Bot Token",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:19:32.909Z",
+      "repo": "/test/repo",
+      "count": 1,
+      "findings": [
+        {
+          "file": "bot/config.js",
+          "line": 3,
+          "name": "OpenAI API Key",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:19:32.992Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:test",
+          "line": 1,
+          "name": "GitHub Personal Access Token (fine-grained)",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:19:32.993Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:test",
+          "line": 1,
+          "name": "OpenAI API Key",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:19:32.993Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:test",
+          "line": 1,
+          "name": "Discord Bot Token",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:19:32.994Z",
+      "repo": "discord",
+      "count": 2,
+      "findings": [
+        {
+          "file": "discord:embed",
+          "line": 2,
+          "name": "GitHub Personal Access Token (fine-grained)",
+          "severity": "CRITICAL"
+        },
+        {
+          "file": "discord:embed",
+          "line": 2,
+          "name": "Generic Secret Assignment",
+          "severity": "HIGH"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:19:32.994Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:ceoReport",
+          "line": 1,
+          "name": "GitHub Personal Access Token (fine-grained)",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:19:32.995Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:humanMention",
+          "line": 1,
+          "name": "Discord Bot Token",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:20:04.458Z",
+      "repo": "/test/repo",
+      "count": 1,
+      "findings": [
+        {
+          "file": "bot/config.js",
+          "line": 3,
+          "name": "OpenAI API Key",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:20:23.520Z",
+      "repo": "/test/repo",
+      "count": 1,
+      "findings": [
+        {
+          "file": "bot/config.js",
+          "line": 3,
+          "name": "OpenAI API Key",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:21:13.402Z",
+      "repo": "/test/repo",
+      "count": 1,
+      "findings": [
+        {
+          "file": "bot/config.js",
+          "line": 3,
+          "name": "OpenAI API Key",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:24:40.736Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:test",
+          "line": 1,
+          "name": "GitHub Personal Access Token (fine-grained)",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:24:40.737Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:test",
+          "line": 1,
+          "name": "OpenAI API Key",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:24:40.737Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:test",
+          "line": 1,
+          "name": "Discord Bot Token",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:24:40.738Z",
+      "repo": "discord",
+      "count": 2,
+      "findings": [
+        {
+          "file": "discord:embed",
+          "line": 2,
+          "name": "GitHub Personal Access Token (fine-grained)",
+          "severity": "CRITICAL"
+        },
+        {
+          "file": "discord:embed",
+          "line": 2,
+          "name": "Generic Secret Assignment",
+          "severity": "HIGH"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:24:40.738Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:ceoReport",
+          "line": 1,
+          "name": "GitHub Personal Access Token (fine-grained)",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:24:40.739Z",
+      "repo": "discord",
+      "count": 1,
+      "findings": [
+        {
+          "file": "discord:humanMention",
+          "line": 1,
+          "name": "Discord Bot Token",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T16:24:40.815Z",
+      "repo": "/test/repo",
+      "count": 1,
+      "findings": [
+        {
+          "file": "bot/config.js",
+          "line": 3,
+          "name": "OpenAI API Key",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T17:18:18.265Z",
+      "repo": "/test/repo",
+      "count": 1,
+      "findings": [
+        {
+          "file": "bot/config.js",
+          "line": 3,
+          "name": "OpenAI API Key",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T17:28:37.503Z",
+      "repo": "/test/repo",
+      "count": 1,
+      "findings": [
+        {
+          "file": "bot/config.js",
+          "line": 3,
+          "name": "OpenAI API Key",
+          "severity": "CRITICAL"
+        }
+      ]
+    }
+  ]
+}

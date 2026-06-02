@@ -1,0 +1,44 @@
+{
+  "date": "2026-06-02",
+  "events": [
+    {
+      "ts": "2026-06-02T14:08:14.081Z",
+      "repo": "/test/repo",
+      "count": 1,
+      "findings": [
+        {
+          "file": "bot/config.js",
+          "line": 3,
+          "name": "OpenAI API Key",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T14:09:47.346Z",
+      "repo": "/test/repo",
+      "count": 1,
+      "findings": [
+        {
+          "file": "bot/config.js",
+          "line": 3,
+          "name": "OpenAI API Key",
+          "severity": "CRITICAL"
+        }
+      ]
+    },
+    {
+      "ts": "2026-06-02T14:11:28.611Z",
+      "repo": "/test/repo",
+      "count": 1,
+      "findings": [
+        {
+          "file": "bot/config.js",
+          "line": 3,
+          "name": "OpenAI API Key",
+          "severity": "CRITICAL"
+        }
+      ]
+    }
+  ]
+}
