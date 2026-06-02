@@ -197,6 +197,120 @@
     .danger-中 { color: #fbbf24; }
     .danger-低 { color: #34d399; }
     #no-approvals { color: #475569; font-size: 0.82rem; }
+
+    /* ── YouTube Predictor ─────────────────────────── */
+    .predict-wrap {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 700px) { .predict-wrap { grid-template-columns: 1fr; } }
+
+    .predict-form {
+      background: #1a1d27;
+      border: 1px solid #2d3148;
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .predict-form label {
+      display: block;
+      font-size: 0.73rem;
+      color: #64748b;
+      margin-bottom: 3px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .predict-form input, .predict-form select {
+      width: 100%;
+      background: #0f1117;
+      border: 1px solid #2d3148;
+      border-radius: 5px;
+      color: #e2e8f0;
+      padding: 6px 10px;
+      font-size: 0.82rem;
+      margin-bottom: 10px;
+      outline: none;
+    }
+    .predict-form input:focus, .predict-form select:focus { border-color: #a78bfa; }
+    .predict-form .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .predict-btn {
+      width: 100%;
+      background: #4c1d95;
+      border: none;
+      border-radius: 6px;
+      color: #e9d5ff;
+      font-size: 0.85rem;
+      font-weight: 700;
+      padding: 8px;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    .predict-btn:hover { background: #5b21b6; }
+    .predict-btn:disabled { background: #1e1b2e; color: #64748b; cursor: default; }
+
+    .predict-result {
+      background: #1a1d27;
+      border: 1px solid #2d3148;
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .predict-result .pr-empty { color: #475569; font-size: 0.82rem; }
+    .predict-score {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .predict-score .score-circle {
+      width: 56px; height: 56px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.1rem; font-weight: 800;
+      flex-shrink: 0;
+    }
+    .circle-hit  { background: #064e3b; color: #34d399; }
+    .circle-miss { background: #7f1d1d; color: #f87171; }
+    .circle-unknown { background: #1e293b; color: #94a3b8; }
+    .predict-score .score-meta .label-text { font-size: 1rem; font-weight: 700; }
+    .predict-score .score-meta .conf-text { font-size: 0.72rem; color: #64748b; margin-top: 2px; }
+
+    .view-range {
+      background: #0f1117;
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin-bottom: 12px;
+    }
+    .view-range .vr-label { font-size: 0.68rem; color: #64748b; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
+    .vr-row { display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; margin-bottom: 3px; }
+    .vr-row .vr-k { color: #64748b; }
+    .vr-row .vr-v { font-weight: 600; color: #e2e8f0; }
+    .vr-bar-wrap { background: #1e2130; border-radius: 3px; height: 4px; margin: 6px 0 8px; overflow: hidden; }
+    .vr-bar { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #4c1d95, #a78bfa); }
+
+    .reason-list { display: flex; flex-direction: column; gap: 5px; }
+    .reason-item {
+      display: flex; align-items: flex-start; gap: 8px;
+      font-size: 0.75rem; color: #94a3b8;
+    }
+    .reason-item .ri-name { color: #cbd5e1; font-weight: 600; min-width: 80px; }
+    .reason-item .ri-bar-wrap { flex: 1; background: #0f1117; border-radius: 2px; height: 6px; margin-top: 4px; overflow: hidden; }
+    .ri-bar { height: 100%; border-radius: 2px; }
+    .ri-bar.positive { background: #34d399; }
+    .ri-bar.negative { background: #f87171; }
+    .ri-bar.neutral  { background: #94a3b8; }
+
+    .model-status-bar {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 0.73rem; color: #64748b;
+      margin-bottom: 12px;
+      padding: 6px 10px;
+      background: #1a1d27;
+      border: 1px solid #2d3148;
+      border-radius: 6px;
+    }
+    .model-status-bar .ms-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .ms-dot.trained   { background: #34d399; }
+    .ms-dot.untrained { background: #64748b; }
   </style>
 </head>
 <body>
@@ -222,6 +336,47 @@
     <div class="stat-card green"> <div class="label">本日コスト</div><div class="value" id="s-cost-today" style="font-size:1.1rem;">—</div></div>
     <div class="stat-card purple"><div class="label">今月コスト</div><div class="value" id="s-cost-month" style="font-size:1.1rem;">—</div></div>
   </div>
+
+  <!-- YouTube Predictor -->
+  <section>
+    <h2>🎯 YouTube 視聴予測</h2>
+    <div class="model-status-bar" id="model-status-bar">
+      <span class="ms-dot untrained" id="ms-dot"></span>
+      <span id="ms-text">モデル読み込み中...</span>
+    </div>
+    <div class="predict-wrap">
+      <div class="predict-form">
+        <label>タイトル ★必須</label>
+        <input type="text" id="p-title" placeholder="【衝撃】AIが仕事を奪う未来" />
+        <div class="form-row">
+          <div>
+            <label>登録者数</label>
+            <input type="number" id="p-subs" placeholder="10000" min="0" />
+          </div>
+          <div>
+            <label>視聴数（投稿前:0）</label>
+            <input type="number" id="p-views" placeholder="0" min="0" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div>
+            <label>いいね数</label>
+            <input type="number" id="p-likes" placeholder="0" min="0" />
+          </div>
+          <div>
+            <label>動画尺（秒）</label>
+            <input type="number" id="p-duration" placeholder="600" min="0" />
+          </div>
+        </div>
+        <label>タグ（カンマ区切り）</label>
+        <input type="text" id="p-tags" placeholder="AI,技術,解説" />
+        <button class="predict-btn" id="predict-btn" onclick="runPredict()">予測する</button>
+      </div>
+      <div class="predict-result" id="predict-result">
+        <p class="pr-empty">左フォームに動画情報を入力して「予測する」を押してください。</p>
+      </div>
+    </div>
+  </section>
 
   <!-- Finance -->
   <section>
@@ -565,6 +720,136 @@
 
   loadAll();
   setInterval(loadAll, 30000);
+
+  // ─── YouTube Predictor ───────────────────────────────────────
+
+  async function loadModelStatus() {
+    try {
+      const m = await fetchJson('/api/model');
+      const dot  = document.getElementById('ms-dot');
+      const text = document.getElementById('ms-text');
+      if (m.trained) {
+        dot.className = 'ms-dot trained';
+        text.textContent =
+          `モデル学習済み — ${m.sampleCount}件 (hit:${m.hitCount} miss:${m.missCount})` +
+          (m.trainDirectionalAcc != null ? ` 方向性正解率:${(m.trainDirectionalAcc * 100).toFixed(1)}%` : '') +
+          (m.trainedAt ? `  学習日:${new Date(m.trainedAt).toLocaleDateString('ja-JP')}` : '');
+      } else {
+        dot.className = 'ms-dot untrained';
+        text.textContent = m.error ? `モデル未学習（${m.error}）` : 'モデル未学習 — データ収集後に訓練が必要です';
+      }
+    } catch { /* silent */ }
+  }
+  loadModelStatus();
+
+  function fmtViews(n) {
+    if (n == null) return '—';
+    if (n >= 10000) return `${(n / 10000).toFixed(1)}万`;
+    return n.toLocaleString();
+  }
+
+  async function runPredict() {
+    const title    = document.getElementById('p-title').value.trim();
+    const subs     = parseInt(document.getElementById('p-subs').value)     || 0;
+    const views    = parseInt(document.getElementById('p-views').value)    || 0;
+    const likes    = parseInt(document.getElementById('p-likes').value)    || 0;
+    const duration = parseInt(document.getElementById('p-duration').value) || 0;
+    const tagsRaw  = document.getElementById('p-tags').value.trim();
+    const tags     = tagsRaw ? tagsRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+
+    if (!title) {
+      document.getElementById('predict-result').innerHTML =
+        '<p style="color:#f87171;font-size:.82rem;">タイトルは必須です。</p>';
+      return;
+    }
+
+    const btn = document.getElementById('predict-btn');
+    btn.disabled = true;
+    btn.textContent = '予測中...';
+
+    const video = { title, subscriberCount: subs, viewCount: views, likeCount: likes, duration, tags };
+    try {
+      const res  = await fetch('/api/predict', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(video),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      renderPredictResult(data.result, title);
+    } catch (e) {
+      document.getElementById('predict-result').innerHTML =
+        `<p style="color:#f87171;font-size:.82rem;">エラー: ${e.message}</p>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '予測する';
+    }
+  }
+
+  function renderPredictResult(r, title) {
+    const circleClass = r.label === 'hit' ? 'circle-hit' : r.label === 'miss' ? 'circle-miss' : 'circle-unknown';
+    const labelText   = r.label === 'hit' ? 'ヒット見込み' : r.label === 'miss' ? '伸び悩み傾向' : '判定困難';
+    const confText    = `信頼度: ${r.confidence.toUpperCase()}  |  ML: ${r.usedML ? `使用（${r.mlSamples}件）` : '未使用（ルールベース）'}`;
+
+    let viewRangeHtml = '';
+    if (r.viewRange) {
+      const { low, median, high } = r.viewRange;
+      const maxVal = high || 1;
+      const lowPct   = Math.round(low    / maxVal * 100);
+      const medPct   = Math.round(median / maxVal * 100);
+      viewRangeHtml = `
+        <div class="view-range">
+          <div class="vr-label">7日間視聴数 予測レンジ</div>
+          <div class="vr-row"><span class="vr-k">LOW</span><span class="vr-v">${fmtViews(low)}回</span></div>
+          <div class="vr-bar-wrap"><div class="vr-bar" style="width:${lowPct}%"></div></div>
+          <div class="vr-row"><span class="vr-k">MEDIAN</span><span class="vr-v">${fmtViews(median)}回</span></div>
+          <div class="vr-bar-wrap"><div class="vr-bar" style="width:${medPct}%"></div></div>
+          <div class="vr-row"><span class="vr-k">HIGH</span><span class="vr-v">${fmtViews(high)}回</span></div>
+          <div class="vr-bar-wrap"><div class="vr-bar" style="width:100%"></div></div>
+          ${r.benchmark ? `<div style="font-size:.7rem;color:#64748b;margin-top:4px;">ジャンル中央値 ≈ ${fmtViews(r.benchmark.genreMedian)}回</div>` : ''}
+        </div>`;
+    }
+
+    let reasonsHtml = '';
+    if (r.reasons && r.reasons.length) {
+      reasonsHtml = `
+        <div style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">主要因子 Top ${r.reasons.length}</div>
+        <div class="reason-list">
+          ${r.reasons.map(f => {
+            const pct   = Math.round((f.score ?? 0.5) * 100);
+            const diff  = pct - 50;
+            const cls   = diff > 3 ? 'positive' : diff < -3 ? 'negative' : 'neutral';
+            const esc   = (f.detail || f.name || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            const nameE = (f.name || '').replace(/</g,'&lt;');
+            return `
+              <div class="reason-item">
+                <span class="ri-name">${nameE}</span>
+                <div style="flex:1;">
+                  <div class="ri-bar-wrap"><div class="ri-bar ${cls}" style="width:${pct}%"></div></div>
+                  <div style="font-size:.7rem;color:#64748b;margin-top:2px;">${esc}</div>
+                </div>
+                <span style="font-size:.7rem;color:#94a3b8;min-width:32px;text-align:right;">${pct}%</span>
+              </div>`;
+          }).join('')}
+        </div>`;
+    }
+
+    const titleEsc = title.replace(/</g,'&lt;').slice(0, 50);
+
+    document.getElementById('predict-result').innerHTML = `
+      <div style="font-size:.72rem;color:#475569;margin-bottom:10px;word-break:break-all;">${titleEsc}</div>
+      <div class="predict-score">
+        <div class="score-circle ${circleClass}">${r.probability}%</div>
+        <div class="score-meta">
+          <div class="label-text" style="color:${r.label==='hit'?'#34d399':r.label==='miss'?'#f87171':'#94a3b8'}">${labelText}</div>
+          <div class="conf-text">${confText}</div>
+          ${r.buzzRatio != null ? `<div class="conf-text">Buzz Ratio: ${r.buzzRatio.toFixed(2)}</div>` : ''}
+        </div>
+      </div>
+      ${viewRangeHtml}
+      ${reasonsHtml}
+    `;
+  }
 </script>
 </body>
 </html>

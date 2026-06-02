@@ -9,6 +9,14 @@ const DATA_DIR  = path.join(ROOT, 'data');
 const LOG_DIR   = path.join(ROOT, 'logs');
 const HTML_FILE = path.join(ROOT, 'public', 'dashboard.html');
 
+let _youtubePredictor = null;
+function _getPredictor() {
+  if (!_youtubePredictor) {
+    try { _youtubePredictor = require('./youtube-predictor'); } catch { /* optional */ }
+  }
+  return _youtubePredictor;
+}
+
 const DASHBOARD_PORT = process.env.DASHBOARD_PORT ? parseInt(process.env.DASHBOARD_PORT) : 3000;
 
 function readJson(file) {
@@ -114,6 +122,42 @@ function apiCost(_req, res) {
   res.end(JSON.stringify({ today, monthly, status, thresholds: { warnDaily, alertDaily } }));
 }
 
+function apiModelStatus(_req, res) {
+  const p = _getPredictor();
+  res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+  if (!p) { res.end(JSON.stringify({ trained: false, sampleCount: 0, error: 'module unavailable' })); return; }
+  try { res.end(JSON.stringify(p.getModelStatus())); }
+  catch (e) { res.end(JSON.stringify({ trained: false, sampleCount: 0, error: e.message })); }
+}
+
+function apiPredict(req, res) {
+  let body = '';
+  req.on('data', chunk => { body += chunk.toString(); });
+  req.on('end', () => {
+    const p = _getPredictor();
+    if (!p) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'youtube-predictor module unavailable' }));
+      return;
+    }
+    try {
+      const video = JSON.parse(body || '{}');
+      if (!video.title) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'title is required' }));
+        return;
+      }
+      const result  = p.predict(video);
+      const summary = p.buildSummary(video, result);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ result, summary }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+  });
+}
+
 function serveHtml(_req, res) {
   try {
     const html = fs.readFileSync(HTML_FILE, 'utf8');
@@ -131,6 +175,7 @@ const ROUTES = {
   '/api/projects':  apiProjects,
   '/api/approvals': apiApprovals,
   '/api/cost':      apiCost,
+  '/api/model':     apiModelStatus,
 };
 
 const APPROVAL_ACTION_RE = /^\/api\/approvals\/[^/]+\/(approve|deny|pause|resume)$/;
@@ -139,7 +184,9 @@ function startDashboard(logger) {
   const server = http.createServer((req, res) => {
     const url = req.url.split('?')[0];
     res.setHeader('Access-Control-Allow-Origin', '*');
-    if (req.method === 'POST' && APPROVAL_ACTION_RE.test(url)) {
+    if (req.method === 'POST' && url === '/api/predict') {
+      apiPredict(req, res);
+    } else if (req.method === 'POST' && APPROVAL_ACTION_RE.test(url)) {
       apiApprovalAction(req, res);
     } else if (ROUTES[url]) {
       ROUTES[url](req, res);
