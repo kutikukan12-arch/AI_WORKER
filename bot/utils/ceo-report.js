@@ -1,6 +1,8 @@
 'use strict';
 // =====================================================
 // ceo-report.js — CEO Report 生成ユーティリティ
+// 拡張ロール（UX/Finance/Sales/Support/Legal/Security/CostOptimizer）は
+// ai-company-roles.js で管理し、Part4 として出力する。
 //
 // Project Runner 完了後、非エンジニア向けに
 // 「今何が終わったか・次何が必要か・外部相談用コピー文」
@@ -15,6 +17,8 @@
 //   NEED_HUMAN_DECISION  — 人間の判断が必要
 //   BLOCKED              — 問題で停止中
 // =====================================================
+
+const companyRoles = require('./ai-company-roles');
 
 const EXEC_STATUS = {
   RELEASE_READY:       'RELEASE_READY',
@@ -277,6 +281,8 @@ function generateCeoReport(projectId, runStats, quality, boardStatus, taskManage
   const nextActions = buildNextActions(execStatus, runStats, taskSummary, projectId);
   const gptCopy     = buildGptCopyText(projectId, execStatus, runStats, quality, taskSummary, roles);
 
+  const companyEvaluations = companyRoles.evaluateAll({ execStatus, runStats, quality, taskSummary });
+
   return {
     projectId,
     execStatus,
@@ -286,6 +292,7 @@ function generateCeoReport(projectId, runStats, quality, boardStatus, taskManage
     quality:    { level: quality.level, score: quality.score },
     taskSummary,
     roles,
+    companyEvaluations,
     nextActions,
     gptCopy,
     generatedAt: new Date().toISOString(),
@@ -338,6 +345,19 @@ function formatCeoReportPart3(report) {
   return (
     `**💬 GPT相談用コピー文（そのまま貼り付け可）:**\n` +
     `\`\`\`\n${report.gptCopy}\n\`\`\``
+  );
+}
+
+// ─────────────────────────────────────────────────────
+// formatCeoReportPart4 — 拡張ロール評価（UX/Finance/Sales/Support/Legal/Security/CostOptimizer）
+// ─────────────────────────────────────────────────────
+function formatCeoReportPart4(report) {
+  const evaluations = report.companyEvaluations;
+  if (!evaluations) return '（拡張ロール評価なし）';
+
+  return (
+    `**🏢 AI Board 役割別評価:**\n\n` +
+    companyRoles.formatCompanyRolesReport(evaluations)
   );
 }
 
@@ -408,6 +428,7 @@ module.exports = {
   formatCeoReportPart1,
   formatCeoReportPart2,
   formatCeoReportPart3,
+  formatCeoReportPart4,
   formatDailyDigest,
   // テスト用内部関数
   _boardStatusToExecStatus: boardStatusToExecStatus,
