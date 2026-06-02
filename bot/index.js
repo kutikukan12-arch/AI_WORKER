@@ -6807,11 +6807,15 @@ client.on('messageCreate', async (message) => {
           projectManager,
           projectId: currentPid || undefined,
         });
-        // Daily Closing Report ヘッダーを付けて送信
+        // Daily Closing Report ヘッダー + 更新ログを付けて送信
+        const { buildChangesSection } = require('./utils/daily-changes');
+        const changesSection = buildChangesSection();
         const reportText =
           `📅 **Daily Closing Report**\n` +
           `（「${content.slice(0, 20)}」を検知 → 自動生成）\n\n` +
-          result.text;
+          result.text + '\n\n' +
+          '━━━━━━━━━━━━━━━━\n\n' +
+          changesSection;
         await message.channel.send(reportText.slice(0, 1900)).catch(() => {});
         logger.info(`[DailyClose] 送信: ch:${message.channelId} | trigger:"${content.slice(0, 20)}"`);
       } catch (closeErr) {
@@ -7052,16 +7056,77 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // !close — 日次クロージング
+  // !change — 日次更新ログ記録
+  if (content.startsWith('!change')) {
+    const dc   = require('./utils/daily-changes');
+    const args = content.split(/\s+/).slice(1);
+    const sub  = args[0] || 'help';
+
+    // !change list
+    if (sub === 'list') {
+      const r = dc.listChanges();
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // !change clear — Owner のみ
+    if (sub === 'clear') {
+      if (DISCORD_OWNER_ID && message.author.id !== DISCORD_OWNER_ID) {
+        await message.reply('🚫 `!change clear` は Owner のみ実行できます。').catch(() => {});
+        return;
+      }
+      const r = dc.clearChanges();
+      await message.reply(r.text).catch(() => {});
+      return;
+    }
+
+    // !change <type> <内容>
+    if (dc.VALID_TYPES.includes(sub)) {
+      const changeText = args.slice(1).join(' ').trim();
+      if (!changeText) {
+        await message.reply(
+          `使い方: \`!change ${sub} <内容>\`\n例: \`!change ${sub} 詳細をここに記入\``
+        ).catch(() => {});
+        return;
+      }
+      const r = dc.addChange(sub, changeText);
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // ヘルプ
+    await message.reply(
+      '**!change コマンド — 日次更新ログ**\n\n' +
+      '```\n' +
+      '!change command <内容>   → コマンド追加・変更を記録\n' +
+      '!change rule <内容>      → ルール変更を記録\n' +
+      '!change ops <内容>       → 運用変更を記録\n' +
+      '!change category <内容>  → カテゴリ変更を記録\n' +
+      '!change channel <内容>   → チャンネル変更を記録\n' +
+      '!change list             → 今日の更新一覧\n' +
+      '!change clear            → 今日のログをクリア（Owner）\n' +
+      '```'
+    ).catch(() => {});
+    return;
+  }
+
+  // !close — 日次クロージング（更新ログ付き）
   if (content === '!close' || /^!close\b/.test(content)) {
     const { buildClosingSummary } = require('./utils/client-ops');
+    const { buildChangesSection } = require('./utils/daily-changes');
     const currentPid = projectManager.getCurrentProject(message.channelId);
-    const result = buildClosingSummary({
+    const result     = buildClosingSummary({
       taskManager,
       projectManager,
       projectId: currentPid || undefined,
     });
-    await message.reply(result.text.slice(0, 1900)).catch(() => {});
+    const changesSection = buildChangesSection();
+    const fullText =
+      `📅 **Daily Closing Report**\n\n` +
+      result.text + '\n\n' +
+      '━━━━━━━━━━━━━━━━\n\n' +
+      changesSection;
+    await message.reply(fullText.slice(0, 1900)).catch(() => {});
     return;
   }
 
