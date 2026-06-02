@@ -179,37 +179,26 @@ function classifyJob(title = '', description = '') {
     level = RISK_LEVEL.HIGH;
     primaryReason = highReasons[0];
   } else if (highScore >= 1 || mediumScore >= 3) {
-    // HIGH シグナルが1件でも weight>=3 なら HIGH。weight<3 の単独はMEDIUM。
-    // LOW シグナルがあればさらに1段階下げる。
-    const hasHeavyHigh = highReasons.some((_, i) => {
-      const sig = HIGH_SIGNALS.find(s => s.reason === highReasons[i]);
+    // HIGH シグナル weight>=3 かつ LOW 要素なし → HIGH
+    // それ以外（LOW あり・軽量 HIGH・MEDIUM 多量）→ MEDIUM
+    const hasHeavyHigh = highReasons.some(reason => {
+      const sig = HIGH_SIGNALS.find(s => s.reason === reason);
       return sig && sig.weight >= 3;
     });
     if (hasHeavyHigh && lowLabels.length === 0) {
-      level = RISK_LEVEL.HIGH;
+      level         = RISK_LEVEL.HIGH;
       primaryReason = highReasons[0];
-    } else if (highScore >= 1 && lowLabels.length === 0 && highReasons.length === 0) {
-      // mediumScore>=3 のケース
-      level = RISK_LEVEL.MEDIUM;
-      primaryReason = mediumReasons[0];
-    } else if (highScore >= 1 && lowLabels.length > 0) {
-      // HIGH シグナルありだが LOW 要素も → MEDIUM
-      level = RISK_LEVEL.MEDIUM;
-      primaryReason = highReasons[0];
-    } else if (mediumScore >= 3) {
-      level = RISK_LEVEL.MEDIUM;
-      primaryReason = mediumReasons[0];
     } else {
-      level = RISK_LEVEL.MEDIUM;
+      level         = RISK_LEVEL.MEDIUM;
       primaryReason = highReasons[0] || mediumReasons[0] || '確認が必要';
     }
   } else if (mediumScore >= 1) {
-    // MEDIUM シグナルが1つでも、LOW シグナルが存在すれば LOW に下げる
-    if (lowLabels.length > 0 && mediumScore <= 1) {
-      level = RISK_LEVEL.LOW;
+    // MEDIUM シグナル 1つ + LOW あり → LOW に下げる
+    if (lowLabels.length > 0 && mediumScore === 1) {
+      level         = RISK_LEVEL.LOW;
       primaryReason = lowLabels[0];
     } else {
-      level = RISK_LEVEL.MEDIUM;
+      level         = RISK_LEVEL.MEDIUM;
       primaryReason = mediumReasons[0];
     }
   } else {

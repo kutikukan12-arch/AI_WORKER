@@ -6881,6 +6881,50 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  // !job — 案件リスク分類（ブロックしない助言コマンド）
+  if (content.startsWith('!job')) {
+    const { classifyJob, formatJobRiskReport } = require('./utils/job-risk-classifier');
+    const jobInput = content.slice('!job'.length).trim();
+
+    // ヘルプ
+    if (!jobInput || jobInput === 'help') {
+      await message.reply(
+        '**!job コマンド — ココナラ案件リスク分類**\n\n' +
+        '```\n!job <案件タイトル> | <案件説明>\n```\n\n' +
+        '**例:**\n' +
+        '```\n!job Stripe決済実装 | ECサイトにクレジットカード決済を追加したい\n```\n' +
+        '```\n!job ExcelマクロでCSV自動集計 | 月次売上データをVBAで整形する\n```\n\n' +
+        '**分類レベル:**\n' +
+        '🟢 LOW — 受けてOK\n' +
+        '🟡 MEDIUM — 質問してから判断\n' +
+        '🟠 HIGH — 慎重に検討・契約確認必須\n' +
+        '🔴 REJECT — 断ることを推奨'
+      ).catch(() => {});
+      return;
+    }
+
+    // タイトルと説明を `|` で分割
+    const sepIdx  = jobInput.indexOf('|');
+    const title   = sepIdx >= 0 ? jobInput.slice(0, sepIdx).trim() : jobInput.trim();
+    const desc    = sepIdx >= 0 ? jobInput.slice(sepIdx + 1).trim()  : '';
+
+    if (!title) {
+      await message.reply(
+        '❌ タイトルを入力してください。\n\n' +
+        '使い方: `!job <タイトル> | <説明>`\n' +
+        '例: `!job Webスクレイピングツール | 競合価格を毎日自動収集`'
+      ).catch(() => {});
+      return;
+    }
+
+    const result  = classifyJob(title, desc);
+    const report  = formatJobRiskReport(title, desc, result);
+
+    await message.reply(report.slice(0, 1900)).catch(() => {});
+    logger.info(`[JobRisk] title="${title.slice(0, 40)}" → ${result.level}`);
+    return;
+  }
+
   // !finance — Finance Gate コマンド
   if (content.startsWith('!finance')) {
     const fArgs = content.split(/\s+/).slice(1);
