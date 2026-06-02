@@ -1,11 +1,16 @@
 'use strict';
 // =====================================================
-// ceo-commands.js — CEO Command Layer Phase 1
-// 目的: AI_W の調査・設計
+// ceo-commands.js — CEO Command Layer Phase 2
+// 目的: AI_W の調査・設計・実装
 //
+// Phase 1 (調査・設計):
 // !ceo status         — 全体状況サマリー（非エンジニア向け）
 // !ceo investigate    — 調査: 現在の問題・ボトルネック分析
 // !ceo design         — 設計: 次に実装すべき機能の提案
+//
+// Phase 2 (実装):
+// !ceo report         — CEO レポート全文（判定・ロール評価・推奨アクション）
+// !ceo approve        — 承認待ちタスク一覧
 // =====================================================
 
 // ─────────────────────────────────────────────────────
@@ -193,17 +198,91 @@ function buildCeoDesign(projectId, taskManager, projectManager) {
 }
 
 // ─────────────────────────────────────────────────────
+// buildCeoReport(projectId, taskManager, qualityGate, projectManager)
+//
+// CEO レポート全文（Phase 2 実装コマンド）。
+// ai-board-report → ceo-report の順にレポートを生成し、
+// Discord 送信用テキストの配列（Part1, Part2, Part4）を返す。
+// ─────────────────────────────────────────────────────
+function buildCeoReport(projectId, taskManager, qualityGate, projectManager) {
+  const aiBoardReport = require('./ai-board-report');
+  const ceoReport     = require('./ceo-report');
+  const S = taskManager.STATES;
+
+  let tasks = [];
+  try { tasks = taskManager.listTasks() || []; } catch {}
+
+  const projTasks = projectId
+    ? tasks.filter(t => t.projectId === projectId)
+    : tasks;
+
+  const runStats = {
+    tasksDone:   projTasks.filter(t => t.state === S.DONE).length,
+    tasksFailed: projTasks.filter(t => t.state === S.ON_HOLD).length,
+    stopReason:  '',
+    yellowCount: 0,
+  };
+
+  let quality = { level: 'GREEN', score: null, redTriggers: [] };
+  try { quality = qualityGate.assessQuality(projectId || null); } catch {}
+
+  let boardStatus = 'NEEDS_REFINEMENT';
+  try {
+    const br = aiBoardReport.generateBoardReport(
+      projectId || 'all', runStats, quality, taskManager, projectManager
+    );
+    boardStatus = br.status;
+  } catch {}
+
+  try {
+    const report = ceoReport.generateCeoReport(
+      projectId || 'all', runStats, quality, boardStatus, taskManager, projectManager
+    );
+    const parts = [
+      ceoReport.formatCeoReportPart1(report),
+      ceoReport.formatCeoReportPart2(report),
+    ];
+    if (report.companyEvaluations) {
+      parts.push(ceoReport.formatCeoReportPart4(report));
+    }
+    return parts.filter(Boolean).map(p => p.slice(0, 1900));
+  } catch (err) {
+    return [`⚠️ CEO Report 生成エラー: ${err.message}`];
+  }
+}
+
+// ─────────────────────────────────────────────────────
+// buildCeoApproveList(approvalManager)
+//
+// 承認待ちタスク一覧を返す（Phase 2 実装コマンド）。
+// !approve と同じ内容を CEO 視点で表示する。
+// ─────────────────────────────────────────────────────
+function buildCeoApproveList(approvalManager) {
+  try {
+    return approvalManager.formatPendingList();
+  } catch (err) {
+    return `⚠️ 承認一覧の取得エラー: ${err.message}`;
+  }
+}
+
+// ─────────────────────────────────────────────────────
 // buildCeoHelp() — !ceo コマンドのヘルプテキスト
 // ─────────────────────────────────────────────────────
 function buildCeoHelp() {
   return [
-    '**👑 !ceo コマンド一覧（CEO Command Layer Phase 1）**',
+    '**👑 !ceo コマンド一覧（CEO Command Layer Phase 2）**',
     '```',
+    '【Phase 1: 調査・設計】',
     '!ceo status                  → 全体状況サマリー（非エンジニア向け）',
     '!ceo investigate             → 調査: 全プロジェクトの問題・ボトルネック分析',
     '!ceo investigate <projectId> → 調査: 指定プロジェクトに絞った分析',
     '!ceo design                  → 設計: 次に実装すべき機能の提案',
     '!ceo design <projectId>      → 設計: 指定プロジェクトの次ステップ提案',
+    '',
+    '【Phase 2: 実装】',
+    '!ceo report                  → CEO レポート全文（判定・ロール評価・推奨アクション）',
+    '!ceo report <projectId>      → 指定プロジェクトの CEO レポート',
+    '!ceo approve                 → 承認待ちタスク一覧（!approve と同等）',
     '```',
     '`!ceo` だけで `!ceo status` と同じです。',
   ].join('\n');
@@ -216,5 +295,7 @@ module.exports = {
   buildCeoStatus,
   buildCeoInvestigate,
   buildCeoDesign,
+  buildCeoReport,
+  buildCeoApproveList,
   buildCeoHelp,
 };
