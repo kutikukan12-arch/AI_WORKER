@@ -143,6 +143,18 @@ const pendingExecutions = new Map();
 // key: projectId, value: RunContext（実行中状態を保持）
 const activeRuns = new Map();
 
+// ─── Daily Closing 連投防止 ───────────────────────────
+// key: `${channelId}:${YYYY-MM-DD}` → 最後に送信した unix ms
+// 同日同チャンネルで 30 分以内の重複送信を防ぐ
+const _dailyCloseLastSent = new Map();
+const DAILY_CLOSE_COOLDOWN_MS = 30 * 60 * 1000; // 30 分
+
+// 自然文トリガー（含む文言）
+const DAILY_CLOSE_TRIGGERS = [
+  '作業終了', '作業終わり', '今日はここまで',
+  '退勤', '終了します', '今日終わり',
+];
+
 // ─────────────────────────────────────────────────────
 // createRunContext(projectId, message) — Step 1
 //
@@ -6771,6 +6783,45 @@ client.on('messageCreate', async (message) => {
   }
 
   const content = message.content.trim();
+
+  // ─── Daily Closing 自然文トリガー ───────────────────
+  // Bot 自身の投稿には反応しない（messageCreate で author.bot=false は保証済み）
+  // 「作業終了」「退勤」等のトリガーワードを含むメッセージを検知する
+  if (DAILY_CLOSE_TRIGGERS.some(trigger => content.includes(trigger))) {
+    // 30 分以内の同日同チャンネル連投を防止
+    const today   = new Date().toISOString().slice(0, 10);
+    const coolKey = `${message.channelId}:${today}`;
+    const lastMs  = _dailyCloseLastSent.get(coolKey) || 0;
+    const elapsed = Date.now() - lastMs;
+
+    if (elapsed < DAILY_CLOSE_COOLDOWN_MS) {
+      const remaining = Math.ceil((DAILY_CLOSE_COOLDOWN_MS - elapsed) / 60000);
+      logger.debug(`[DailyClose] クールダウン中: 残り約${remaining}分 | ch:${message.channelId}`);
+    } else {
+      _dailyCloseLastSent.set(coolKey, Date.now());
+      try {
+        const { buildClosingSummary } = require('./utils/client-ops');
+        const currentPid = projectManager.getCurrentProject(message.channelId);
+        const result     = buildClosingSummary({
+          taskManager,
+          projectManager,
+          projectId: currentPid || undefined,
+        });
+        // Daily Closing Report ヘッダーを付けて送信
+        const reportText =
+          `📅 **Daily Closing Report**\n` +
+          `（「${content.slice(0, 20)}」を検知 → 自動生成）\n\n` +
+          result.text;
+        await message.channel.send(reportText.slice(0, 1900)).catch(() => {});
+        logger.info(`[DailyClose] 送信: ch:${message.channelId} | trigger:"${content.slice(0, 20)}"`);
+      } catch (closeErr) {
+        logger.warn(`[DailyClose] 生成エラー: ${closeErr.message}`);
+      }
+    }
+    // トリガーワードがあっても !コマンドの可能性があるためフォールスルー禁止
+    // （「今日はここまで !task list」のような複合メッセージは close のみ実行）
+    return;
+  }
 
   // ── コマンドルーティング ──
   if (content === '!help') {
