@@ -25,6 +25,7 @@ const AUTO_POLICY = {
   AI_REVIEW_REQUIRED:       'AI_REVIEW_REQUIRED',
   HUMAN_APPROVAL_REQUIRED:  'HUMAN_APPROVAL_REQUIRED',
   BLOCKED:                  'BLOCKED',
+  LARGE_TASK:               'LARGE_TASK',
 };
 
 // ─────────────────────────────────────────────────────
@@ -143,9 +144,9 @@ function classifyTask(task, context = {}) {
     return AUTO_POLICY.BLOCKED;
   }
 
-  // LARGE タスクは自動実行禁止
+  // LARGE タスクはサイズ超過停止（セキュリティ停止とは別扱い）
   if (taskSize === 'LARGE') {
-    return AUTO_POLICY.BLOCKED;
+    return AUTO_POLICY.LARGE_TASK;
   }
 
   // 破壊的コマンドパターン
@@ -251,7 +252,9 @@ function describePolicy(policy) {
     case AUTO_POLICY.HUMAN_APPROVAL_REQUIRED:
       return '⚠️ HUMAN_APPROVAL_REQUIRED — 人間の承認が必要';
     case AUTO_POLICY.BLOCKED:
-      return '🚫 BLOCKED — 自動実行禁止';
+      return '🚫 SECURITY BLOCKED — 安全上停止';
+    case AUTO_POLICY.LARGE_TASK:
+      return '🔴 LARGE — タスクが大きすぎます';
     default:
       return `❓ UNKNOWN: ${policy}`;
   }

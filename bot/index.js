@@ -1074,6 +1074,7 @@ function gatherRunnerPreview(projectId) {
         case autoPolicy.AUTO_POLICY.AI_REVIEW_REQUIRED:       aiReview++;       break;
         case autoPolicy.AUTO_POLICY.HUMAN_APPROVAL_REQUIRED:  needsApproval++;  break;
         case autoPolicy.AUTO_POLICY.BLOCKED:                  blocked++;        break;
+        case autoPolicy.AUTO_POLICY.LARGE_TASK:               break; // largeCount は size チェックで計上
         default:                                              aiReview++;       break;
       }
 
@@ -1593,10 +1594,19 @@ async function _runProjectLoop(ctx) {
 
     // ─ Auto Policy チェック ─
     const prePolicy = autoPolicy.classifyTask(next, {});
-    if (prePolicy === autoPolicy.AUTO_POLICY.BLOCKED) {
-      ctx.stopReason = `blocked_${storedType}`;
+    if (prePolicy === autoPolicy.AUTO_POLICY.LARGE_TASK) {
+      ctx.stopReason = 'large_task';
       await message.channel.send(
-        `🚫 **自動実行ブロック** \`${next.id}\` [${storedType}/${storedSize}]`
+        `🔴 **LARGE** \`${next.id}\` [${storedType}/${storedSize}]\n` +
+        `このタスクは大きすぎます。\n` +
+        `おすすめ: \`!task split preview ${next.id}\` / \`!task split ${next.id}\``
+      ).catch(() => {});
+      break;
+    }
+    if (prePolicy === autoPolicy.AUTO_POLICY.BLOCKED) {
+      ctx.stopReason = `security_blocked_${storedType}`;
+      await message.channel.send(
+        `🚫 **SECURITY BLOCKED** \`${next.id}\` [${storedType}/${storedSize}]\n安全上停止しました。`
       ).catch(() => {});
       break;
     }
