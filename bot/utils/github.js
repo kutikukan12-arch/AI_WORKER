@@ -329,6 +329,26 @@ async function commitAndPush(prompt, taskId) {
   logger.info(`git add: ${changedFiles.length}件の変更をステージング`);
   runGit('git add .', { cwd: repoPath, stdio: 'pipe' });
 
+  // ─── Secret Guardian: commit 前秘密情報スキャン ────
+  try {
+    const secretGuardian = require('./secret-guardian');
+    const guard = secretGuardian.guardCommit(repoPath);
+    if (!guard.allowed) {
+      logger.error(`[SecretGuardian] 秘密情報検出: ${guard.violations.length}件 → commit 停止`);
+      // ステージングを全部解除してから throw
+      try { runGit('git reset HEAD', { cwd: repoPath, stdio: 'pipe' }); } catch { /* ignore */ }
+      const err = new Error(`[SecretGuardian] 秘密情報を検出しました。commit を停止しました。\n${guard.summary}`);
+      err.secretViolations = guard.violations;
+      err.secretReport     = guard.report;
+      err.secretReportFile = guard.reportFile;
+      throw err;
+    }
+    logger.info(`[SecretGuardian] ${guard.summary}`);
+  } catch (sgErr) {
+    if (sgErr.secretViolations) throw sgErr; // 検出エラーはそのまま上位へ
+    logger.warn(`[SecretGuardian] スキャンエラー（続行）: ${sgErr.message.slice(0, 80)}`);
+  }
+
   // コミットメッセージを一時ファイル経由で渡す（日本語文字化け防止）
   const { subject, body } = generateCommitMessage(prompt, taskId, changedFiles);
   const tmpFile = path.join(os.tmpdir(), `aiworker_commit_${taskId}.txt`);

@@ -4451,7 +4451,21 @@ async function executeClaudeTask({
           }
         } catch (gitErr) {
           const { maskSecret } = require('./utils/github');
-          logger.error(`GitHub Push エラー: ${maskSecret(gitErr.message)}`);
+          // Secret Guardian 検出エラーは CEO に警告（値は表示しない）
+          if (gitErr.secretViolations) {
+            logger.error(`[SecretGuardian] commit 停止: ${gitErr.secretViolations.length}件`);
+            const alertText = gitErr.secretReport ||
+              `🚨 **Secret Guardian — 秘密情報を検出。commit を停止しました。**\n\n` +
+              `詳細: \`logs/security-*.json\``;
+            await sendNotification('error', message.channel, alertText.slice(0, 1900)).catch(() => {});
+            if (DISCORD_OWNER_ID) {
+              await message.channel.send(
+                `<@${DISCORD_OWNER_ID}> ${alertText.slice(0, 1800)}`
+              ).catch(() => {});
+            }
+          } else {
+            logger.error(`GitHub Push エラー: ${maskSecret(gitErr.message)}`);
+          }
         }
       }
     }
