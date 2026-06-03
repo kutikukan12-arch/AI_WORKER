@@ -773,14 +773,14 @@ async function handleHelp(message) {
       },
       // ── YouTube 視聴予測 ──────────────────────────────────
       {
-        name: '🎬 !youtube — YouTube 視聴予測 AI',
+        name: '🎬 !youtube — YouTube 視聴予測 / 投稿前診断 AI',
         value: [
+          '`!youtube diagnose title="..." genre=vtuber` — **投稿前6軸診断（API不使用・即時）**',
           '`!youtube predict <URL>` — 投稿済み動画URLのヒット/ミス予測',
           '`!youtube predict title="..." subs=5000` — 投稿前メタデータで予測',
           '`!youtube status` — APIクォータ・モデル状態確認',
           '`!youtube collect <genre> <query>` — シードデータ収集（管理者・API Key必須）',
           '`!youtube train` — 収集データでモデル訓練（管理者）',
-          '予測結果: `hit`=高再生 / `miss`=低再生 / `unknown`=不明',
         ].join('\n'),
         inline: false,
       },
@@ -6052,6 +6052,49 @@ function _classifyYtDiscordError(errMsg) {
 // ─────────────────────────────────────────────────────
 async function handleYoutube(message, args) {
   const sub = args[0] || '';
+
+  // ── diagnose — 投稿前6軸診断（YouTube API / LLM API 不使用）──
+  if (sub === 'diagnose') {
+    const diagArg = args.slice(1).join(' ').trim();
+    if (!diagArg || !/\w+=/.test(diagArg)) {
+      await message.reply(
+        '**!youtube diagnose — 投稿前診断（外部API不使用）**\n\n' +
+        '```\n' +
+        '!youtube diagnose title="タイトル"\n' +
+        '!youtube diagnose title="タイトル" genre=vtuber tags="タグ1,タグ2" sec=600 subs=5000\n' +
+        '```\n\n' +
+        '**6軸を診断します:** CTR適性 / 視聴維持適性 / SEO強度 / 感情フック / 投稿タイミング / 競合差別化\n\n' +
+        '再生数レンジは表示しません。診断スコアのみです。'
+      );
+      return;
+    }
+
+    const kw = _parseYtKwargs(diagArg);
+    if (!kw.title) {
+      await message.reply(
+        '❌ `title=` が必須です。\n\n' +
+        '例: `!youtube diagnose title="【初見】ゲーム名に挑戦してみた！" genre=vtuber`'
+      );
+      return;
+    }
+
+    const ytDiag  = require('./utils/youtube-diagnostic');
+    const tagsArr = kw.tags ? kw.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
+    const input   = {
+      title:           kw.title,
+      genre:           kw.genre  || '',
+      description:     kw.desc   || '',
+      tags:            tagsArr,
+      duration:        kw.sec    ? parseInt(kw.sec,  10) : 0,
+      subscriberCount: kw.subs   ? parseInt(kw.subs, 10) : 0,
+      publishedAt:     kw.at     || null,   // ISO8601 投稿予定日時
+    };
+
+    const result = ytDiag.diagnose(input);
+    const text   = ytDiag.formatDiagnosticText(result, input);
+    await message.reply(text.slice(0, 1900)).catch(() => {});
+    return;
+  }
 
   // ── predict ──────────────────────────────────────────
   if (sub === 'predict') {
