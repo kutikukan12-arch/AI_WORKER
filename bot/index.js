@@ -7514,6 +7514,114 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  // ─────────────────────────────────────────────────────
+  // !msg — 社内メッセージ配送（黒川 Chief of Staff）
+  //
+  // 黒川の役割: 配送・進行管理のみ。判断の代理は禁止。
+  //
+  // !msg send <to> <内容>   — 送信 (WAITING_REPLY)
+  // !msg list               — 返信待ち一覧
+  // !msg list all           — 全件一覧
+  // !msg show <id>          — 詳細
+  // !msg reply <id> <返信>  — 返信 (→ REPLIED)
+  // !msg close <id>         — クローズ (→ CLOSED)
+  // !msg pending            — 黒川レポート: 誰が誰の返信待ちか
+  // ─────────────────────────────────────────────────────
+  if (content.startsWith('!msg')) {
+    const msgMod  = require('./utils/internal-messages');
+    const msgArgs = content.split(/\s+/).slice(1);
+    const msgSub  = msgArgs[0] || 'help';
+
+    // send
+    if (msgSub === 'send') {
+      const toRaw   = msgArgs[1] || '';
+      const bodyRaw = msgArgs.slice(2).join(' ').trim();
+      if (!toRaw || !bodyRaw) {
+        await message.reply(
+          '**使い方**\n```\n!msg send <宛先> <内容>\n```\n\n' +
+          '**宛先エイリアス:**\n' +
+          '`miyagi/宮城/A` `moriya/守谷/B` `shiraishi/白石/C`\n' +
+          '`aizawa/相沢/D` `ichikawa/市川/E` `kanemori/金森/F`\n' +
+          '`kurokawa/黒川/G` `ikuno/育野/H` `ceo/CEO`'
+        ).catch(() => {});
+        return;
+      }
+      // 送信者は Discord ユーザーID から解決できないため "ceo" をデフォルトとし、
+      // 将来的にユーザーマッピングで自動解決する
+      const r = msgMod.sendMessage({ from: 'ceo', to: toRaw, content: bodyRaw });
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // list / list all
+    if (msgSub === 'list') {
+      const showAll = (msgArgs[1] || '') === 'all';
+      const r = msgMod.listMessages({ all: showAll });
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // show
+    if (msgSub === 'show') {
+      const msgId = msgArgs[1] || '';
+      const r     = msgMod.showMessage(msgId);
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // reply
+    if (msgSub === 'reply') {
+      const msgId    = msgArgs[1] || '';
+      const replyTxt = msgArgs.slice(2).join(' ').trim();
+      const r        = msgMod.replyMessage(msgId, replyTxt);
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // close
+    if (msgSub === 'close') {
+      const msgId = msgArgs[1] || '';
+      const r     = msgMod.closeMessage(msgId);
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // pending — 黒川レポート
+    if (msgSub === 'pending') {
+      const r = msgMod.pendingReport();
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // help
+    await message.reply(
+      '**!msg — 社内メッセージ配送（黒川 Chief of Staff）**\n\n' +
+      '```\n' +
+      '!msg send <宛先> <内容>       → 送信\n' +
+      '!msg list                    → 返信待ち一覧\n' +
+      '!msg list all                → 全件一覧\n' +
+      '!msg show <ID>               → 詳細表示\n' +
+      '!msg reply <ID> <返信>        → 返信\n' +
+      '!msg close <ID>              → クローズ\n' +
+      '!msg pending                 → 返信待ちレポート\n' +
+      '```\n\n' +
+      '**宛先エイリアス:**\n' +
+      '`miyagi/宮城/A` `moriya/守谷/B` `shiraishi/白石/C`\n' +
+      '`aizawa/相沢/D` `ichikawa/市川/E` `kanemori/金森/F`\n' +
+      '`kurokawa/黒川/G` `ikuno/育野/H` `ceo/CEO`\n\n' +
+      '⚠️ 黒川は配送・進行管理のみ。判断の代理は禁止。'
+    ).catch(() => {});
+    return;
+  }
+
+  // !workflow messages — !msg pending の別名（黒川レポート）
+  if (content === '!workflow messages' || content.startsWith('!workflow messages')) {
+    const msgMod = require('./utils/internal-messages');
+    const r      = msgMod.pendingReport();
+    await message.reply(r.text.slice(0, 1900)).catch(() => {});
+    return;
+  }
+
   // !close — 日次クロージング（更新ログ付き）
   if (content === '!close' || /^!close\b/.test(content)) {
     const { buildClosingSummary } = require('./utils/client-ops');
