@@ -80,3 +80,15 @@ data/incidents.json
 learning/
 data/finance-config.json
 data/finance-approval.json
+
+# ─── YouTube診断AI: training model / data（公開禁止）────
+# training model（生の学習重み + 付帯情報）
+data/youtube-model.json
+data/youtube-model-pre.json
+# 元データセット（収集済み YouTube データ）
+data/youtube-seeds/
+
+# ─── YouTube診断AI: 推論専用 export（Web 側に渡す）────
+# export モデル（weights のみ・training metadata 除外済み）
+# このファイルは公開可能。ただし意図的に commit する場合のみ !で除外を解除する。
+# data/youtube-model-export.json

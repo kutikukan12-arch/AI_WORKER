@@ -781,6 +781,7 @@ async function handleHelp(message) {
           '`!youtube status` — APIクォータ・モデル状態確認',
           '`!youtube collect <genre> <query>` — シードデータ収集（管理者・API Key必須）',
           '`!youtube train` — 収集データでモデル訓練（管理者）',
+          '`!youtube export-model` — 推論専用モデルをエクスポート（管理者）',
         ].join('\n'),
         inline: false,
       },
@@ -6497,6 +6498,21 @@ async function handleYoutube(message, args) {
         `❌ **訓練に失敗しました**\n\n${guide}\n\n詳細: \`${errMsg.slice(0, 150)}\``
       );
     }
+    return;
+  }
+
+  // ── export-model — 推論専用 model export（Owner 限定）──
+  if (sub === 'export-model') {
+    if (DISCORD_OWNER_ID && message.author.id !== DISCORD_OWNER_ID) {
+      await message.reply('🚫 `!youtube export-model` は管理者専用コマンドです。');
+      return;
+    }
+    const ytExporter = require('./utils/youtube-model-exporter');
+    const result = ytExporter.exportInferenceModel();
+    const text   = result.ok
+      ? result.message
+      : `❌ **Export 失敗**\n\n${result.message}`;
+    await message.reply(text.slice(0, 1900)).catch(() => {});
     return;
   }
 
