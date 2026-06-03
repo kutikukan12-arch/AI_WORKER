@@ -7834,6 +7834,86 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  // ─────────────────────────────────────────────────────
+  // !vp — 神崎 VP (Vice President / Strategy Officer)
+  //
+  // !vp ask <内容>  — 社長が神崎へ相談（状況/選択肢/メリット/リスク/推奨案）
+  // !vp summary     — 経営状況整理（プロジェクト/Decision/リスク/次の判断候補）
+  //
+  // 神崎は判断材料を出すだけ。決定は社長(CEO)が行う。
+  // 承認代理・READY/NEED_FIX判定・支出決定は行わない。
+  // ─────────────────────────────────────────────────────
+  if (content.startsWith('!vp')) {
+    const vp     = require('./utils/vp-advisor');
+    const vpArgs = content.split(/\s+/).slice(1);
+    const vpSub  = vpArgs[0] || 'help';
+
+    // ask — 判断材料の整理（提案のみ・決定しない）
+    if (vpSub === 'ask') {
+      const topic = vpArgs.slice(1).join(' ').trim();
+      const r = vp.buildAskBrief(topic);
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // summary — 経営状況整理
+    if (vpSub === 'summary') {
+      const decLog = require('./utils/decision-log');
+      const incMgr = require('./utils/incident-manager');
+      const OPEN_INC = [incMgr.STATUS.OPEN, incMgr.STATUS.INVESTIGATING, incMgr.STATUS.MITIGATED];
+      const openIncidents = incMgr._load()
+        .filter(i => OPEN_INC.includes(i.status))
+        .reverse()
+        .slice(0, 5);
+      const r = vp.buildSummary({
+        projects:         projectManager.listProjects(),
+        currentProjectId: projectManager.getCurrentProject(message.channelId),
+        decisions:        decLog.listActiveDecisions(50),
+        incidents:        openIncidents,
+      });
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // export — Phase12 外部 VP Export Bridge
+    if (vpSub === 'export') {
+      const vpExport = require('./utils/vp-export');
+      const topic    = vpArgs.slice(1).join(' ').trim();
+      const r        = vpExport.buildExport({ topic });
+      const status   = vpExport.getExportStatus();
+      const reply    = [
+        `📤 **外部VP Export 生成完了**`,
+        ``,
+        `ファイル: \`data/outbox/external-vp/context.md\``,
+        `サイズ: ${r.charCount} 文字`,
+        status.ok ? `最終更新: ${status.mtime}` : '',
+        ``,
+        `**プレビュー (先頭300文字):**`,
+        `\`\`\``,
+        r.text.slice(0, 300),
+        `\`\`\``,
+        ``,
+        `⚠️ ChatGPT への送信は社長が確認後に手動で行ってください。`,
+        `⚠️ 自動送信・API連携は行いません。`,
+      ].filter(l => l !== '').join('\n');
+      await message.reply(reply.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // help
+    await message.reply(
+      '**!vp — 神崎 VP（Strategy Officer）**\n\n' +
+      '```\n' +
+      '!vp ask <相談内容>         → 判断材料を整理（状況/選択肢/メリット/リスク/推奨案）\n' +
+      '!vp summary                → 経営状況整理（プロジェクト/Decision/リスク）\n' +
+      '!vp export [<相談テーマ>]  → ChatGPT外部相談用コンテキスト生成\n' +
+      '```\n\n' +
+      '⚠️ 神崎は「提案」します。「決定」は社長（CEO）が行います。\n' +
+      '⚠️ export は自動送信しません。社長が確認後に手動で共有してください。'
+    ).catch(() => {});
+    return;
+  }
+
   // !close — 日次クロージング（更新ログ付き）
   if (content === '!close' || /^!close\b/.test(content)) {
     const { buildClosingSummary } = require('./utils/client-ops');
