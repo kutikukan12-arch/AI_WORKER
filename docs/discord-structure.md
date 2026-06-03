@@ -28,6 +28,7 @@
 | `#相沢-cs` | 相沢 CS | ユーザー視点 / β テスト / feedback 整理 |
 | `#金森-cfo` | 金森 CFO | コスト / ROI / 課金判断 |
 | `#育野-learning` | 育野 | Decision / Incident / Lesson / 組織学習 |
+| `#神崎-vp` | 神崎 VP | 判断材料整理 / 社員意見統合 / 論点まとめ（決定はしない） |
 
 ### 📚 記録室
 

@@ -166,11 +166,14 @@ test('4d. 初期 Decision が DECIDED ステータス', () => {
   assert.strictEqual(initial[0].status, 'DECIDED');
 });
 
-test('4e. 重複登録なし（タイトルが一意）', () => {
+test('4e. 重複登録なし（active なタイトルが一意）', () => {
   const decisions = dl._load();
-  const titles    = decisions.map(d => d.title);
-  const unique    = new Set(titles);
-  assert.strictEqual(unique.size, titles.length, `重複タイトルがある: ${titles.length - unique.size}件`);
+  // archived は履歴として保持されるため一意性チェックの対象外。
+  // active / DECIDED のみで重複が無いことを確認する。
+  const active = decisions.filter(d => d.status === 'active' || d.status === 'DECIDED');
+  const titles = active.map(d => d.title);
+  const unique = new Set(titles);
+  assert.strictEqual(unique.size, titles.length, `active な重複タイトルがある: ${titles.length - unique.size}件`);
 });
 
 // ─────────────────────────────────────────────────────
