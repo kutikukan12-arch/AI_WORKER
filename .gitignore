@@ -8,6 +8,7 @@
 *.env.*.local
 .env.bak*
 *.env.bak*
+docs/*.env
 
 # ─── Node.js ───
 node_modules/

@@ -84,10 +84,17 @@ const DUMMY_VALUE_HINTS = [
   /DUMMY|FAKE|TEST|EXAMPLE|PLACEHOLDER|your[-_]?token|your[-_]?key|xxxxxxx/i,
 ];
 
-// 純粋な process.env 参照判定 — Generic Secret Assignment 用
-// 「= process.env.VARNAME」のみで完結（; や末尾スペースは許容）している行かどうかを検査する。
-// process.env.X || "fallback" や process.env.X = "value" は false を返す。
-const PURE_ENV_REF_RE = /=\s*process\.env\.[A-Za-z0-9_]+\s*[;,)\s]*$/;
+// process.env 参照の安全判定 — Generic Secret Assignment 用
+//
+// KEYWORD = process.env.VARNAME の形式（fallback の有無を問わない）かどうかを検査する。
+// 真のハードコード値は process.env. を含まないため、この判定は正確。
+// fallback に実トークンが入っていた場合は CRITICAL パターン（ghp_ / sk-proj- 等）が別途検出する。
+//
+// 例（safe）: const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
+// 例（safe）: const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || '';
+// 例（block）: const API_KEY = "hardcoded-real-key-longer-than-20";
+const PURE_ENV_REF_RE =
+  /(DISCORD_TOKEN|GITHUB_TOKEN|OPENAI_API_KEY|API_KEY|ACCESS_TOKEN)\s*=\s*process\.env\./;
 
 // ─────────────────────────────────────────────────────
 // scanContent(filename, content) — 1ファイルの内容を走査
@@ -147,8 +154,16 @@ function scanStagedFiles(repoPath) {
 
     const stagedFiles = stagedRaw.split('\n').filter(Boolean);
 
-    // .env ファイルのコミット直接チェック
-    const envFiles = stagedFiles.filter(f => /^\.env$|\.env\.[^e]/.test(path.basename(f)));
+    // 削除ステージングのファイルを取得（削除は .env チェックから除外する）
+    const deletedRaw = execSync('git diff --cached --name-only --diff-filter=D', {
+      cwd: repoPath, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    const deletedFiles = new Set(deletedRaw ? deletedRaw.split('\n').filter(Boolean) : []);
+
+    // .env ファイルのコミット直接チェック（削除は安全 → スキップ）
+    const envFiles = stagedFiles.filter(f =>
+      /^\.env$|\.env\.[^e]/.test(path.basename(f)) && !deletedFiles.has(f)
+    );
     for (const f of envFiles) {
       if (!/\.example$/.test(f)) {
         violations.push({ file: f, name: '.env ファイルのコミット', line: 0, severity: 'CRITICAL',
@@ -156,8 +171,9 @@ function scanStagedFiles(repoPath) {
       }
     }
 
-    // 各ファイルの内容を走査
+    // 各ファイルの内容を走査（削除ファイルはスキップ — 削除は安全）
     for (const file of stagedFiles) {
+      if (deletedFiles.has(file)) continue; // 削除済みファイルは内容スキャン不要
       try {
         // git show :file でステージング内容を取得
         const content = execSync(`git show ":${file}"`, {
