@@ -1144,15 +1144,20 @@ describe('predict() — in-sample accuracy（精度検証）', () => {
 // ─────────────────────────────────────────────────────
 
 describe('predict() — 投稿前メタデータ入力', () => {
-  const MODEL_FILE = path.join(__dirname, '..', 'data', 'youtube-model.json');
-  const MODEL_BAK  = MODEL_FILE + '.test-bak-pre';
+  const MODEL_FILE     = path.join(__dirname, '..', 'data', 'youtube-model.json');
+  const MODEL_BAK      = MODEL_FILE + '.test-bak-pre';
+  const PRE_MODEL_FILE = path.join(__dirname, '..', 'data', 'youtube-model-pre.json');
+  const PRE_MODEL_BAK  = PRE_MODEL_FILE + '.test-bak-pre';
 
   before(() => {
-    if (fs.existsSync(MODEL_FILE)) fs.renameSync(MODEL_FILE, MODEL_BAK);
+    if (fs.existsSync(MODEL_FILE))     fs.renameSync(MODEL_FILE,     MODEL_BAK);
+    if (fs.existsSync(PRE_MODEL_FILE)) fs.renameSync(PRE_MODEL_FILE, PRE_MODEL_BAK);
   });
   after(() => {
-    if (fs.existsSync(MODEL_FILE)) fs.unlinkSync(MODEL_FILE);
-    if (fs.existsSync(MODEL_BAK)) fs.renameSync(MODEL_BAK, MODEL_FILE);
+    if (fs.existsSync(MODEL_FILE))     fs.unlinkSync(MODEL_FILE);
+    if (fs.existsSync(PRE_MODEL_FILE)) fs.unlinkSync(PRE_MODEL_FILE);
+    if (fs.existsSync(MODEL_BAK))      fs.renameSync(MODEL_BAK,      MODEL_FILE);
+    if (fs.existsSync(PRE_MODEL_BAK))  fs.renameSync(PRE_MODEL_BAK,  PRE_MODEL_FILE);
   });
 
   test('viewCount=0 で predict() がエラーなく結果を返す', () => {

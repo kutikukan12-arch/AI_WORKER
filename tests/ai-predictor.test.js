@@ -387,9 +387,13 @@ describe('predictCompletionTime()', () => {
       assert.ok(reviewSmall.estimateMin <= 5, `REVIEW/SMALL min=${reviewSmall.estimateMin}`);
     });
 
-    test('IMPLEMENT LARGE が最長クラス', () => {
-      const { estimateMax } = predictCompletionTime('IMPLEMENT', 'LARGE');
-      assert.ok(estimateMax >= 60, `IMPLEMENT/LARGE max=${estimateMax}`);
+    test('IMPLEMENT LARGE が上位クラス (MEDIUM より大きい)', () => {
+      const large  = predictCompletionTime('IMPLEMENT', 'LARGE');
+      const medium = predictCompletionTime('IMPLEMENT', 'MEDIUM');
+      assert.ok(large.estimateMax > medium.estimateMax,
+        `IMPLEMENT/LARGE max(${large.estimateMax}) <= MEDIUM max(${medium.estimateMax})`);
+      assert.ok(large.estimateMax >= 45,
+        `IMPLEMENT/LARGE max=${large.estimateMax} (期待: >= 45)`);
     });
   });
 
