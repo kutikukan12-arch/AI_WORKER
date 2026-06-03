@@ -158,6 +158,34 @@ function apiPredict(req, res) {
   });
 }
 
+function apiDiagnose(req, res) {
+  let body = '';
+  req.on('data', chunk => { body += chunk.toString(); });
+  req.on('end', () => {
+    const p = _getPredictor();
+    if (!p) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'youtube-predictor module unavailable' }));
+      return;
+    }
+    try {
+      const video = JSON.parse(body || '{}');
+      if (!video.title) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'title is required' }));
+        return;
+      }
+      const diagResult  = p.diagnose(video);
+      const diagSummary = p.buildDiagnosisSummary(video, diagResult);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ diagResult, diagSummary }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+  });
+}
+
 function serveHtml(_req, res) {
   try {
     const html = fs.readFileSync(HTML_FILE, 'utf8');
@@ -186,6 +214,8 @@ function startDashboard(logger) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     if (req.method === 'POST' && url === '/api/predict') {
       apiPredict(req, res);
+    } else if (req.method === 'POST' && url === '/api/diagnose') {
+      apiDiagnose(req, res);
     } else if (req.method === 'POST' && APPROVAL_ACTION_RE.test(url)) {
       apiApprovalAction(req, res);
     } else if (ROUTES[url]) {

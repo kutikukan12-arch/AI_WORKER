@@ -17,7 +17,7 @@ const fs   = require('fs');
 const path = require('path');
 
 const { encode, FEATURE_NAMES, FEATURE_DIM } = require('../bot/utils/youtube-feature-extractor');
-const { predict, predictPrePub, train, getModelStatus, buildSummary } = require('../bot/utils/youtube-predictor');
+const { predict, predictPrePub, train, getModelStatus, buildSummary, diagnose, diagnosePrePub, buildDiagnosisSummary } = require('../bot/utils/youtube-predictor');
 
 // ── テスト用ファクトリ ─────────────────────────────────
 
@@ -1712,5 +1712,266 @@ describe('predictPrePub() — 投稿後特徴量の強制除外', () => {
     assert.doesNotThrow(() => buildSummary(video, result));
     const summary = buildSummary(video, result);
     assert.ok(summary.includes('YouTube ヒット予測'), 'ヘッダーがない');
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// diagnose() — 診断AI
+// ─────────────────────────────────────────────────────
+
+describe('diagnose() — 戻り値の構造', () => {
+
+  test('オブジェクトを返す', () => {
+    const d = diagnose(makeVideo());
+    assert.ok(typeof d === 'object' && d !== null);
+  });
+
+  test('score / rank / positivePoints / improvementPoints を持つ', () => {
+    const d = diagnose(makeVideo());
+    assert.ok('score'             in d, 'score がない');
+    assert.ok('rank'              in d, 'rank がない');
+    assert.ok('positivePoints'    in d, 'positivePoints がない');
+    assert.ok('improvementPoints' in d, 'improvementPoints がない');
+  });
+
+  test('score は 0〜100 の整数', () => {
+    const { score } = diagnose(makeVideo());
+    assert.ok(Number.isInteger(score) && score >= 0 && score <= 100, `score=${score}`);
+  });
+
+  test('rank は A / B / C / D のいずれか', () => {
+    const { rank } = diagnose(makeVideo());
+    assert.ok(['A', 'B', 'C', 'D'].includes(rank), `rank="${rank}"`);
+  });
+
+  test('score >= 80 → rank=A', () => {
+    // buzz_ratio=10 → probability=90 → rank=A
+    const { score, rank } = diagnose(makeVideo({ viewCount: 10000, subscriberCount: 1000 }));
+    if (score >= 80) assert.equal(rank, 'A', `score=${score} なのに rank=${rank}`);
+  });
+
+  test('score <= 39 → rank=D', () => {
+    // buzz_ratio=0.1 → probability=10 → rank=D
+    const { score, rank } = diagnose(makeVideo({ viewCount: 100, subscriberCount: 1000 }));
+    if (score <= 39) assert.equal(rank, 'D', `score=${score} なのに rank=${rank}`);
+  });
+
+  test('score が 40〜59 の場合 rank=C', () => {
+    // buzz_ratio=2.65 → probability=50 → rank=C
+    const { score, rank } = diagnose(makeVideo({ viewCount: 2650, subscriberCount: 1000 }));
+    if (score >= 40 && score < 60) assert.equal(rank, 'C', `score=${score} なのに rank=${rank}`);
+  });
+
+  test('positivePoints は配列', () => {
+    const { positivePoints } = diagnose(makeVideo());
+    assert.ok(Array.isArray(positivePoints));
+  });
+
+  test('improvementPoints は配列', () => {
+    const { improvementPoints } = diagnose(makeVideo());
+    assert.ok(Array.isArray(improvementPoints));
+  });
+
+  test('各 positivePoint に factor / detail がある', () => {
+    const { positivePoints } = diagnose(makeVideo({ viewCount: 10000, subscriberCount: 1000 }));
+    for (const p of positivePoints) {
+      assert.ok('factor' in p, `factor がない: ${JSON.stringify(p)}`);
+      assert.ok('detail' in p, `detail がない: ${JSON.stringify(p)}`);
+    }
+  });
+
+  test('各 improvementPoint に factor / detail / reason / suggestion がある', () => {
+    const { improvementPoints } = diagnose(makeVideo({ viewCount: 100, subscriberCount: 10 }));
+    for (const p of improvementPoints) {
+      assert.ok('factor'     in p, `factor がない: ${JSON.stringify(p)}`);
+      assert.ok('detail'     in p, `detail がない: ${JSON.stringify(p)}`);
+      assert.ok('reason'     in p, `reason がない: ${JSON.stringify(p)}`);
+      assert.ok('suggestion' in p, `suggestion がない: ${JSON.stringify(p)}`);
+    }
+  });
+
+  test('reason / suggestion が空文字列でない', () => {
+    const { improvementPoints } = diagnose(makeVideo({ viewCount: 100, subscriberCount: 10 }));
+    for (const p of improvementPoints) {
+      assert.ok(p.reason.length     > 0, `reason が空: ${JSON.stringify(p)}`);
+      assert.ok(p.suggestion.length > 0, `suggestion が空: ${JSON.stringify(p)}`);
+    }
+  });
+
+  test('空オブジェクト → エラーにならない', () => {
+    assert.doesNotThrow(() => diagnose({}));
+  });
+
+  test('投稿前モード (viewCount=0) → エラーにならない', () => {
+    assert.doesNotThrow(() => diagnose(makeVideo({ viewCount: 0 })));
+  });
+
+  test('score は predict().probability と一致する', () => {
+    const video  = makeVideo();
+    const pResult = predict(video);
+    const dResult = diagnose(video);
+    assert.equal(dResult.score, pResult.probability, `score(${dResult.score}) ≠ probability(${pResult.probability})`);
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// diagnosePrePub() — 投稿前専用
+// ─────────────────────────────────────────────────────
+
+describe('diagnosePrePub() — 投稿前専用', () => {
+
+  test('viewCount>0 を渡しても buzzRatio なし（投稿前モード強制）', () => {
+    // diagnosePrePub は predictPrePub を使うので投稿後特徴量は除外される
+    const video = makeVideo({ viewCount: 50000, likeCount: 2000, subscriberCount: 1000 });
+    const d = diagnosePrePub(video);
+    // score が predictPrePub の probability と一致することで投稿前モード確認
+    const pre = predictPrePub(video);
+    assert.equal(d.score, pre.probability);
+  });
+
+  test('improvementPoints に buzz/いいね率/コメント率 が含まれない', () => {
+    const video      = makeVideo({ viewCount: 100000, likeCount: 5000, subscriberCount: 10000 });
+    const { improvementPoints } = diagnosePrePub(video);
+    const postPubFactors = ['視聴数/登録者比(buzz)', 'いいね率', 'コメント率'];
+    for (const p of improvementPoints) {
+      assert.ok(!postPubFactors.includes(p.factor),
+        `投稿後 factor "${p.factor}" が diagnosePrePub の improvementPoints に含まれている`);
+    }
+  });
+
+  test('undefined → エラーにならない', () => {
+    assert.doesNotThrow(() => diagnosePrePub(undefined));
+  });
+
+  test('score が 0〜100 の整数', () => {
+    const { score } = diagnosePrePub(makeVideo());
+    assert.ok(Number.isInteger(score) && score >= 0 && score <= 100, `score=${score}`);
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// buildDiagnosisSummary() — 診断表示
+// ─────────────────────────────────────────────────────
+
+describe('buildDiagnosisSummary() — 基本構造', () => {
+
+  test('文字列を返す', () => {
+    const video = makeVideo();
+    const d     = diagnose(video);
+    assert.ok(typeof buildDiagnosisSummary(video, d) === 'string');
+  });
+
+  test('"YouTube 動画診断レポート" の見出しを含む', () => {
+    const video   = makeVideo();
+    const d       = diagnose(video);
+    const summary = buildDiagnosisSummary(video, d);
+    assert.ok(summary.includes('YouTube 動画診断レポート'), 'ヘッダーがない');
+  });
+
+  test('"総合スコア" を含む', () => {
+    const video   = makeVideo();
+    const d       = diagnose(video);
+    const summary = buildDiagnosisSummary(video, d);
+    assert.ok(summary.includes('総合スコア'), '"総合スコア" がない');
+  });
+
+  test('score の数値が含まれる', () => {
+    const video   = makeVideo();
+    const d       = diagnose(video);
+    const summary = buildDiagnosisSummary(video, d);
+    assert.ok(summary.includes(String(d.score)), `score(${d.score}) が含まれない`);
+  });
+
+  test('rank が含まれる', () => {
+    const video   = makeVideo();
+    const d       = diagnose(video);
+    const summary = buildDiagnosisSummary(video, d);
+    assert.ok(summary.includes(d.rank), `rank(${d.rank}) が含まれない`);
+  });
+
+  test('ランク A の場合 "優秀" が含まれる', () => {
+    // buzz_ratio=10 → score=90 → rank=A
+    const video = makeVideo({ viewCount: 10000, subscriberCount: 1000 });
+    const d     = diagnose(video);
+    if (d.rank === 'A') {
+      assert.ok(buildDiagnosisSummary(video, d).includes('優秀'), 'rank=A なのに "優秀" がない');
+    }
+  });
+
+  test('ランク D の場合 "要対策" が含まれる', () => {
+    // buzz_ratio=0.1 → score=10 → rank=D
+    const video = makeVideo({ viewCount: 100, subscriberCount: 1000 });
+    const d     = diagnose(video);
+    if (d.rank === 'D') {
+      assert.ok(buildDiagnosisSummary(video, d).includes('要対策'), 'rank=D なのに "要対策" がない');
+    }
+  });
+
+  test('改善点がある場合 "改善点" セクションを含む', () => {
+    const video   = makeVideo({ viewCount: 100, subscriberCount: 10 });
+    const d       = diagnose(video);
+    if (d.improvementPoints.length > 0) {
+      assert.ok(buildDiagnosisSummary(video, d).includes('改善点'), '"改善点" セクションがない');
+    }
+  });
+
+  test('改善点がある場合 "理由:" を含む', () => {
+    const video   = makeVideo({ viewCount: 100, subscriberCount: 10 });
+    const d       = diagnose(video);
+    if (d.improvementPoints.length > 0) {
+      assert.ok(buildDiagnosisSummary(video, d).includes('理由:'), '"理由:" が含まれない');
+    }
+  });
+
+  test('改善点がある場合 "対策:" を含む', () => {
+    const video   = makeVideo({ viewCount: 100, subscriberCount: 10 });
+    const d       = diagnose(video);
+    if (d.improvementPoints.length > 0) {
+      assert.ok(buildDiagnosisSummary(video, d).includes('対策:'), '"対策:" が含まれない');
+    }
+  });
+
+  test('良い点がある場合 "良い点" セクションを含む', () => {
+    // buzz_ratio=10 → score=90 → positive reasons あり
+    const video   = makeVideo({ viewCount: 10000, subscriberCount: 1000 });
+    const d       = diagnose(video);
+    if (d.positivePoints.length > 0) {
+      assert.ok(buildDiagnosisSummary(video, d).includes('良い点'), '"良い点" セクションがない');
+    }
+  });
+
+  test('予測再生数（LOW/MEDIAN/HIGH）をメイン表示しない', () => {
+    const video   = makeVideo({ viewCount: 10000, subscriberCount: 1000 });
+    const d       = diagnose(video);
+    const summary = buildDiagnosisSummary(video, d);
+    // 診断サマリーには再生数レンジを含まない
+    assert.ok(!summary.includes('LOW'),    '診断サマリーに LOW が含まれている');
+    assert.ok(!summary.includes('MEDIAN'), '診断サマリーに MEDIAN が含まれている');
+    assert.ok(!summary.includes('HIGH'),   '診断サマリーに HIGH が含まれている');
+  });
+
+  test('ヒット確率をメイン表示しない（"確率:" の行なし）', () => {
+    const video   = makeVideo();
+    const d       = diagnose(video);
+    const summary = buildDiagnosisSummary(video, d);
+    // 「確率: XX%」形式の予測表示がないこと
+    assert.ok(!/確率:\s*\d+%/.test(summary), '診断サマリーに確率表示が含まれている');
+  });
+
+  test('投稿前モードでも正常に動作する', () => {
+    const video   = makeVideo({ viewCount: 0, subscriberCount: 5000 });
+    const d       = diagnose(video);
+    const summary = buildDiagnosisSummary(video, d);
+    assert.ok(typeof summary === 'string' && summary.length > 0);
+    assert.ok(summary.includes('YouTube 動画診断レポート'));
+  });
+
+  test('improvementPoints の factor 名がサマリーに含まれる', () => {
+    const video   = makeVideo({ viewCount: 100, subscriberCount: 10 });
+    const d       = diagnose(video);
+    const summary = buildDiagnosisSummary(video, d);
+    for (const p of d.improvementPoints) {
+      assert.ok(summary.includes(p.factor), `improvementPoint factor "${p.factor}" がサマリーにない`);
+    }
   });
 });

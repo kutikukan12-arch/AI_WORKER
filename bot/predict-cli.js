@@ -6,16 +6,17 @@
 // CLI では INFO/DEBUG をコンソールに出さない（ファイルログには残る）
 process.env.LOG_LEVEL = process.env.LOG_LEVEL || 'WARN';
 
-const { predict, buildSummary } = require('./utils/youtube-predictor');
+const { predict, buildSummary, diagnose, buildDiagnosisSummary } = require('./utils/youtube-predictor');
 
 // ── ヘルプ ──────────────────────────────────────────────────
 
 function printHelp() {
   console.log(`
-YouTube ヒット予測 CLI
+YouTube 動画診断 / ヒット予測 CLI
 
 使い方:
   node bot/predict-cli.js --title "タイトル" --subs 10000 [options]
+  node bot/predict-cli.js --diagnose --title "タイトル" --subs 10000 [options]
 
 オプション（入力）:
   -t, --title      動画タイトル              ★必須
@@ -31,13 +32,14 @@ YouTube ヒット予測 CLI
       --published  投稿日時 ISO 8601         （例: 2024-03-01T18:00:00Z）
 
 オプション（出力）:
+  -D, --diagnose   診断AIモード（スコア・ランク・良い点・改善点を表示）
       --json       結果を JSON でも出力する
   -h, --help       このヘルプを表示
 
-例（投稿前）:
-  node bot/predict-cli.js -t "【衝撃】AIが仕事を奪う未来" -s 50000 --tags "AI,テクノロジー,未来" -d 600
+例（診断AIモード・投稿前）:
+  node bot/predict-cli.js --diagnose -t "【衝撃】AIが仕事を奪う未来" -s 50000 --tags "AI,テクノロジー,未来" -d 600
 
-例（投稿後）:
+例（予測モード・投稿後）:
   node bot/predict-cli.js -t "daily vlog" -s 1000 -v 8500 -l 300 --comments 40 -d 900
 `);
 }
@@ -72,6 +74,7 @@ function parseArgs(argv) {
       case '--tag':
         tags.push(take());
         break;
+      case '--diagnose': case '-D':  args.diagnose    = true; break;
       case '--json':                args.json        = true; break;
       case '--help':   case '-h':   printHelp(); process.exit(0); break;
       default:
@@ -145,13 +148,18 @@ function main() {
 
   const isPrePub = !video.viewCount;
 
-  let result, summary;
+  let result, summary, diagResult, diagSummary;
   try {
-    result  = predict(video);
-    summary = buildSummary(video, result);
+    if (a.diagnose) {
+      diagResult  = diagnose(video);
+      diagSummary = buildDiagnosisSummary(video, diagResult);
+    } else {
+      result  = predict(video);
+      summary = buildSummary(video, result);
+    }
   } catch (err) {
     console.error(
-      `\nエラー（予測処理失敗）:\n  ${err.message}\n\n` +
+      `\nエラー（処理失敗）:\n  ${err.message}\n\n` +
       `対処法: 入力値を確認してください。-h でヘルプを確認してください。\n`
     );
     process.exit(1);
@@ -164,20 +172,27 @@ function main() {
   if (video.tags.length) console.log(`タグ       : ${video.tags.join(', ')}`);
   if (video.subscriberCount) console.log(`登録者数   : ${video.subscriberCount.toLocaleString()}`);
   if (isPrePub) {
-    console.log(`モード     : 投稿前予測（viewCount 未設定）`);
-    console.log(`※ 投稿前モード: タイトル・タグ・尺・登録者数のみで予測（buzz_ratio 不使用）`);
+    console.log(`モード     : 投稿前${a.diagnose ? '診断' : '予測'}（viewCount 未設定）`);
   } else {
     console.log(`視聴数     : ${video.viewCount.toLocaleString()}`);
   }
   console.log('');
 
-  // ─── 予測結果 ───
-  console.log(stripMarkdown(summary));
+  // ─── 結果出力 ───
+  if (a.diagnose) {
+    console.log(stripMarkdown(diagSummary));
+  } else {
+    console.log(stripMarkdown(summary));
+  }
 
   // ─── JSON 出力 ───
   if (a.json) {
     console.log('\n--- JSON ---');
-    console.log(JSON.stringify({ video, result }, null, 2));
+    if (a.diagnose) {
+      console.log(JSON.stringify({ video, diagResult }, null, 2));
+    } else {
+      console.log(JSON.stringify({ video, result }, null, 2));
+    }
   }
 }
 

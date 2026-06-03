@@ -604,4 +604,161 @@ function predictPrePub(video) {
   return predict({ ...rest, viewCount: 0, likeCount: 0, commentCount: 0 });
 }
 
-module.exports = { predict, predictPrePub, train, getModelStatus, buildSummary };
+// ── 診断AI ───────────────────────────────────────────────────
+// 予測確率ではなく「スコア・ランク・良い点・改善点」形式で提供する。
+// 新規モデルは作らず predict() の結果を診断フォームに変換する。
+
+function _getRank(score) {
+  if (score >= 80) return 'A';
+  if (score >= 60) return 'B';
+  if (score >= 40) return 'C';
+  return 'D';
+}
+
+function _getImprovementReason(factor, video) {
+  const title    = video.title    || '';
+  const tags     = Array.isArray(video.tags) ? video.tags : [];
+  const duration = video.duration || 0;
+  const durMin   = duration > 0 ? Math.round(duration / 60) : null;
+
+  switch (factor) {
+    case 'チャンネル規模':
+      return 'チャンネル登録者数が少ないと初動露出（通知・サジェスト）が弱くなります';
+    case 'タイトル品質': {
+      const hints = [];
+      if (title.length > 0 && title.length < 8)  hints.push(`タイトルが短すぎます（${title.length}文字・8文字以上推奨）`);
+      else if (title.length > 70)                 hints.push(`タイトルが長すぎます（${title.length}文字・70文字以下推奨）`);
+      if (!/[!！]/.test(title))                   hints.push('感嘆符（!）がなくクリック訴求力が弱い');
+      return hints.length ? hints.join('・') : 'タイトルの魅力度が不足しています';
+    }
+    case 'タグ数（SEO）':
+      return `タグが${tags.length}個と少なく検索・サジェスト露出が弱くなります（5〜15個推奨）`;
+    case '動画尺':
+      if (durMin !== null && durMin < 5)  return `動画尺${durMin}分は短すぎます（VOD最適帯 5〜20分）`;
+      if (durMin !== null && durMin > 20) return `動画尺${durMin}分は長すぎます（VOD最適帯 5〜20分）`;
+      return '動画尺が不明です（5〜20分を推奨）';
+    case 'ジャンル':
+      return 'このジャンルは過去のヒット率が低めです';
+    case 'いいね率':
+      return 'いいね率が低いとアルゴリズム評価が下がります';
+    case 'コメント率':
+      return 'コメントが少ないと視聴者エンゲージメントが低いと判断される可能性があります';
+    case '視聴数/登録者比(buzz)':
+      return '登録者数に比べて視聴数が少なくCTR改善が必要です';
+    default:
+      return '改善の余地があります';
+  }
+}
+
+function _getDiagSuggestion(factor, video) {
+  const title    = video.title    || '';
+  const tags     = Array.isArray(video.tags) ? video.tags : [];
+  const duration = video.duration || 0;
+  const durMin   = duration > 0 ? Math.round(duration / 60) : null;
+
+  switch (factor) {
+    case 'チャンネル規模':
+      return 'コラボ・SNS告知・既存動画の最適化で登録者を増やす';
+    case 'タイトル品質': {
+      const tips = [];
+      if (title.length < 8 || title.length > 70) tips.push('タイトルを8〜70文字に調整する');
+      if (!/[!！]/.test(title))                   tips.push('感嘆符（!）や数字を入れてクリック率を高める');
+      return tips.length ? tips.join('・') : 'タイトルのキャッチコピーを改善する';
+    }
+    case 'タグ数（SEO）': {
+      const need = Math.max(1, 5 - tags.length);
+      return `関連タグを${need}個以上追加してSEO・サジェスト露出を改善する`;
+    }
+    case '動画尺':
+      if (durMin !== null && durMin < 5)  return '動画を5分以上に延ばしてVOD最適帯（5〜20分）に合わせる';
+      if (durMin !== null && durMin > 20) return '動画を20分以内に収めてVOD最適帯（5〜20分）に合わせる';
+      return '動画尺を5〜20分（300〜1200秒）に調整する';
+    case 'ジャンル':
+      return 'ヒット率が低いジャンルでは差別化コンテンツ・コラボ企画で突破口を開く';
+    case 'いいね率':
+      return 'エンドカードや概要欄で「いいね！」を呼びかけてエンゲージメントを高める';
+    case 'コメント率':
+      return '動画内で視聴者へ質問を投げかけてコメントを促す演出を加える';
+    case '視聴数/登録者比(buzz)':
+      return 'サムネイル・タイトルを見直してCTRを改善し外部トラフィックを増やす';
+    default:
+      return 'コンテンツ品質の向上を検討する';
+  }
+}
+
+function _buildDiagnosisFromResult(video, result) {
+  const v     = video || {};
+  const score = result.probability;
+  const rank  = _getRank(score);
+
+  const positivePoints = result.reasons
+    .filter(r => r.impact === 'positive')
+    .map(r => ({ factor: r.factor, detail: r.detail }));
+
+  const improvementPoints = result.reasons
+    .filter(r => r.impact === 'negative')
+    .map(r => ({
+      factor:     r.factor,
+      detail:     r.detail,
+      reason:     _getImprovementReason(r.factor, v),
+      suggestion: _getDiagSuggestion(r.factor, v),
+    }));
+
+  return { score, rank, positivePoints, improvementPoints };
+}
+
+// video: predict() と同じ入力形式
+// 戻り値: { score(0-100), rank('A'|'B'|'C'|'D'), positivePoints, improvementPoints }
+function diagnose(video) {
+  return _buildDiagnosisFromResult(video, predict(video));
+}
+
+// 投稿前専用診断（viewCount/likeCount/commentCount を強制除外）
+function diagnosePrePub(video) {
+  return _buildDiagnosisFromResult(video, predictPrePub(video));
+}
+
+// ── 診断AI 表示用サマリー ─────────────────────────────────────
+
+const RANK_LABEL = { A: '優秀', B: '良好', C: '要改善', D: '要対策' };
+const RANK_EMOJI = { A: '🏆', B: '✅', C: '⚠️', D: '🔴' };
+
+function buildDiagnosisSummary(video, diagResult) {
+  const { score, rank, positivePoints, improvementPoints } = diagResult;
+  const rankEmoji = RANK_EMOJI[rank]  ?? '❓';
+  const rankLabel = RANK_LABEL[rank] ?? rank;
+
+  const lines = [
+    `📋 **YouTube 動画診断レポート**`,
+    ``,
+    `${rankEmoji} **総合スコア: ${score}/100**  ランク **${rank}**（${rankLabel}）`,
+  ];
+
+  if (positivePoints.length > 0) {
+    lines.push(``);
+    lines.push(`✨ **良い点**`);
+    for (const p of positivePoints) {
+      lines.push(`  ✅ **${p.factor}:** ${p.detail}`);
+    }
+  }
+
+  if (improvementPoints.length > 0) {
+    lines.push(``);
+    lines.push(`🔧 **改善点 Top${improvementPoints.length}**`);
+    for (let i = 0; i < improvementPoints.length; i++) {
+      const p = improvementPoints[i];
+      lines.push(`  ${i + 1}. **${p.factor}:** ${p.detail}`);
+      lines.push(`     📌 理由: ${p.reason}`);
+      lines.push(`     💡 対策: ${p.suggestion}`);
+    }
+  }
+
+  if (positivePoints.length === 0 && improvementPoints.length === 0) {
+    lines.push(``);
+    lines.push(`ℹ️ 診断データが不足しています。より多くの動画情報を入力してください。`);
+  }
+
+  return lines.join('\n');
+}
+
+module.exports = { predict, predictPrePub, train, getModelStatus, buildSummary, diagnose, diagnosePrePub, buildDiagnosisSummary };
