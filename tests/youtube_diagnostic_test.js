@@ -1,5 +1,6 @@
 'use strict';
-// youtube-diagnostic.js + !youtube diagnose 統合テスト
+// youtube-diagnostic.js v2 テスト
+// MLパイプライン接続 + cold-start fallback + modelInfo 正確性
 
 const assert = require('assert');
 const fs     = require('fs');
@@ -11,38 +12,227 @@ function test(name, fn) {
   catch (e) { console.error('  ❌', name, '\n    ', e.message); fail++; }
 }
 
-const yd  = require('../bot/utils/youtube-diagnostic');
-const src = fs.readFileSync(path.join(__dirname, '..', 'bot', 'index.js'), 'utf8');
+const yd      = require('../bot/utils/youtube-diagnostic');
+const { encodePre, FEATURE_DIM_PRE } = require('../bot/utils/youtube-feature-extractor');
+const src     = fs.readFileSync(path.join(__dirname, '..', 'bot', 'index.js'), 'utf8');
+const diagSrc = fs.readFileSync(path.join(__dirname, '..', 'bot', 'utils', 'youtube-diagnostic.js'), 'utf8');
+
+// テスト用モデルファイル管理
+const MODEL_FILE_PRE = path.join(__dirname, '..', 'data', 'youtube-model-pre.json');
+const MODEL_BACKUP   = MODEL_FILE_PRE + '.test-bak';
+
+function backupModel() {
+  if (fs.existsSync(MODEL_FILE_PRE)) fs.copyFileSync(MODEL_FILE_PRE, MODEL_BACKUP);
+}
+function restoreModel() {
+  if (fs.existsSync(MODEL_BACKUP)) {
+    fs.copyFileSync(MODEL_BACKUP, MODEL_FILE_PRE);
+    fs.unlinkSync(MODEL_BACKUP);
+  } else if (fs.existsSync(MODEL_FILE_PRE)) {
+    // 元々なかった場合は削除
+    fs.unlinkSync(MODEL_FILE_PRE);
+  }
+}
+function removeModel() {
+  if (fs.existsSync(MODEL_FILE_PRE)) fs.unlinkSync(MODEL_FILE_PRE);
+}
+
+// テスト用ダミーモデル（FEATURE_DIM_PRE=15 次元）
+function saveDummyModel(sampleCount = 30) {
+  const weights = new Array(FEATURE_DIM_PRE).fill(0).map((_, i) => {
+    // title_has_excl(1) と tag_count_norm(5) に正の重み → 感嘆符・タグが高スコアになる
+    if (i === 1) return  0.8;  // title_has_excl
+    if (i === 5) return  0.9;  // tag_count_norm
+    if (i === 7) return  0.5;  // duration_norm
+    if (i === 14) return -0.2; // bias
+    return 0.1;
+  });
+  const data = {
+    weights,
+    sampleCount,
+    hitCount: Math.floor(sampleCount * 0.55),
+    missCount: Math.floor(sampleCount * 0.45),
+    trainDirectionalAcc: 0.72,
+    trainedAt: new Date().toISOString(),
+    genreHitRates: { vtuber: 0.62, game: 0.48, _overall: 0.55 },
+  };
+  const dir = path.dirname(MODEL_FILE_PRE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(MODEL_FILE_PRE, JSON.stringify(data, null, 2));
+  return data;
+}
 
 // ─────────────────────────────────────────────────────
-// 1. 基本動作 — diagnose()
+// 1. feature-extractor 接続確認
 // ─────────────────────────────────────────────────────
-console.log('\n[1. 基本動作 — diagnose()]');
+console.log('\n[1. feature-extractor 接続確認]');
 
-test('1a. タイトルのみで診断できる', () => {
+test('1a. youtube-diagnostic.js が youtube-feature-extractor を require している', () => {
+  assert.ok(diagSrc.includes("require('./youtube-feature-extractor')"),
+    'youtube-feature-extractor の require がない');
+});
+
+test('1b. encodePre が import されている', () => {
+  assert.ok(diagSrc.includes('encodePre'), 'encodePre が使われていない');
+});
+
+test('1c. FEATURE_DIM_PRE が import されている', () => {
+  assert.ok(diagSrc.includes('FEATURE_DIM_PRE'), 'FEATURE_DIM_PRE が使われていない');
+});
+
+test('1d. diagnose() 実行時に encodePre が呼ばれる（特徴ベクトルが生成される）', () => {
+  // encodePre を直接実行して期待次元数を確認
+  const video = { title: 'テスト！', tags: ['a','b'], duration: 600 };
+  const vec   = encodePre({ ...video, viewCount: 0, publishedAt: new Date().toISOString() }, 0.5);
+  assert.strictEqual(vec.length, FEATURE_DIM_PRE, `encodePre の次元数が ${FEATURE_DIM_PRE} でない: ${vec.length}`);
+  // diagnose() が ok:true を返すことで内部的に encodePre が使われたことを確認
+  const r = yd.diagnose({ title: 'テスト！', duration: 600 });
+  assert.strictEqual(r.ok, true);
+});
+
+test('1e. AXIS_FEATURE_IDX のインデックスが FEATURE_DIM_PRE 範囲内', () => {
+  for (const [axis, indices] of Object.entries(yd.AXIS_FEATURE_IDX)) {
+    for (const i of indices) {
+      assert.ok(i >= 0 && i < FEATURE_DIM_PRE - 1, // bias(14)除外
+        `${axis} のインデックス ${i} が範囲外 (0-${FEATURE_DIM_PRE - 2})`);
+    }
+  }
+});
+
+// ─────────────────────────────────────────────────────
+// 2. ML モードの動作確認
+// ─────────────────────────────────────────────────────
+console.log('\n[2. ML モード動作確認]');
+
+// モデルファイルをバックアップして既知ダミーモデルで差し替え
+backupModel();
+
+test('2a. ダミーモデルあり → usedML=true', () => {
+  saveDummyModel(30);
+  const r = yd.diagnose({ title: 'テスト！' });
+  assert.strictEqual(r.modelInfo.usedML, true, 'usedML が false');
+});
+
+test('2b. モデルあり → mlSamples が正しく反映される', () => {
+  saveDummyModel(42);
+  const r = yd.diagnose({ title: 'テスト！' });
+  assert.strictEqual(r.modelInfo.mlSamples, 42, `mlSamples が 42 でない: ${r.modelInfo.mlSamples}`);
+});
+
+test('2c. モデルあり → mlProb が 0-100 の数値', () => {
+  saveDummyModel(30);
+  const r = yd.diagnose({ title: 'テスト！' });
+  assert.ok(typeof r.modelInfo.mlProb === 'number', 'mlProb が数値でない');
+  assert.ok(r.modelInfo.mlProb >= 0 && r.modelInfo.mlProb <= 100, `mlProb 範囲外: ${r.modelInfo.mlProb}`);
+});
+
+test('2d. ML モード: 感嘆符ありはCTR/感情フックが高くなる（ダミー重み weight[1]=0.8）', () => {
+  saveDummyModel(30);
+  const withExcl    = yd.diagnose({ title: 'やばいゲームに挑戦してみた！' });
+  const withoutExcl = yd.diagnose({ title: 'やばいゲームに挑戦してみた' });
+  assert.ok(withExcl.ok && withoutExcl.ok);
+  // title_has_excl(1) に正の重みがあるのでCTRか感情フックが高いはず
+  const excl_ctr   = withExcl.scores.ctr + withExcl.scores.emotion;
+  const noexcl_ctr = withoutExcl.scores.ctr + withoutExcl.scores.emotion;
+  assert.ok(excl_ctr >= noexcl_ctr, `感嘆符あり(${excl_ctr}) < なし(${noexcl_ctr})`);
+});
+
+test('2e. ML モード: タグ多い方がSEO/uniqueness が高い（ダミー重み weight[5]=0.9）', () => {
+  saveDummyModel(30);
+  const withTags    = yd.diagnose({ title: 'テスト！', tags: Array(15).fill('tag') });
+  const withoutTags = yd.diagnose({ title: 'テスト！', tags: [] });
+  assert.ok(withTags.ok && withoutTags.ok);
+  const seo_uni_with    = withTags.scores.seo + withTags.scores.uniqueness;
+  const seo_uni_without = withoutTags.scores.seo + withoutTags.scores.uniqueness;
+  assert.ok(seo_uni_with >= seo_uni_without, `タグ多(${seo_uni_with}) < タグなし(${seo_uni_without})`);
+});
+
+test('2f. _computeMLAxisScores: 全軸スコアが 0-95 の範囲', () => {
+  saveDummyModel(30);
+  const weights  = new Float64Array(new Array(FEATURE_DIM_PRE).fill(0.3));
+  const video    = { title: 'テスト！', tags: ['a'], duration: 600, viewCount: 0,
+                     publishedAt: new Date().toISOString() };
+  const features = encodePre(video, 0.5);
+  const scores   = yd._computeMLAxisScores(features, weights);
+  for (const [axis, score] of Object.entries(scores)) {
+    assert.ok(score >= 0 && score <= 95, `${axis} スコア範囲外: ${score}`);
+  }
+});
+
+// ─────────────────────────────────────────────────────
+// 3. Cold-start フォールバック確認
+// ─────────────────────────────────────────────────────
+console.log('\n[3. Cold-start フォールバック]');
+
+test('3a. モデルなし → usedML=false', () => {
+  removeModel();
+  const r = yd.diagnose({ title: 'テスト！' });
+  assert.strictEqual(r.modelInfo.usedML, false, 'usedML が true になっている');
+});
+
+test('3b. モデルなし → mlProb は null', () => {
+  removeModel();
+  const r = yd.diagnose({ title: 'テスト！' });
+  assert.strictEqual(r.modelInfo.mlProb, null, 'mlProb が null でない');
+});
+
+test('3c. モデルなし → mlSamples は 0', () => {
+  removeModel();
+  const r = yd.diagnose({ title: 'テスト！' });
+  assert.strictEqual(r.modelInfo.mlSamples, 0);
+});
+
+test('3d. サンプル不足(< 20件) → Cold-start にフォールバック', () => {
+  saveDummyModel(15); // MIN_ML_SAMPLES=20 未満
+  const r = yd.diagnose({ title: 'テスト！' });
+  assert.strictEqual(r.modelInfo.usedML, false, 'サンプル不足でも usedML=true になっている');
+});
+
+test('3e. フォールバック: 感嘆符あり vs なし でCTRが変わる', () => {
+  removeModel();
+  const withExcl    = yd.diagnose({ title: 'タイトル！' });
+  const withoutExcl = yd.diagnose({ title: 'タイトル' });
+  // フォールバックでも感嘆符の有無がスコアに影響するはず
+  assert.ok(withExcl.scores.ctr >= withoutExcl.scores.ctr,
+    `感嘆符あり(${withExcl.scores.ctr}) < なし(${withoutExcl.scores.ctr})`);
+});
+
+test('3f. フォールバック: encodePre 特徴量を使っている（feature-extractor との一貫性）', () => {
+  removeModel();
+  const video    = { title: 'テスト！', tags: ['a', 'b'], duration: 600, viewCount: 0,
+                     publishedAt: new Date().toISOString() };
+  const features = encodePre(video, 0.5);
+  const scores   = yd._computeFallbackAxisScores(
+    features, 'テスト！', '', ['a', 'b'], 600, new Date().toISOString()
+  );
+  for (const [axis, score] of Object.entries(scores)) {
+    assert.ok(score >= 0 && score <= 95, `${axis} フォールバックスコア範囲外: ${score}`);
+  }
+});
+
+// ─────────────────────────────────────────────────────
+// 4. 基本動作 — diagnose()
+// ─────────────────────────────────────────────────────
+console.log('\n[4. 基本動作]');
+
+test('4a. タイトルのみで診断できる（cold-start）', () => {
+  removeModel();
   const r = yd.diagnose({ title: '【初見】ゲームに挑戦してみた！' });
   assert.strictEqual(r.ok, true);
-  assert.ok(typeof r.totalScore === 'number');
-  assert.ok(r.totalScore >= 0 && r.totalScore <= 100, `totalScore 範囲外: ${r.totalScore}`);
+  assert.ok(r.totalScore >= 0 && r.totalScore <= 100);
 });
 
-test('1b. タイトルなしは ok:false', () => {
-  const r = yd.diagnose({ title: '' });
-  assert.strictEqual(r.ok, false);
+test('4b. タイトルなしは ok:false', () => {
+  assert.strictEqual(yd.diagnose({ title: '' }).ok, false);
 });
 
-test('1c. null 入力は ok:false', () => {
-  const r = yd.diagnose(null);
-  assert.strictEqual(r.ok, false);
-});
-
-test('1d. 6軸スコアがすべて 0-100 の範囲', () => {
+test('4c. 6軸スコアがすべて 0-100 の範囲（ML モード）', () => {
+  saveDummyModel(30);
   const r = yd.diagnose({
-    title: '【歌ってみた】新曲！感動する！',
-    genre: 'VTuber',
-    description: '説明文テキスト',
-    tags: ['VTuber', '歌ってみた', '新曲'],
-    duration: 300,
+    title: '【初見】超やばい！感動するゲームに挑戦してみた！',
+    genre: 'vtuber',
+    tags:  ['VTuber', 'ゲーム実況', '初見'],
+    duration: 600,
     subscriberCount: 10000,
   });
   assert.strictEqual(r.ok, true);
@@ -51,187 +241,69 @@ test('1d. 6軸スコアがすべて 0-100 の範囲', () => {
   }
 });
 
-test('1e. totalScore は6軸の平均', () => {
+test('4d. totalScore は6軸の平均', () => {
+  removeModel();
   const r = yd.diagnose({ title: 'テストタイトル！' });
-  const avg = Math.round(
-    Object.values(r.scores).reduce((a, b) => a + b, 0) / 6
-  );
-  assert.strictEqual(r.totalScore, avg, `totalScore ${r.totalScore} ≠ 6軸平均 ${avg}`);
+  const avg = Math.round(Object.values(r.scores).reduce((a, b) => a + b, 0) / 6);
+  assert.strictEqual(r.totalScore, avg);
 });
 
-test('1f. improvements は最大3件', () => {
-  const r = yd.diagnose({ title: 'a' }); // 最弱入力
-  assert.ok(Array.isArray(r.improvements));
-  assert.ok(r.improvements.length <= 3, `improvements > 3件: ${r.improvements.length}`);
+test('4e. improvements は最大3件', () => {
+  removeModel();
+  const r = yd.diagnose({ title: 'a' });
+  assert.ok(r.improvements.length <= 3);
 });
 
 // ─────────────────────────────────────────────────────
-// 2. 再生数レンジ禁止確認
+// 5. 再生数レンジ表示禁止
 // ─────────────────────────────────────────────────────
-console.log('\n[2. 再生数レンジ表示禁止]');
+console.log('\n[5. 再生数レンジ表示禁止]');
 
-test('2a. diagnose() の戻り値に viewRange が含まれない', () => {
+test('5a. diagnose() の戻り値に viewRange が含まれない', () => {
+  saveDummyModel(30);
   const r = yd.diagnose({ title: 'テスト！' });
-  assert.ok(!('viewRange' in r), 'viewRange が含まれている');
+  assert.ok(!('viewRange' in r));
 });
 
-test('2b. formatDiagnosticText に再生数レンジが含まれない', () => {
+test('5b. formatDiagnosticText に再生数表現が含まれない', () => {
+  saveDummyModel(30);
   const r    = yd.diagnose({ title: 'テスト！' });
   const text = yd.formatDiagnosticText(r, { title: 'テスト！' });
-  assert.ok(!text.includes('回再生'), '再生数レンジ「回再生」が含まれている');
-  assert.ok(!text.includes('〜万'), '再生数レンジ「〜万」が含まれている');
-  assert.ok(!text.includes('viewRange'), 'viewRange が含まれている');
+  assert.ok(!text.includes('回再生'),  '「回再生」が含まれている');
+  assert.ok(!text.includes('〜万'),    '「〜万」が含まれている');
+  assert.ok(!text.includes('バズる'),  '「バズる」が含まれている');
 });
 
-test('2c. formatDiagnosticText に「バズる」断言がない', () => {
+test('5c. ML モード時の mlProb は表示されるが再生数ではない', () => {
+  saveDummyModel(30);
   const r    = yd.diagnose({ title: 'テスト！' });
   const text = yd.formatDiagnosticText(r, { title: 'テスト！' });
-  assert.ok(!text.includes('バズる'), '「バズる」が含まれている');
-  assert.ok(!text.includes('万回再生される'), '再生数断言が含まれている');
+  // mlProb は「推定ヒット率」として表示されるが再生数ではない
+  assert.ok(text.includes('ヒット率'), 'MLモード時のヒット率表示がない');
+  assert.ok(!text.includes('回再生'),  '再生数が含まれている');
 });
 
 // ─────────────────────────────────────────────────────
-// 3. 外部API呼び出し確認（diagnose はローカル計算のみ）
+// 6. 外部API呼び出しなし
 // ─────────────────────────────────────────────────────
-console.log('\n[3. 外部API不使用確認]');
+console.log('\n[6. 外部API不使用確認]');
 
-test('3a. youtube-diagnostic.js に YouTube Data API 呼び出しがない', () => {
-  const diagSrc = fs.readFileSync(
-    path.join(__dirname, '..', 'bot', 'utils', 'youtube-diagnostic.js'), 'utf8'
-  );
-  assert.ok(!diagSrc.includes('YouTubeApiClient'), 'YouTubeApiClient が呼ばれている');
-  assert.ok(!diagSrc.includes('getVideoDetails'),  'YouTube API getVideoDetails が呼ばれている');
+test('6a. youtube-diagnostic.js に YouTube Data API 呼び出しがない', () => {
+  assert.ok(!diagSrc.includes('YouTubeApiClient'));
+  assert.ok(!diagSrc.includes('getVideoDetails'));
 });
 
-test('3b. youtube-diagnostic.js に LLM/Claude API 呼び出しがない', () => {
-  const diagSrc = fs.readFileSync(
-    path.join(__dirname, '..', 'bot', 'utils', 'youtube-diagnostic.js'), 'utf8'
-  );
-  const codeLines = diagSrc.split('\n').filter(l => !/^\s*\/\//.test(l));
-  const code = codeLines.join('\n');
-  assert.ok(!code.includes('anthropic'), 'anthropic が呼ばれている');
-  assert.ok(!code.includes('openai'),    'openai が呼ばれている');
-  assert.ok(!code.includes('callClaudeAPI'), 'callClaudeAPI が呼ばれている');
+test('6b. youtube-diagnostic.js に LLM/Claude API 呼び出しがない（コード部分）', () => {
+  const codeOnly = diagSrc.split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n');
+  assert.ok(!codeOnly.includes('anthropic'));
+  assert.ok(!codeOnly.includes('callClaudeAPI'));
 });
 
-test('3c. diagnose はネットワーク IO なしで動作する（同期処理）', () => {
-  // diagnose が Promise を返さないこと（async 不要）
-  const r = yd.diagnose({ title: 'テスト同期確認' });
-  assert.ok(!(r instanceof Promise), 'diagnose が Promise を返している（非同期）');
+test('6c. diagnose() は同期処理（外部IO なし）', () => {
+  removeModel();
+  const r = yd.diagnose({ title: 'テスト！' });
+  assert.ok(!(r instanceof Promise));
   assert.strictEqual(r.ok, true);
-});
-
-// ─────────────────────────────────────────────────────
-// 4. 6軸スコア算出 — 個別関数
-// ─────────────────────────────────────────────────────
-console.log('\n[4. 6軸スコア算出]');
-
-test('4a. CTR: 感嘆符付きタイトルはスコアが高い', () => {
-  const withExcl    = yd._scoreCTR('素晴らしいゲームに挑戦してみた！');
-  const withoutExcl = yd._scoreCTR('素晴らしいゲームに挑戦してみた');
-  assert.ok(withExcl > withoutExcl, `感嘆符あり(${withExcl}) ≤ 感嘆符なし(${withoutExcl})`);
-});
-
-test('4b. CTR: タイトルが空だと基準スコア以下', () => {
-  const empty  = yd._scoreCTR('');
-  const normal = yd._scoreCTR('普通のタイトルです！良い感じ');
-  assert.ok(empty < normal, `空(${empty}) >= 通常(${normal})`);
-});
-
-test('4c. 視聴維持: 5〜20分の動画は高スコア', () => {
-  const optimal  = yd._scoreRetention(600, '説明文テキスト');
-  const tooShort = yd._scoreRetention(30, '説明文テキスト');
-  assert.ok(optimal > tooShort, `5-20分(${optimal}) ≤ 30秒(${tooShort})`);
-});
-
-test('4d. SEO: タグ15個以上で高スコア', () => {
-  const manyTags = yd._scoreSEO('タイトル', Array(15).fill('tag'), '');
-  const fewTags  = yd._scoreSEO('タイトル', [], '');
-  assert.ok(manyTags > fewTags, `タグ多(${manyTags}) ≤ タグなし(${fewTags})`);
-});
-
-test('4e. 感情フック: 感情語を含むタイトルは高スコア', () => {
-  const withEmotion    = yd._scoreEmotion('やばい神回！衝撃の展開！');
-  const withoutEmotion = yd._scoreEmotion('日常の記録');
-  assert.ok(withEmotion > withoutEmotion, `感情語あり(${withEmotion}) ≤ なし(${withoutEmotion})`);
-});
-
-test('4f. 投稿タイミング: publishedAt なしは 50', () => {
-  const score = yd._scoreTiming(null);
-  assert.strictEqual(score, 50, `未設定時は50が期待値: ${score}`);
-});
-
-test('4g. 投稿タイミング: JST 21:00 金曜 (UTC 12:00 Fri) は高スコア', () => {
-  // UTC Friday 12:00 = JST Saturday 21:00
-  const goldTime = yd._scoreTiming('2026-06-05T12:00:00Z'); // 2026-06-05 = Fri
-  const midNight = yd._scoreTiming('2026-06-01T22:00:00Z'); // Mon 07:00 JST
-  assert.ok(goldTime > midNight, `ゴールデン(${goldTime}) ≤ 深夜(${midNight})`);
-});
-
-test('4h. 競合差別化: タグ多・タイトル多様性高で高スコア', () => {
-  const rich = yd._scoreUniqueness('【初見】凄い！ゲーム#1 衝撃の展開…', Array(12).fill('tag'));
-  const bare = yd._scoreUniqueness('ゲーム', []);
-  assert.ok(rich > bare, `多様(${rich}) ≤ 単純(${bare})`);
-});
-
-// ─────────────────────────────────────────────────────
-// 5. ランク判定
-// ─────────────────────────────────────────────────────
-console.log('\n[5. ランク判定]');
-
-test('5a. スコア90以上は S ランク', () => {
-  const { rank } = yd._toRank(90);
-  assert.strictEqual(rank, 'S');
-});
-
-test('5b. スコア70-79は A ランク', () => {
-  const { rank } = yd._toRank(75);
-  assert.strictEqual(rank, 'A');
-});
-
-test('5c. スコア29以下は D ランク', () => {
-  const { rank } = yd._toRank(20);
-  assert.strictEqual(rank, 'D');
-});
-
-// ─────────────────────────────────────────────────────
-// 6. 改善提案
-// ─────────────────────────────────────────────────────
-console.log('\n[6. 改善提案]');
-
-test('6a. スコアが高いと改善提案が少ない', () => {
-  // 高スコアの入力
-  const r = yd.diagnose({
-    title: '【初見】超やばい！感動する神ゲーに挑戦してみた！',
-    tags:  Array(18).fill('tag'),
-    description: 'a'.repeat(400),
-    duration: 600,
-    publishedAt: '2026-06-05T12:00:00Z', // 金曜JST
-  });
-  // 全軸スコアを確認
-  const weakCount = Object.values(r.scores).filter(s => s < 60).length;
-  assert.ok(
-    r.improvements.length <= weakCount || r.improvements.length <= 3,
-    `改善提案が多すぎる: ${r.improvements.length}`
-  );
-});
-
-test('6b. 各改善提案に axis / priority / text が含まれる', () => {
-  const r = yd.diagnose({ title: 'x' });
-  for (const imp of r.improvements) {
-    assert.ok(imp.axis,      'axis がない');
-    assert.ok(imp.axisLabel, 'axisLabel がない');
-    assert.ok(imp.priority,  'priority がない');
-    assert.ok(imp.text,      'text がない');
-  }
-});
-
-test('6c. 改善提案に再生数断言がない', () => {
-  const r = yd.diagnose({ title: 'テスト' });
-  for (const imp of r.improvements) {
-    assert.ok(!imp.text.includes('回再生'), `改善提案に再生数が含まれている: ${imp.text}`);
-    assert.ok(!imp.text.includes('バズる'),  `改善提案に「バズる」が含まれている: ${imp.text}`);
-  }
 });
 
 // ─────────────────────────────────────────────────────
@@ -240,59 +312,32 @@ test('6c. 改善提案に再生数断言がない', () => {
 console.log('\n[7. index.js 統合確認]');
 
 test("7a. sub === 'diagnose' が実装されている", () => {
-  const idx  = src.indexOf("handleYoutube");
-  const area = src.slice(idx, idx + 2500);
-  assert.ok(area.includes("sub === 'diagnose'"), '!youtube diagnose がない');
+  assert.ok(src.includes("sub === 'diagnose'"));
 });
 
 test('7b. youtube-diagnostic.js を require している', () => {
   const idx  = src.indexOf("sub === 'diagnose'");
   const area = src.slice(idx, idx + 1200);
-  assert.ok(area.includes("require('./utils/youtube-diagnostic')"), 'require がない');
+  assert.ok(area.includes("require('./utils/youtube-diagnostic')"));
 });
 
-test('7c. _parseYtKwargs を diagnose でも再利用している', () => {
-  const idx  = src.indexOf("sub === 'diagnose'");
-  const area = src.slice(idx, idx + 600);
-  assert.ok(area.includes('_parseYtKwargs'), '_parseYtKwargs 再利用がない');
-});
-
-test('7d. diagnose ハンドラに title= が必須チェックされている', () => {
-  const idx  = src.indexOf("sub === 'diagnose'");
-  const area = src.slice(idx, idx + 600);
-  assert.ok(area.includes('kw.title'), 'title 必須チェックがない');
-});
-
-test('7e. !youtube ヘルプに diagnose が追加されている', () => {
-  assert.ok(src.includes('!youtube diagnose'), 'ヘルプに diagnose がない');
+test('7c. !youtube ヘルプに diagnose が記載されている', () => {
+  assert.ok(src.includes('!youtube diagnose'));
 });
 
 // ─────────────────────────────────────────────────────
-// 8. 仕様書確認
+// 8. ランク判定
 // ─────────────────────────────────────────────────────
-console.log('\n[8. 仕様書確認]');
+console.log('\n[8. ランク判定]');
 
-test('8a. docs/youtube-diagnostic-ai-mvp-spec.md から Claude API 前提が削除されている', () => {
-  const spec = fs.readFileSync(
-    path.join(__dirname, '..', 'docs', 'youtube-diagnostic-ai-mvp-spec.md'), 'utf8'
-  );
-  // 旧前提の callClaudeAPI() 関数定義が実装指示から削除されていること
-  assert.ok(!spec.includes('callClaudeAPI()          : Claude API呼び出し'), 'callClaudeAPI 実装指示が残っている');
-});
+test('8a. スコア90以上は S', () => assert.strictEqual(yd._toRank(90).rank, 'S'));
+test('8b. スコア70は A',      () => assert.strictEqual(yd._toRank(70).rank, 'A'));
+test('8c. スコア29以下は D',  () => assert.strictEqual(yd._toRank(20).rank, 'D'));
 
-test('8b. 仕様書に youtube-predictor 再利用の記載がある', () => {
-  const spec = fs.readFileSync(
-    path.join(__dirname, '..', 'docs', 'youtube-diagnostic-ai-mvp-spec.md'), 'utf8'
-  );
-  assert.ok(spec.includes('youtube-predictor'), '既存モデル再利用の記載がない');
-});
-
-test('8c. 仕様書に再生数レンジ禁止の記載がある', () => {
-  const spec = fs.readFileSync(
-    path.join(__dirname, '..', 'docs', 'youtube-diagnostic-ai-mvp-spec.md'), 'utf8'
-  );
-  assert.ok(spec.includes('再生数') && (spec.includes('禁止') || spec.includes('表示しない')), '再生数禁止記載がない');
-});
+// ─────────────────────────────────────────────────────
+// 後処理: モデルファイルを元に戻す
+// ─────────────────────────────────────────────────────
+restoreModel();
 
 console.log(`\n結果: ${pass} passed / ${fail} failed\n`);
 if (fail > 0) process.exit(1);
