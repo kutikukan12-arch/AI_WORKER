@@ -28,7 +28,7 @@
 
 const fs   = require('fs');
 const path = require('path');
-const { redact } = require('./redact');
+const { redact, redactSecretOnly } = require('./redact');
 
 const DATA_DIR        = path.join(__dirname, '..', '..', 'data');
 const INCIDENTS_FILE  = path.join(DATA_DIR, 'incidents.json');
@@ -156,6 +156,25 @@ function _buildLessonCandidate(inc) {
 }
 
 // ─────────────────────────────────────────────────────
+// _sanitizeRefsTags(arr) — refs / tags 保存前の秘密情報除去
+//
+// defense-in-depth: refs は task/review/commit/decision 参照 ID が
+// 入るべき場所だが、誤って秘密情報が混入した場合にマスクする。
+// PII マスクは行わない（refs は ID 参照であり個人情報を含まない想定）。
+// redactSecretOnly を使うことで通常の ID は壊さない。
+//
+// 対象例:
+//   OK   : "task_1780493005927", "commit:3f09360", "dec_xxx"
+//   MASK : "ghp_AAAA..." → "[MASKED]"
+// ─────────────────────────────────────────────────────
+function _sanitizeRefsTags(arr) {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .filter(Boolean)
+    .map(s => redactSecretOnly(String(s)).slice(0, 200));
+}
+
+// ─────────────────────────────────────────────────────
 // openIncident(opts) — インシデントを起票
 //
 // opts: { title, summary, projectId, severity, refs, tags }
@@ -174,11 +193,14 @@ function openIncident(opts) {
     };
   }
 
-  // 保存前に redact 適用（秘密情報・PII をマスク）
+  // 保存前 redact 適用（title / summary: 秘密情報 + PII をマスク）
   const safeTitle   = redact(String(opts.title).trim()).slice(0, 200);
   const safeSummary = redact(String(opts.summary || '').trim()).slice(0, 500);
+  // refs / tags: 秘密情報のみマスク（ID 参照の役割を維持するため PII マスクは行わない）
+  const safeRefs    = _sanitizeRefsTags(opts.refs);
+  const safeTags    = _sanitizeRefsTags(opts.tags);
 
-  const rec  = _buildEnvelope({ ...opts, title: safeTitle, summary: safeSummary });
+  const rec  = _buildEnvelope({ ...opts, title: safeTitle, summary: safeSummary, refs: safeRefs, tags: safeTags });
   const list = _load();
   list.push(rec);
   _save(list);

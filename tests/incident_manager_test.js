@@ -163,6 +163,47 @@ test('3g. 複数件起票できる', () => {
 });
 
 // ─────────────────────────────────────────────────────
+// 3h–3k. refs / tags の defense-in-depth（N-1 守谷CTOレビュー対応）
+// ─────────────────────────────────────────────────────
+test('3h. refs に ghp_ 系秘密が混入した場合マスクされる', () => {
+  resetIncidents();
+  const fakeToken = 'ghp_' + 'D'.repeat(36);
+  im.openIncident({ title: 'refs secret テスト', refs: [fakeToken, 'task_abc'] });
+  const rec = im._load()[0];
+  assert.ok(!rec.refs.join(',').includes(fakeToken), 'ghp_ トークンが refs に残っている');
+  assert.ok(rec.refs.some(r => r.includes('[MASKED]')), 'MASKED が refs にない');
+});
+
+test('3i. refs に github_pat_ 系秘密が混入した場合マスクされる', () => {
+  resetIncidents();
+  const fakePat = 'github_pat_' + 'E'.repeat(80);
+  im.openIncident({ title: 'refs PAT テスト', refs: [fakePat] });
+  const rec = im._load()[0];
+  assert.ok(!rec.refs.join(',').includes(fakePat), 'github_pat_ が refs に残っている');
+  assert.ok(rec.refs.some(r => r.includes('[MASKED]')), 'MASKED が refs にない');
+});
+
+test('3j. tags に秘密形式が入った場合マスクされる', () => {
+  resetIncidents();
+  const fakeKey = 'sk-proj-' + 'F'.repeat(90);
+  im.openIncident({ title: 'tags secret テスト', tags: [fakeKey, 'security'] });
+  const rec = im._load()[0];
+  assert.ok(!rec.tags.join(',').includes(fakeKey), 'sk-proj- が tags に残っている');
+  assert.ok(rec.tags.some(t => t.includes('[MASKED]')), 'MASKED が tags にない');
+  assert.ok(rec.tags.includes('security'), '正常な tag が消えた');
+});
+
+test('3k. 通常の refs は壊れない', () => {
+  resetIncidents();
+  const normalRefs = ['task_1780493005927', 'commit:3f09360', 'dec_1780492996639'];
+  im.openIncident({ title: '通常 refs テスト', refs: normalRefs });
+  const rec = im._load()[0];
+  assert.ok(rec.refs.includes('task_1780493005927'), 'task_ ID が壊れた');
+  assert.ok(rec.refs.includes('commit:3f09360'),     'commit: ref が壊れた');
+  assert.ok(rec.refs.includes('dec_1780492996639'),  'dec_ ID が壊れた');
+});
+
+// ─────────────────────────────────────────────────────
 // 4. listIncidents — 一覧表示
 // ─────────────────────────────────────────────────────
 console.log('\n[4. listIncidents — 一覧表示]');
