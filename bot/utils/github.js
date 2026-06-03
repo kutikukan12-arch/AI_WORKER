@@ -30,10 +30,20 @@ const os = require('os');
 const logger = require('./logger');
 
 // ─── 設定（環境変数から取得）───
-const GITHUB_TOKEN  = process.env.GITHUB_TOKEN;
+//
+// GITHUB_TOKEN は毎回 process.env から読み直す（関数 getGithubToken() を使用）。
+// Bot 起動後に .env を更新してトークンを再発行した場合でも、
+// 次回 push 時に最新値が使われる。
+// ※ モジュールレベルの const に固定すると再起動なしでは反映されない。
+//
 const GITHUB_REPO   = process.env.GITHUB_REPO;   // 例: username/repo-name
 // GITHUB_BRANCH は push 先のデフォルト branch（未指定なら現在branch を使う）
 const GITHUB_BRANCH_DEFAULT = process.env.GITHUB_BRANCH || null;
+
+/** 毎回 process.env から最新トークンを取得する */
+function getGithubToken() {
+  return process.env.GITHUB_TOKEN || null;
+}
 
 // git リポジトリのパス（デフォルト: AI_WORKER ルート）
 const GIT_REPO_PATH = process.env.GIT_REPO_PATH
@@ -240,7 +250,7 @@ function generateCommitMessage(prompt, taskId, changedFiles) {
 //   git remote -v にトークンが表示されないようにする。
 // ─────────────────────────────────────────────────────
 function configureGitHubRemote(repoPath) {
-  if (!GITHUB_TOKEN || !GITHUB_REPO) {
+  if (!getGithubToken() || !GITHUB_REPO) {
     logger.info('GITHUB_TOKEN または GITHUB_REPO が未設定。Push をスキップします。');
     return false;
   }
@@ -390,7 +400,9 @@ async function commitAndPush(prompt, taskId) {
     const currentBranch = getCurrentBranch(repoPath) || GITHUB_BRANCH_DEFAULT || 'master';
 
     // トークンを HTTP Authorization ヘッダーで渡す（remote URL には埋め込まない）
-    const authHeader = Buffer.from(`x-oauth-basic:${GITHUB_TOKEN}`).toString('base64');
+    // getGithubToken() で毎回 process.env から最新値を取得（再起動不要で反映）
+    const currentToken = getGithubToken();
+    const authHeader = Buffer.from(`x-oauth-basic:${currentToken}`).toString('base64');
     const gitAuthConfig = `-c http.extraheader="Authorization: Basic ${authHeader}"`;
 
     try {
