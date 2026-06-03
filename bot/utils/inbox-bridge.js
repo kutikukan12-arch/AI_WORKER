@@ -38,7 +38,7 @@ const REPORT      = path.join(OUTBOX_DIR, 'report.md');
 // Phase3: 社員別ディレクトリ
 // ─────────────────────────────────────────────────────
 // ホワイトリスト: パストラバーサル防止。ここ以外の worker 名は拒否する。
-const VALID_WORKERS = ['miyagi', 'moriya', 'shiraishi', 'aizawa', 'ichikawa', 'kanemori', 'kurokawa', 'ikuno'];
+const VALID_WORKERS = ['miyagi', 'moriya', 'shiraishi', 'aizawa', 'ichikawa', 'kanemori', 'kurokawa', 'ikuno', 'kanzaki'];
 
 const WORKER_DISPLAY = {
   miyagi:    '宮城 Lead Engineer',
@@ -49,6 +49,7 @@ const WORKER_DISPLAY = {
   kanemori:  '金森 CFO',
   kurokawa:  '黒川 Chief of Staff',
   ikuno:     '育野',
+  kanzaki:   '神崎 VP',
 };
 
 function _workerInboxPath(worker)   { return path.join(DATA_DIR, 'inbox',  worker, 'incoming.md'); }
@@ -59,9 +60,9 @@ function _workerReportPath(worker)  { return path.join(DATA_DIR, 'outbox', worke
 // 日本語名 / アルファベット / 上記 valid のみ許可
 const WORKER_ALIAS = {
   '宮城': 'miyagi', '守谷': 'moriya', '白石': 'shiraishi', '相沢': 'aizawa',
-  '市川': 'ichikawa', '金森': 'kanemori', '黒川': 'kurokawa', '育野': 'ikuno',
+  '市川': 'ichikawa', '金森': 'kanemori', '黒川': 'kurokawa', '育野': 'ikuno', '神崎': 'kanzaki',
   a: 'miyagi', b: 'moriya', c: 'shiraishi', d: 'aizawa',
-  e: 'ichikawa', f: 'kanemori', g: 'kurokawa', h: 'ikuno',
+  e: 'ichikawa', f: 'kanemori', g: 'kurokawa', h: 'ikuno', i: 'kanzaki',
 };
 
 function resolveWorker(input) {
@@ -149,7 +150,7 @@ const CLASSIFIERS = {
 // ─────────────────────────────────────────────────────
 // 宛先検出
 // ─────────────────────────────────────────────────────
-const MEMBER_RE = /宮城|守谷|白石|相沢|市川|金森|黒川|育野|miyagi|moriya|shiraishi|aizawa|ichikawa|kanemori|kurokawa|ikuno/i;
+const MEMBER_RE = /宮城|守谷|白石|相沢|市川|金森|黒川|育野|神崎|miyagi|moriya|shiraishi|aizawa|ichikawa|kanemori|kurokawa|ikuno|kanzaki/i;
 const MEMBER_MAP = {
   '宮城': 'miyagi', 'miyagi': 'miyagi',
   '守谷': 'moriya', 'moriya': 'moriya',

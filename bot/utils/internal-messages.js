@@ -57,6 +57,7 @@ const MEMBER_ALIASES = {
   kanemori: ['kanemori', '金森', 'f', 'F'],
   kurokawa: ['kurokawa', '黒川', 'g', 'G'],
   ikuno:    ['ikuno', '育野', 'h', 'H'],
+  kanzaki:  ['kanzaki', '神崎', 'i', 'I'],
   ceo:      ['ceo', 'CEO'],
 };
 
@@ -69,6 +70,7 @@ const MEMBER_DISPLAY = {
   kanemori:  '金森 CFO',
   kurokawa:  '黒川 Chief of Staff',
   ikuno:     '育野',
+  kanzaki:   '神崎 VP',
   ceo:       'CEO',
 };
 

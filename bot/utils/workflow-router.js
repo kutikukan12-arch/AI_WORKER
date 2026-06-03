@@ -41,6 +41,8 @@ const WORKFLOW_EVENTS = {
   // Phase10 追加
   LESSON_CANDIDATE:    'LESSON_CANDIDATE',
   INCIDENT_CANDIDATE:  'INCIDENT_CANDIDATE',
+  // 神崎 VP 追加: 判断材料整理依頼
+  VP_BRIEF_REQUEST:    'VP_BRIEF_REQUEST',
 };
 
 // ─── Phase10: 固定ルート allowlist ──────────────────
@@ -72,6 +74,12 @@ const FIXED_ROUTES = {
     allowedFrom: null,          // 誰からでも（重大度判断は育野が行う）
     to:          'ikuno',
     reason:      '固定ルート: Incident候補 → 育野 Learning',
+  },
+  // 神崎 VP: 社長 → 神崎への判断材料整理依頼
+  VP_BRIEF_REQUEST: {
+    allowedFrom: ['ceo'],       // 社長のみ（VP は判断代行禁止のため経路を制限）
+    to:          'kanzaki',
+    reason:      '固定ルート: CEO → 神崎 VP 判断材料整理',
   },
 };
 
@@ -166,6 +174,24 @@ const ROUTING_TABLE = {
       `\nタスク: ${ctx.taskId || '（未指定）'}\n` +
       `\n内容:\n${ctx.summary || '（詳細なし）'}\n` +
       `\n→ 必要なら \`!incident open\` を手動実行してください。`,
+  },
+  // 神崎 VP: 判断材料整理依頼
+  // 社長が重要Decision前に論点整理を依頼する際に使う。
+  // 神崎は決めない。判断材料を社長に提出するだけ。
+  VP_BRIEF_REQUEST: {
+    to:      'kanzaki',
+    label:   '神崎 VP',
+    message: (ctx) =>
+      `【判断材料整理依頼】\n` +
+      `社長より判断材料の整理をお願いします。\n` +
+      `\nテーマ: ${ctx.summary || '（詳細なし）'}\n` +
+      (ctx.taskId ? `\n関連: ${ctx.taskId}\n` : '') +
+      `\n以下を整理してください:\n` +
+      `- 各AI社員の意見・立場\n` +
+      `- 事業・開発のバランス\n` +
+      `- メリット / リスク\n` +
+      `- 長期ロードマップへの影響\n` +
+      `\n→ 整理後、社長に判断材料を提出してください（神崎は決定しません）。`,
   },
 };
 

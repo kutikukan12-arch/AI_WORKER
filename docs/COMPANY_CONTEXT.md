@@ -78,6 +78,13 @@
 - ルーティング受信: `INCIDENT_FOUND`
 - 管理: `!decision log` / `!incident open`
 
+**🅸 神崎 VP (Vice President / Strategy Officer)**
+- 役割: 社長の意思決定補助・各AI社員の意見整理・部門間統合・長期ロードマップ管理
+- チャンネル: `#神崎-vp`
+- コマンド: `!workflow handoff VP_BRIEF_REQUEST ceo <テーマ>`
+- **禁止: CEO最終判断の代行 / 承認代理 / READY/NEED_FIX技術判定 / 勝手な支出決定**
+- 神崎の仕事: 「社長が良い判断をできる状態を作ること」
+
 ---
 
 ## 3. 完成済みシステム
@@ -97,7 +104,7 @@
 | Desktop Inbox Bridge | `!inbox check` `!inbox send` | ✅ 稼働中 |
 | Desktop Agent | `node scripts/desktop-agent.js watch` | ✅ 稼働中 |
 | Worker Loop (Phase3) | `!inbox check <worker>` | ✅ 稼働中 |
-| Workflow Router | `!workflow route <event>` | ✅ 稼働中 |
+| Workflow Router | `!workflow route <event>` `!workflow handoff` | ✅ 稼働中 |
 | Worker Status | `!worker status` `!worker update` | ✅ 稼働中 |
 | Discord Company Infrastructure | 16チャンネル / 3カテゴリ | ✅ 本番稼働 |
 | Internal Messages | `!msg send` `!msg pending` | ✅ 稼働中 |
@@ -130,9 +137,20 @@
   ↓ (REVIEW_READY)
 相沢 CS        — ユーザー視点確認・βテスト
   ↓
+神崎 VP        — 判断材料整理・論点まとめ（大きな判断の場合）
+  ↓
 社長 CEO       — 最終判断・リリース承認
   ↓
 育野 Learning  — Decision / Lesson 記録
+```
+
+**神崎ルート（日常/大方針のみ）:**
+```
+神崎
+  ↓
+AI_WORKER 社員（日常運営）
+
+社長 → ChatGPT外部相談 → 神崎へ方針共有 → AI_WORKER実行（大きな方向性）
 ```
 
 ### Incident フロー

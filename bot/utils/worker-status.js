@@ -49,6 +49,7 @@ const WORKER_DISPLAY = {
   kanemori:  '🅵 金森 CFO',
   kurokawa:  '🅶 黒川 CoS',
   ikuno:     '🅷 育野',
+  kanzaki:   '🅸 神崎 VP',
 };
 
 const VALID_WORKERS = Object.keys(WORKER_DISPLAY);
