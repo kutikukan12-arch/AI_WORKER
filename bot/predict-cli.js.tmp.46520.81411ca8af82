@@ -29,6 +29,7 @@ YouTube ヒット予測 CLI
       --tag        タグ（複数指定）          （例: --tag AI --tag 技術）
       --desc       概要欄テキスト
       --published  投稿日時 ISO 8601         （例: 2024-03-01T18:00:00Z）
+  -g, --genre      ジャンル名               （例: gaming / music / education）
 
 オプション（出力）:
       --json       結果を JSON でも出力する

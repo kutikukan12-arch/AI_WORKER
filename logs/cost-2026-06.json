@@ -1,19 +1,19 @@
 {
-  "actualCostUsd": 0.055997000000000005,
-  "estimatedEquivalentUsd": 3.3181,
+  "actualCostUsd": 0.062892,
+  "estimatedEquivalentUsd": 8.3012,
   "byActualSource": {
-    "openai": 0.055997000000000005
+    "openai": 0.062892
   },
   "byEquivalentSource": {
-    "claudeCode": 3.3181
+    "claudeCode": 8.3012
   },
   "byProject": {
-    "unknown": 0.055997000000000005
+    "unknown": 0.062892
   },
-  "taskCount": 8,
-  "lastUpdated": "2026-06-02T19:25:38.424Z",
-  "totalUsd": 0.055997000000000005,
+  "taskCount": 9,
+  "lastUpdated": "2026-06-03T00:04:59.131Z",
+  "totalUsd": 0.062892,
   "bySource": {
-    "openai": 0.055997000000000005
+    "openai": 0.062892
   }
 }

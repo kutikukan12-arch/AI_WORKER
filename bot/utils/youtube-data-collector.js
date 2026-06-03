@@ -169,9 +169,10 @@ function loadAllSeedData() {
     .flatMap(f => {
       try {
         const d = JSON.parse(fs.readFileSync(path.join(SEEDS_DIR, f), 'utf8'));
+        const genre = d.genre || f.replace('.json', '');
         return [
-          ...d.hits.map(v => ({ ...v, label: 'hit' })),
-          ...d.misses.map(v => ({ ...v, label: 'miss' })),
+          ...d.hits.map(v => ({ ...v, label: 'hit',  genre })),
+          ...d.misses.map(v => ({ ...v, label: 'miss', genre })),
         ];
       } catch {
         return [];

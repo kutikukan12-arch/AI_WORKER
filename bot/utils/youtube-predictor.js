@@ -7,10 +7,11 @@
 const fs     = require('fs');
 const path   = require('path');
 const logger = require('./logger');
-const { encode, FEATURE_DIM } = require('./youtube-feature-extractor');
+const { encode, FEATURE_DIM, encodePre, FEATURE_DIM_PRE } = require('./youtube-feature-extractor');
 const { HIT_THRESHOLD, MISS_THRESHOLD } = require('./youtube-data-collector');
 
-const MODEL_FILE    = path.join(__dirname, '..', '..', 'data', 'youtube-model.json');
+const MODEL_FILE     = path.join(__dirname, '..', '..', 'data', 'youtube-model.json');
+const MODEL_FILE_PRE = path.join(__dirname, '..', '..', 'data', 'youtube-model-pre.json');
 const MIN_ML_SAMPLES = 20;
 const MAX_ML_WEIGHT  = 0.7;  // ML の最大混合比率（残りはルールベース）
 
@@ -60,6 +61,17 @@ function _loadModel() {
   return null;
 }
 
+function _loadModelPre() {
+  try {
+    if (fs.existsSync(MODEL_FILE_PRE)) {
+      return JSON.parse(fs.readFileSync(MODEL_FILE_PRE, 'utf8'));
+    }
+  } catch (e) {
+    logger.warn(`[YouTubePredictor] pre-pub model load error: ${e.message}`);
+  }
+  return null;
+}
+
 // ── ルールベーススコア（buzz_ratio） ─────────────────────
 
 function _ruleScore(video) {
@@ -87,8 +99,9 @@ function _isPrePublication(video) {
 }
 
 // ── 投稿前ルールスコア（viewCount 不使用） ───────────────
-// 投稿前に得られる特徴量（title/tags/duration/subscriberCount）のみで採点
-function _ruleScorePrePub(video) {
+// 投稿前に得られる特徴量（title/tags/duration/subscriberCount/genre）のみで採点
+// genreHitRate: ジャンルの過去ヒット率（モデルから取得、不明時は 0.5）
+function _ruleScorePrePub(video, genreHitRate = 0.5) {
   const subs     = video.subscriberCount || 0;
   const title    = video.title           || '';
   const tags     = Array.isArray(video.tags) ? video.tags : [];
@@ -113,7 +126,11 @@ function _ruleScorePrePub(video) {
   // 動画尺（5〜20 分が VOD 最適帯）
   if (duration >= 300 && duration <= 1200) score += 0.05;
 
-  return { score: Math.min(score, 0.90), buzzRatio: null };
+  // ジャンル補正（データ由来のヒット率が平均と乖離している場合に補正）
+  if      (genreHitRate > 0.60) score += 0.05;
+  else if (genreHitRate < 0.40) score -= 0.05;
+
+  return { score: Math.min(Math.max(score, 0.10), 0.90), buzzRatio: null };
 }
 
 // ── 再生数レンジ推定 ──────────────────────────────────────
@@ -148,24 +165,47 @@ function _estimateBenchmark(video) {
   return { genreMedian };
 }
 
+// ── ジャンルヒット率ルックアップ ─────────────────────────
+// genre 文字列に対応するヒット率を preModelData から取得する。
+// 不明なジャンルは全体平均 (_overall) にフォールバック。
+function _lookupGenreHitRate(genre, preModelData) {
+  const rates = preModelData?.genreHitRates;
+  if (!rates) return 0.5;
+  if (genre && rates[genre] !== undefined) return rates[genre];
+  return rates['_overall'] ?? 0.5;
+}
+
 // ── 予測 API ─────────────────────────────────────────────
 
 // video: { viewCount, likeCount, commentCount, title, description,
-//          tags, duration, publishedAt, subscriberCount, videoId? }
+//          tags, duration, publishedAt, subscriberCount, genre?, videoId? }
 // 戻り値:
 //   { probability, label, confidence, buzzRatio, usedML, mlSamples }
 function predict(video) {
   const isPrePub = _isPrePublication(video);
+  const modelData    = _loadModel();
+  const preModelData = isPrePub ? _loadModelPre() : null;
+
+  const genreHitRate = isPrePub
+    ? _lookupGenreHitRate(video.genre, preModelData)
+    : 0.5;
+
   const { score: ruleScore, buzzRatio } = isPrePub
-    ? _ruleScorePrePub(video)
+    ? _ruleScorePrePub(video, genreHitRate)
     : _ruleScore(video);
-  const modelData = _loadModel();
 
   let mlScore  = null;
   let mlSamples = 0;
 
-  // 投稿前はMLモデルを使用しない（like_ratio等のviewCount依存特徴量が0になり miss方向へバイアスするため）
-  if (!isPrePub && modelData?.weights?.length === FEATURE_DIM) {
+  if (isPrePub) {
+    // 投稿前: viewCount/likeCount/commentCount を使わない専用モデルを利用
+    if (preModelData?.weights?.length === FEATURE_DIM_PRE) {
+      const weights = new Float64Array(preModelData.weights);
+      mlScore   = _sigmoid(_dot(weights, encodePre(video, genreHitRate)));
+      mlSamples = preModelData.sampleCount || 0;
+    }
+  } else if (modelData?.weights?.length === FEATURE_DIM) {
+    // 投稿後: エンゲージメント特徴量を含む通常モデルを利用
     const weights = new Float64Array(modelData.weights);
     mlScore   = _sigmoid(_dot(weights, encode(video)));
     mlSamples = modelData.sampleCount || 0;
@@ -184,7 +224,7 @@ function predict(video) {
 
   const viewRange = _estimateViewRange(video, probability, confidence);
   const benchmark = _estimateBenchmark(video);
-  const reasons   = _buildReasons(video, isPrePub, buzzRatio);
+  const reasons   = _buildReasons(video, isPrePub, buzzRatio, genreHitRate);
 
   logger.debug(
     `[YouTubePredictor] ${video.videoId || '?'} ` +
@@ -222,7 +262,7 @@ function train(samples) {
   const hitCount  = y.filter(v => v === 1).length;
   const missCount = y.filter(v => v === 0).length;
 
-  // 学習データ上での方向性正解率
+  // 学習データ上での方向性正解率（通常モデル）
   let correct = 0;
   for (let i = 0; i < X.length; i++) {
     const pred = _sigmoid(_dot(weights, X[i])) >= 0.5 ? 1 : 0;
@@ -243,9 +283,46 @@ function train(samples) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(MODEL_FILE, JSON.stringify(modelData, null, 2));
 
+  // 投稿前専用モデル（viewCount/likeCount/commentCount 不使用 15次元）を同時学習
+  // ジャンル別ヒット率を事前計算し genre_hit_rate 特徴量として使用
+  const genreAccum = {};
+  for (const s of valid) {
+    const g = s.genre || '_unknown';
+    if (!genreAccum[g]) genreAccum[g] = { hit: 0, total: 0 };
+    genreAccum[g].total++;
+    if (s.label === 'hit') genreAccum[g].hit++;
+  }
+  const genreHitRates = {};
+  let totalHit = 0;
+  for (const [g, c] of Object.entries(genreAccum)) {
+    genreHitRates[g] = c.hit / c.total;
+    totalHit += c.hit;
+  }
+  genreHitRates['_overall'] = totalHit / valid.length;
+
+  const XPre    = valid.map(s => encodePre(s, genreHitRates[s.genre || '_unknown'] ?? genreHitRates['_overall'] ?? 0.5));
+  const wPre    = _trainLR(XPre, y);
+  let correctPre = 0;
+  for (let i = 0; i < XPre.length; i++) {
+    const pred = _sigmoid(_dot(wPre, XPre[i])) >= 0.5 ? 1 : 0;
+    if (pred === y[i]) correctPre++;
+  }
+  const trainDirectionalAccPre = Math.round(correctPre / XPre.length * 1000) / 1000;
+  const modelDataPre = {
+    weights:            Array.from(wPre),
+    sampleCount:        valid.length,
+    hitCount,
+    missCount,
+    trainDirectionalAcc: trainDirectionalAccPre,
+    genreHitRates,
+    trainedAt:           new Date().toISOString(),
+  };
+  fs.writeFileSync(MODEL_FILE_PRE, JSON.stringify(modelDataPre, null, 2));
+
   logger.info(
     `[YouTubePredictor] 訓練完了: ${valid.length}件 (hit:${hitCount} miss:${missCount}) ` +
-    `方向性正解率:${(trainDirectionalAcc * 100).toFixed(1)}%`
+    `通常正解率:${(trainDirectionalAcc * 100).toFixed(1)}% ` +
+    `投稿前正解率:${(trainDirectionalAccPre * 100).toFixed(1)}%`
   );
   return modelData;
 }
@@ -253,15 +330,21 @@ function train(samples) {
 // ── モデル状態確認 ─────────────────────────────────────────
 
 function getModelStatus() {
-  const data = _loadModel();
-  if (!data) return { trained: false, sampleCount: 0 };
+  const data    = _loadModel();
+  const dataPre = _loadModelPre();
   return {
-    trained:             true,
-    sampleCount:         data.sampleCount         || 0,
-    hitCount:            data.hitCount             || 0,
-    missCount:           data.missCount            || 0,
-    trainDirectionalAcc: data.trainDirectionalAcc  ?? null,
-    trainedAt:           data.trainedAt,
+    trained:             !!data,
+    sampleCount:         data?.sampleCount         || 0,
+    hitCount:            data?.hitCount             || 0,
+    missCount:           data?.missCount            || 0,
+    trainDirectionalAcc: data?.trainDirectionalAcc  ?? null,
+    trainedAt:           data?.trainedAt,
+    preModel: {
+      trained:             !!dataPre,
+      sampleCount:         dataPre?.sampleCount         || 0,
+      trainDirectionalAcc: dataPre?.trainDirectionalAcc ?? null,
+      trainedAt:           dataPre?.trainedAt,
+    },
   };
 }
 
@@ -270,7 +353,7 @@ function getModelStatus() {
 const _fmtNum = n => n >= 10000 ? `${(n / 10000).toFixed(1)}万` : `${n}`;
 
 // 各特徴量の影響度スコア(0..1)と説明を算出し、偏差の大きい上位3件を返す
-function _buildReasons(video, isPrePub, buzzRatio) {
+function _buildReasons(video, isPrePub, buzzRatio, genreHitRate = 0.5) {
   const factors = [];
 
   if (isPrePub) {
@@ -316,6 +399,16 @@ function _buildReasons(video, isPrePub, buzzRatio) {
     else if (durMin !== null)                      { durScore = 0.40; durDetail = `${durMin}分（最適帯外）`; }
     else                                           { durScore = 0.45; durDetail = `動画尺不明`; }
     factors.push({ name: '動画尺', score: durScore, detail: durDetail });
+
+    // ジャンル（過去データがある場合のみ）
+    if (video.genre) {
+      const genreLabel = video.genre;
+      let genreDetail;
+      if      (genreHitRate > 0.60) genreDetail = `${genreLabel}（過去ヒット率 ${(genreHitRate * 100).toFixed(0)}%・高め）`;
+      else if (genreHitRate < 0.40) genreDetail = `${genreLabel}（過去ヒット率 ${(genreHitRate * 100).toFixed(0)}%・低め）`;
+      else                          genreDetail = `${genreLabel}（過去ヒット率 ${(genreHitRate * 100).toFixed(0)}%・標準）`;
+      factors.push({ name: 'ジャンル', score: genreHitRate, detail: genreDetail });
+    }
 
   } else {
     const subs     = video.subscriberCount || 0;
@@ -394,6 +487,9 @@ function _buildSuggestions(video, result) {
         break;
       case '動画尺':
         suggestions.push('動画尺を5〜20分（300〜1200秒）に調整してVOD最適帯に合わせる');
+        break;
+      case 'ジャンル':
+        suggestions.push('ヒット率が低いジャンルでは差別化コンテンツ・コラボ企画で突破口を開く');
         break;
       case 'いいね率':
         suggestions.push('エンドカードや概要欄で「いいね！」を呼びかけてエンゲージメントを高める');

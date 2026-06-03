@@ -86,4 +86,63 @@ function encode(video) {
   return vec;
 }
 
-module.exports = { encode, FEATURE_NAMES, FEATURE_DIM };
+// ── 投稿前専用エンコーダ（viewCount/likeCount/commentCount 不使用） ──────
+// like_ratio, comment_ratio を除いた 15 次元ベクトル
+const FEATURE_NAMES_PRE = [
+  'title_len_norm',
+  'title_has_excl',
+  'title_has_quest',
+  'title_emoji_norm',
+  'title_caps_ratio',
+  'tag_count_norm',
+  'desc_len_norm',
+  'duration_norm',
+  'published_hour_sin',
+  'published_hour_cos',
+  'published_dow_sin',
+  'published_dow_cos',
+  'sub_magnitude_norm',
+  'genre_hit_rate',      // ジャンル別過去ヒット率 (0-1)
+  'bias',
+];
+
+const FEATURE_DIM_PRE = FEATURE_NAMES_PRE.length; // 15
+
+// video: { title, description, tags, duration, publishedAt, subscriberCount }
+// genreHitRate: ジャンルの過去ヒット率（モデルから取得、不明時は 0.5）
+function encodePre(video, genreHitRate = 0.5) {
+  const vec = new Float64Array(FEATURE_DIM_PRE);
+  let idx = 0;
+
+  const title    = video.title       || '';
+  const desc     = video.description || '';
+  const tags     = video.tags        || [];
+  const duration = video.duration    || 0;
+  const subs     = Math.max(video.subscriberCount || 0, 1);
+
+  vec[idx++] = Math.min(title.length / 100, 1.0);
+  vec[idx++] = /[!！]/.test(title) ? 1.0 : 0.0;
+  vec[idx++] = /[?？]/.test(title) ? 1.0 : 0.0;
+  vec[idx++] = Math.min(_emojiCount(title) / 5, 1.0);
+  vec[idx++] = _capsRatio(title);
+
+  vec[idx++] = Math.min(tags.length / 30, 1.0);
+  vec[idx++] = Math.min(desc.length / 2000, 1.0);
+  vec[idx++] = Math.min(duration / 3600, 1.0);
+
+  const pub  = video.publishedAt ? new Date(video.publishedAt) : new Date();
+  const hour = pub.getUTCHours();
+  const dow  = pub.getUTCDay();
+  vec[idx++] = Math.sin(2 * Math.PI * hour / 24);
+  vec[idx++] = Math.cos(2 * Math.PI * hour / 24);
+  vec[idx++] = Math.sin(2 * Math.PI * dow  / 7);
+  vec[idx++] = Math.cos(2 * Math.PI * dow  / 7);
+
+  vec[idx++] = Math.min(Math.log10(subs + 1) / 8, 1.0);
+  vec[idx++] = Math.min(Math.max(genreHitRate, 0), 1.0);
+  vec[idx++] = 1.0; // bias
+
+  return vec;
+}
+
+module.exports = { encode, FEATURE_NAMES, FEATURE_DIM, encodePre, FEATURE_NAMES_PRE, FEATURE_DIM_PRE };
