@@ -299,6 +299,16 @@
     .ri-bar.negative { background: #f87171; }
     .ri-bar.neutral  { background: #94a3b8; }
 
+    /* ── YouTube 診断AI ─────────────────────────────── */
+    .diag-positive {
+      background: #0a1f14; border: 1px solid #064e3b;
+      border-radius: 6px; padding: 8px 12px; margin-bottom: 6px;
+    }
+    .diag-improve {
+      background: #1c0a0a; border: 1px solid #3d1515;
+      border-radius: 6px; padding: 8px 12px; margin-bottom: 6px;
+    }
+
     .model-status-bar {
       display: flex; align-items: center; gap: 10px;
       font-size: 0.73rem; color: #64748b;
@@ -374,6 +384,42 @@
       </div>
       <div class="predict-result" id="predict-result">
         <p class="pr-empty">左フォームに動画情報を入力して「予測する」を押してください。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- YouTube 診断AI -->
+  <section>
+    <h2>📊 YouTube 投稿前診断</h2>
+    <div class="predict-wrap">
+      <div class="predict-form">
+        <label>タイトル ★必須</label>
+        <input type="text" id="d-title" placeholder="【初見】ゲーム実況に挑戦してみた！" />
+        <div class="form-row">
+          <div>
+            <label>登録者数</label>
+            <input type="number" id="d-subs" placeholder="10000" min="0" />
+          </div>
+          <div>
+            <label>動画尺（秒）</label>
+            <input type="number" id="d-duration" placeholder="600" min="0" />
+          </div>
+        </div>
+        <label>タグ（カンマ区切り）</label>
+        <input type="text" id="d-tags" placeholder="VTuber,ゲーム実況,初見" />
+        <label>ジャンル</label>
+        <select id="d-genre">
+          <option value="VTuber">VTuber</option>
+          <option value="clip">切り抜き</option>
+          <option value="music">音楽</option>
+          <option value="realshot">実写</option>
+          <option value="gaming" selected>ゲーム実況</option>
+          <option value="general">その他</option>
+        </select>
+        <button class="predict-btn" id="diagnose-btn" onclick="runDiagnose()">診断する</button>
+      </div>
+      <div class="predict-result" id="diagnose-result">
+        <p class="pr-empty">左フォームに動画情報を入力して「診断する」を押してください。</p>
       </div>
     </div>
   </section>
@@ -848,6 +894,95 @@
       </div>
       ${viewRangeHtml}
       ${reasonsHtml}
+    `;
+  }
+
+  // ─── YouTube 診断AI ──────────────────────────────────────────
+
+  async function runDiagnose() {
+    const title    = document.getElementById('d-title').value.trim();
+    const subs     = parseInt(document.getElementById('d-subs').value)     || 0;
+    const duration = parseInt(document.getElementById('d-duration').value) || 0;
+    const tagsRaw  = document.getElementById('d-tags').value.trim();
+    const tags     = tagsRaw ? tagsRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+    const genre    = document.getElementById('d-genre').value;
+
+    if (!title) {
+      document.getElementById('diagnose-result').innerHTML =
+        '<p style="color:#f87171;font-size:.82rem;">タイトルは必須です。</p>';
+      return;
+    }
+
+    const btn = document.getElementById('diagnose-btn');
+    btn.disabled = true;
+    btn.textContent = '診断中...';
+
+    const video = { title, subscriberCount: subs, duration, tags, genre };
+    try {
+      const res  = await fetch('/api/diagnose', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(video),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      renderDiagnoseResult(data.diagResult, title);
+    } catch (e) {
+      document.getElementById('diagnose-result').innerHTML =
+        `<p style="color:#f87171;font-size:.82rem;">エラー: ${e.message}</p>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '診断する';
+    }
+  }
+
+  function renderDiagnoseResult(r, title) {
+    const rankColors = { A: '#34d399', B: '#60a5fa', C: '#fb923c', D: '#f87171' };
+    const rankBg     = { A: '#064e3b', B: '#1e3a5f', C: '#451a03', D: '#7f1d1d' };
+    const rankLabel  = { A: '優秀',   B: '良好',   C: '要改善', D: '要対策' };
+    const rankEmoji  = { A: '🏆',     B: '✅',     C: '⚠️',    D: '🔴' };
+
+    const rank     = r.rank;
+    const color    = rankColors[rank] || '#94a3b8';
+    const bg       = rankBg[rank]     || '#1e293b';
+    const titleEsc = title.replace(/</g, '&lt;').slice(0, 50);
+
+    let posHtml = '';
+    if (r.positivePoints && r.positivePoints.length) {
+      posHtml = `
+        <div style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.04em;margin:10px 0 6px;">✨ 良い点</div>
+        ${r.positivePoints.map(p => `
+          <div class="diag-positive">
+            <div style="font-size:.78rem;font-weight:600;color:#34d399;">${p.factor.replace(/</g,'&lt;')}</div>
+            <div style="font-size:.73rem;color:#94a3b8;margin-top:3px;">${p.detail.replace(/</g,'&lt;')}</div>
+          </div>`).join('')}`;
+    }
+
+    let impHtml = '';
+    if (r.improvementPoints && r.improvementPoints.length) {
+      impHtml = `
+        <div style="font-size:.72rem;color:#64748b;text-transform:uppercase;letter-spacing:.04em;margin:10px 0 6px;">🔧 改善点 Top${r.improvementPoints.length}</div>
+        ${r.improvementPoints.map((p, i) => `
+          <div class="diag-improve">
+            <div style="font-size:.78rem;font-weight:600;color:#fb923c;">${i + 1}. ${p.factor.replace(/</g,'&lt;')}</div>
+            <div style="font-size:.73rem;color:#94a3b8;margin-top:3px;">${p.detail.replace(/</g,'&lt;')}</div>
+            <div style="font-size:.7rem;color:#64748b;margin-top:4px;">📌 理由: ${p.reason.replace(/</g,'&lt;')}</div>
+            <div style="font-size:.7rem;color:#7dd3fc;margin-top:2px;">💡 対策: ${p.suggestion.replace(/</g,'&lt;')}</div>
+          </div>`).join('')}`;
+    }
+
+    document.getElementById('diagnose-result').innerHTML = `
+      <div style="font-size:.72rem;color:#475569;margin-bottom:10px;word-break:break-all;">${titleEsc}</div>
+      <div class="predict-score">
+        <div class="score-circle" style="background:${bg};color:${color};">${r.score}</div>
+        <div class="score-meta">
+          <div class="label-text" style="color:${color};">${rankEmoji[rank] || ''} ランク ${rank} — ${rankLabel[rank] || rank}</div>
+          <div class="conf-text">スコア ${r.score}/100</div>
+        </div>
+      </div>
+      ${posHtml}
+      ${impHtml}
+      ${!posHtml && !impHtml ? '<p style="color:#64748b;font-size:.78rem;">診断データが不足しています。より多くの情報を入力してください。</p>' : ''}
     `;
   }
 </script>
