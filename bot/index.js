@@ -7376,6 +7376,85 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  // ─────────────────────────────────────────────────────
+  // !incident — Incident Manager MVP（会社脳 Phase）
+  // 共通エンベロープ仕様 docs/envelope-spec.md 参照
+  //
+  // !incident open <要約>              — 起票
+  // !incident open <要約> | <詳細>     — 詳細付き起票
+  // !incident open ... refs:id tags:x  — refs/tags 付き
+  // !incident list                     — 未解決一覧
+  // !incident list all                 — 全件一覧
+  // !incident show <id>                — 詳細表示
+  // !incident resolve <id> <対応内容>  — 解決・Lesson化候補提示
+  //
+  // ※ error-alert / review-history との二重通知なし
+  // ─────────────────────────────────────────────────────
+  if (content.startsWith('!incident')) {
+    const incMgr  = require('./utils/incident-manager');
+    const incArgs = content.split(/\s+/).slice(1);
+    const incSub  = incArgs[0] || 'help';
+
+    if (incSub === 'open') {
+      const rawText = incArgs.slice(1).join(' ').trim();
+      if (!rawText) {
+        await message.reply(
+          '**!incident open — インシデント起票**\n\n' +
+          '```\n' +
+          '!incident open <要約>\n' +
+          '!incident open <要約> | <詳細>\n' +
+          '!incident open <要約> | <詳細> refs:task_xxx tags:security\n' +
+          '```\n\n' +
+          '起票後は `!incident resolve <id> <対応内容>` で解決できます。'
+        ).catch(() => {});
+        return;
+      }
+      const { title, summary, refs, tags } = incMgr.parseArgs(rawText);
+      const incPid = projectManager.getCurrentProject(message.channelId) || 'default';
+      const r = incMgr.openIncident({ title, summary, projectId: incPid, refs, tags });
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    if (incSub === 'list') {
+      const showAll = (incArgs[1] || '') === 'all';
+      const r = incMgr.listIncidents({ all: showAll });
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    if (incSub === 'show') {
+      const incId = incArgs[1] || '';
+      const r = incMgr.showIncident(incId);
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    if (incSub === 'resolve') {
+      const incId     = incArgs[1] || '';
+      const resTxt    = incArgs.slice(2).join(' ').trim();
+      const r = incMgr.resolveIncident(incId, resTxt);
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // ヘルプ
+    await message.reply(
+      '**!incident — インシデントログ**\n\n' +
+      '```\n' +
+      '!incident open <要約>                  → 起票\n' +
+      '!incident open <要約> | <詳細>          → 詳細付き起票\n' +
+      '!incident open ... refs:t_xxx tags:sec → refs/tags付き\n' +
+      '!incident list                         → 未解決一覧\n' +
+      '!incident list all                     → 全件一覧\n' +
+      '!incident show <ID>                    → 詳細表示\n' +
+      '!incident resolve <ID> <対応内容>      → 解決・Lesson候補表示\n' +
+      '```\n\n' +
+      '仕様: `docs/envelope-spec.md`'
+    ).catch(() => {});
+    return;
+  }
+
   // !close — 日次クロージング（更新ログ付き）
   if (content === '!close' || /^!close\b/.test(content)) {
     const { buildClosingSummary } = require('./utils/client-ops');
