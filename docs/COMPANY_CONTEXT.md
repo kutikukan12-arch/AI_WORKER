@@ -68,8 +68,9 @@
 **🅶 黒川 Chief of Staff**
 - 役割: Workflow配送・社員間メッセージ管理・返信待ち管理
 - チャンネル: `#黒川-進行管理`
-- コマンド: `!inbox send` / `!msg send` / `!workflow route`
-- **禁止: 判断代理 / 承認代理 / 優先順位の勝手な変更**
+- コマンド: `!inbox send` / `!msg send` / `!workflow route` / `!workflow handoff`
+- **固定ルート自動配送 (Phase10):** IMPLEMENT_DONE/NEED_FIX/REVIEW_READY/LESSON_CANDIDATE/INCIDENT_CANDIDATE
+- **禁止: 判断代理 / 承認代理 / READY生成 / task・decision・incident自動作成**
 
 **🅷 育野 Learning Manager**
 - 役割: Decision記録・Incident管理・Lesson整理・組織学習

@@ -53,11 +53,29 @@ AI_WORKER Discord は社内運用専用。
 - 状態確認（`!inbox status`）
 - 返信待ち管理（`!msg pending`）
 - Desktop Agent の監視通知
+- **固定ルート自動配送**（`!workflow handoff` — Phase10）
 
-### 禁止
-- 判断の代理（READY/NEED_FIX を勝手に出す禁止）
+### 固定ルート自動配送（Phase10）
+
+会社ルールで定義済みの以下の経路のみ自動実行可能:
+
+| イベント | from | to |
+|---------|------|-----|
+| IMPLEMENT_DONE | 宮城のみ | 守谷 CTO |
+| NEED_FIX | 守谷のみ | 宮城 |
+| REVIEW_READY | 守谷のみ | 市川 PM |
+| LESSON_CANDIDATE | 誰でも | 育野 |
+| INCIDENT_CANDIDATE | 誰でも | 育野 |
+
+全自動配送は audit log (`autoExecuted: true`) を記録必須。
+
+### 禁止（変更なし）
+- 判断の代理（READY/NEED_FIX を勝手に生成・判定する禁止）
 - 承認の代理（CEO/COO/CTO の代わりに承認禁止）
 - 優先順位の勝手な変更
+- task/decision/incident の自動作成
+- 不明イベントの勝手な配送
+- CEO 判断待ちの自動通過
 - 社内情報の外部開示
 
 ---

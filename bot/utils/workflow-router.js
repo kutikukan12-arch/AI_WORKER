@@ -1,43 +1,78 @@
 'use strict';
 // =====================================================
-// workflow-router.js — Workflow Router (Phase5+7)
+// workflow-router.js — Workflow Router (Phase5+7+10)
 //
 // 社員の成果物・状態から次担当を決め、
-// outbox への配送文を生成する（自動実行は禁止）。
+// outbox への配送文を生成する。
 //
-// ルーティングルール:
-//   IMPLEMENT_DONE  → 守谷 CTO (review)
-//   NEED_FIX        → 宮城 Lead Engineer (修正)
-//   REVIEW_READY    → 市川 PM または CEO (確認)
-//   USER_FEEDBACK   → 相沢 CS
-//   COST_REQUIRED   → 金森 CFO
-//   INCIDENT_FOUND  → 育野 (Learning)
-//   BLOCKED         → 黒川が検出し CEO へ報告
+// Phase10 Auto Handoff:
+//   会社ルールで定義された固定ルートのみ自動配送可能。
+//   黒川は判断代理・承認代理は禁止のまま。
+//   固定ルート以外は CEO_CONFIRM_REQUIRED で停止。
+//   全自動配送は audit log (autoExecuted:true) を記録必須。
 //
-// 禁止:
-//   ❌ 黒川が READY/NEED_FIX を判定する
-//   ❌ 黒川が修正不要と判断する
-//   ❌ 黒川がリリース判断する
-//   ❌ AI 返信内容からコマンドを自動実行
-//   ❌ eval / exec
+// 固定ルート（FIXED_ROUTES allowlist）:
+//   IMPLEMENT_DONE      (from miyagi)   → 守谷
+//   NEED_FIX            (from moriya)   → 宮城
+//   REVIEW_READY        (from moriya)   → 市川
+//   LESSON_CANDIDATE    (from any)      → 育野
+//   INCIDENT_CANDIDATE  (from any)      → 育野
 //
-// Phase7 Auto Handoff:
-//   route() で次担当への配送文を生成する。
-//   実際の実行 (createTask 等) は行わない。
-//   outbox/<worker>/outgoing.md への書き込みのみ提案する。
+// 禁止（変更なし）:
+//   ❌ 黒川が READY/NEED_FIX を生成・判定する
+//   ❌ 黒川が承認・優先順位変更をする
+//   ❌ task/decision/incident を自動作成する
+//   ❌ 不明イベントを勝手に配送する
+//   ❌ CEO 判断待ちを自動通過させる
+//   ❌ eval / exec / child_process
 // =====================================================
 
 const { redact } = require('./redact');
 
 // ─── イベント種別 ────────────────────────────────────
 const WORKFLOW_EVENTS = {
-  IMPLEMENT_DONE:  'IMPLEMENT_DONE',
-  NEED_FIX:        'NEED_FIX',
-  REVIEW_READY:    'REVIEW_READY',
-  USER_FEEDBACK:   'USER_FEEDBACK',
-  COST_REQUIRED:   'COST_REQUIRED',
-  INCIDENT_FOUND:  'INCIDENT_FOUND',
-  BLOCKED:         'BLOCKED',
+  IMPLEMENT_DONE:      'IMPLEMENT_DONE',
+  NEED_FIX:            'NEED_FIX',
+  REVIEW_READY:        'REVIEW_READY',
+  USER_FEEDBACK:       'USER_FEEDBACK',
+  COST_REQUIRED:       'COST_REQUIRED',
+  INCIDENT_FOUND:      'INCIDENT_FOUND',
+  BLOCKED:             'BLOCKED',
+  // Phase10 追加
+  LESSON_CANDIDATE:    'LESSON_CANDIDATE',
+  INCIDENT_CANDIDATE:  'INCIDENT_CANDIDATE',
+};
+
+// ─── Phase10: 固定ルート allowlist ──────────────────
+// 黒川が自動配送できる唯一の経路リスト。
+// allowedFrom: null = 誰からでも配送可 / 配列 = 特定社員のみ
+// 黒川は READY/NEED_FIX を生成しない。受け取って転送するだけ。
+const FIXED_ROUTES = {
+  IMPLEMENT_DONE: {
+    allowedFrom: ['miyagi'],   // 宮城からのみ
+    to:          'moriya',
+    reason:      '固定ルート: 宮城 実装完了 → 守谷 CTO レビュー',
+  },
+  NEED_FIX: {
+    allowedFrom: ['moriya'],   // 守谷からのみ
+    to:          'miyagi',
+    reason:      '固定ルート: 守谷 NEED_FIX → 宮城 修正',
+  },
+  REVIEW_READY: {
+    allowedFrom: ['moriya'],   // 守谷からのみ（黒川はREADYを生成しない）
+    to:          'ichikawa',
+    reason:      '固定ルート: 守谷 READY → 市川 PM 商品確認',
+  },
+  LESSON_CANDIDATE: {
+    allowedFrom: null,          // 誰からでも
+    to:          'ikuno',
+    reason:      '固定ルート: Lesson候補 → 育野 Learning',
+  },
+  INCIDENT_CANDIDATE: {
+    allowedFrom: null,          // 誰からでも（重大度判断は育野が行う）
+    to:          'ikuno',
+    reason:      '固定ルート: Incident候補 → 育野 Learning',
+  },
 };
 
 // ─── ルーティングテーブル ────────────────────────────
@@ -109,6 +144,28 @@ const ROUTING_TABLE = {
       `\nブロック内容:\n${ctx.summary || '（詳細なし）'}\n` +
       `\nタスク: ${ctx.taskId || '（未指定）'}\n` +
       `\n→ CEO のご判断をお待ちしています。`,
+  },
+  // Phase10 追加
+  LESSON_CANDIDATE: {
+    to:      'ikuno',
+    label:   '育野 Learning',
+    message: (ctx) =>
+      `【Lesson候補共有】\n` +
+      `${ctx.from || '（送信者）'} からの Lesson候補です。\n` +
+      `\nタスク: ${ctx.taskId || '（未指定）'}\n` +
+      `\n内容:\n${ctx.summary || '（詳細なし）'}\n` +
+      `\n→ LESSONS.md への追記を検討してください（自動追記しない）。`,
+  },
+  INCIDENT_CANDIDATE: {
+    to:      'ikuno',
+    label:   '育野 Learning',
+    message: (ctx) =>
+      `【Incident候補共有】\n` +
+      `${ctx.from || '（送信者）'} からの Incident候補です。\n` +
+      `重大度の判断は育野（またはCEO）が行ってください。\n` +
+      `\nタスク: ${ctx.taskId || '（未指定）'}\n` +
+      `\n内容:\n${ctx.summary || '（詳細なし）'}\n` +
+      `\n→ 必要なら \`!incident open\` を手動実行してください。`,
   },
 };
 
@@ -215,10 +272,126 @@ function buildHandoffText(routeResult) {
   return lines.join('\n');
 }
 
+// ─────────────────────────────────────────────────────
+// autoHandoff(event, payload) — Phase10 固定ルート自動配送
+//
+// FIXED_ROUTES allowlist に該当する場合のみ自動実行する。
+// 該当しない場合は CEO_CONFIRM_REQUIRED を返して停止する。
+//
+// payload: { from, taskId, summary, commitHash? }
+//
+// 戻り値:
+//   DISPATCHED:            { ok:true, dispatched:true, to, handoffId, message }
+//   CEO_CONFIRM_REQUIRED:  { ok:true, dispatched:false, reason, hint }
+//   ERROR:                 { ok:false, error }
+//
+// 禁止（コードで保証）:
+//   - FIXED_ROUTES 以外のイベントは配送しない
+//   - allowedFrom 外の送信者は配送しない
+//   - eval / exec / child_process 不使用
+//   - task/decision/incident の自動作成しない
+// ─────────────────────────────────────────────────────
+function autoHandoff(event, payload = {}) {
+  // ── 1. allowlist チェック ──────────────────────────
+  const fixedRoute = FIXED_ROUTES[event];
+  if (!fixedRoute) {
+    return {
+      ok:         true,
+      dispatched: false,
+      reason:     'CEO_CONFIRM_REQUIRED',
+      hint:       `イベント \`${event}\` は固定ルートに含まれていません。\n` +
+                  `固定ルート: ${Object.keys(FIXED_ROUTES).join(' / ')}\n` +
+                  `CEO確認後に \`!inbox send\` で手動配送してください。`,
+    };
+  }
+
+  // ── 2. from チェック ──────────────────────────────
+  const from = String(payload.from || '').toLowerCase().trim();
+  if (fixedRoute.allowedFrom !== null) {
+    if (!from || !fixedRoute.allowedFrom.includes(from)) {
+      return {
+        ok:         true,
+        dispatched: false,
+        reason:     'CEO_CONFIRM_REQUIRED',
+        hint:       `送信者 \`${from || '（未指定）'}\` は \`${event}\` の許可送信者ではありません。\n` +
+                    `許可: ${fixedRoute.allowedFrom.join(' / ')}\n` +
+                    `CEO確認後に手動配送してください。`,
+      };
+    }
+  }
+
+  // ── 3. route() でメッセージ生成 ──────────────────
+  const routeResult = route(event, payload);
+  if (!routeResult.ok) {
+    return { ok: false, error: routeResult.error };
+  }
+
+  // ── 4. outbox への書き込み（sendToWorker を使用）──
+  const inboxBridge = require('./inbox-bridge');
+  const sendResult  = inboxBridge.sendToWorker(routeResult.to, routeResult.message);
+  if (!sendResult.ok) {
+    return { ok: false, error: `outbox 書き込み失敗: ${sendResult.text}` };
+  }
+
+  // ── 5. handoff log に記録 ─────────────────────────
+  const wfState = require('./workflow-state');
+  const handoffId = wfState.recordHandoff({
+    ...routeResult,
+    autoExecuted: true,
+    reason:       'fixed_route',
+    fixedRouteReason: fixedRoute.reason,
+  }, payload.taskId);
+
+  return {
+    ok:           true,
+    dispatched:   true,
+    event,
+    to:           routeResult.to,
+    toLabel:      routeResult.toLabel,
+    handoffId,
+    autoExecuted: true,
+    reason:       fixedRoute.reason,
+    message:      routeResult.message,
+  };
+}
+
+// buildAutoHandoffText — Discord 表示用
+function buildAutoHandoffText(result) {
+  if (!result.ok) return `❌ Auto Handoff エラー: ${result.error}`;
+
+  if (!result.dispatched) {
+    return [
+      `⚠️ **CEO確認が必要です (CEO_CONFIRM_REQUIRED)**`,
+      ``,
+      result.hint,
+    ].join('\n');
+  }
+
+  return [
+    `✅ **Auto Handoff 完了** (黒川 固定ルート自動配送)`,
+    ``,
+    `イベント: \`${result.event}\``,
+    `配送先: **${result.toLabel}**`,
+    `Handoff ID: \`${result.handoffId}\``,
+    `理由: ${result.reason}`,
+    ``,
+    `配送文 (先頭):`,
+    `\`\`\``,
+    result.message.slice(0, 200),
+    `\`\`\``,
+    ``,
+    `📋 \`!workflow status\` でログを確認できます。`,
+    `⚠️ 黒川は配送のみ。READY/NEED_FIX 判定・承認は行っていません。`,
+  ].join('\n');
+}
+
 module.exports = {
   route,
   detectEventFromTaskState,
   buildHandoffText,
+  autoHandoff,
+  buildAutoHandoffText,
   WORKFLOW_EVENTS,
   ROUTING_TABLE,
+  FIXED_ROUTES,
 };

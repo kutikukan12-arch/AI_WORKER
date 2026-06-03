@@ -7727,6 +7727,38 @@ client.on('messageCreate', async (message) => {
       return;
     }
 
+    // handoff — Phase10 固定ルート自動配送
+    // 固定ルートなら outbox に自動配送 / 対象外なら CEO_CONFIRM_REQUIRED
+    if (wfSub === 'handoff') {
+      const eventArg   = (wfArgs[1] || '').toUpperCase();
+      const fromArg    = wfArgs[2] || 'ceo';
+      const taskIdArg  = wfArgs[3] || '';
+      const summaryArg = wfArgs.slice(4).join(' ').trim();
+
+      if (!eventArg) {
+        const wfRouter = require('./utils/workflow-router');
+        await message.reply(
+          '**!workflow handoff — 固定ルート自動配送**\n\n' +
+          '```\n' +
+          '!workflow handoff <EVENT> <from> <taskId> <概要>\n' +
+          '```\n\n' +
+          `固定ルート:\n${Object.keys(wfRouter.FIXED_ROUTES).map(e => `  \`${e}\``).join('\n')}\n\n` +
+          '固定ルート以外は CEO_CONFIRM_REQUIRED を返します。'
+        ).catch(() => {});
+        return;
+      }
+
+      const wfRouter = require('./utils/workflow-router');
+      const result   = wfRouter.autoHandoff(eventArg, {
+        from:    fromArg,
+        taskId:  taskIdArg,
+        summary: summaryArg,
+      });
+      const text = wfRouter.buildAutoHandoffText(result);
+      await message.reply(text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
     // route — 手動ルーティング提案（提案のみ・自動実行しない）
     if (wfSub === 'route') {
       const eventArg   = wfArgs[1] || '';

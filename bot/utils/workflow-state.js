@@ -54,12 +54,16 @@ function recordHandoff(routeResult, taskId) {
   const id    = `hoff_${Date.now()}${Math.floor(Math.random()*0x100).toString(16).padStart(2,'0')}`;
   state.handoffs.push({
     id,
-    event:     routeResult.event,
-    from:      routeResult.from || null,
-    to:        routeResult.to,
-    taskId:    taskId || null,
-    createdAt: now,
-    resolvedAt: null,
+    event:            routeResult.event,
+    from:             routeResult.from || null,
+    to:               routeResult.to,
+    taskId:           taskId || null,
+    createdAt:        now,
+    resolvedAt:       null,
+    // Phase10: 自動配送の audit log フィールド
+    autoExecuted:     routeResult.autoExecuted     || false,
+    reason:           routeResult.reason            || null,
+    fixedRouteReason: routeResult.fixedRouteReason  || null,
   });
   // 直近100件のみ保持
   if (state.handoffs.length > 100) state.handoffs = state.handoffs.slice(-100);
@@ -149,13 +153,15 @@ function formatWorkflowStatus() {
   const total    = state.handoffs.length;
   const resolved = state.handoffs.filter(h => h.resolvedAt).length;
   const pending  = total - resolved;
+  const autoN    = state.handoffs.filter(h => h.autoExecuted).length;
 
   const lines = [
     `📊 **Workflow 状態** (黒川 進行管理)`,
     ``,
     `ハンドオフ総数: ${total}件 / 解決済み: ${resolved}件 / 未解決: ${pending}件`,
+    autoN > 0 ? `自動配送 (Phase10): ${autoN}件` : '',
     ``,
-  ];
+  ].filter(l => l !== '');
 
   if (waiting.length > 0) {
     lines.push(`⚠️ **長待ち検出 (${waiting.length}件)**`);
