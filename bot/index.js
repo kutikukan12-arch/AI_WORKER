@@ -7699,11 +7699,73 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // !workflow messages — !msg pending の別名（黒川レポート）
-  if (content === '!workflow messages' || content.startsWith('!workflow messages')) {
-    const msgMod = require('./utils/internal-messages');
-    const r      = msgMod.pendingReport();
-    await message.reply(r.text.slice(0, 1900)).catch(() => {});
+  // ─────────────────────────────────────────────────────
+  // !workflow — Workflow Automation (Phase5-9)
+  //
+  // !workflow messages — 返信待ちメッセージ（Phase2 別名）
+  // !workflow status   — ハンドオフ状態・長待ち検出 (Phase8)
+  // !workflow route <event> <taskId> <summary> — 手動ルーティング提案 (Phase5)
+  // !workflow handoff list — ハンドオフ一覧
+  // ─────────────────────────────────────────────────────
+  if (content.startsWith('!workflow')) {
+    const wfArgs = content.split(/\s+/).slice(1);
+    const wfSub  = wfArgs[0] || 'help';
+
+    // messages — !msg pending の別名
+    if (wfSub === 'messages') {
+      const msgMod = require('./utils/internal-messages');
+      const r      = msgMod.pendingReport();
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // status — ハンドオフ状態・長待ち検出
+    if (wfSub === 'status') {
+      const wfState = require('./utils/workflow-state');
+      const r       = wfState.formatWorkflowStatus();
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // route — 手動ルーティング提案（提案のみ・自動実行しない）
+    if (wfSub === 'route') {
+      const eventArg   = wfArgs[1] || '';
+      const taskIdArg  = wfArgs[2] || '';
+      const summaryArg = wfArgs.slice(3).join(' ').trim();
+
+      if (!eventArg) {
+        const wfRouter = require('./utils/workflow-router');
+        await message.reply(
+          '**!workflow route — ルーティング提案**\n\n' +
+          '```\n' +
+          '!workflow route <event> <taskId> <概要>\n' +
+          '```\n\n' +
+          `有効なイベント:\n${Object.keys(wfRouter.WORKFLOW_EVENTS).map(e => `  \`${e}\``).join('\n')}`
+        ).catch(() => {});
+        return;
+      }
+
+      const wfRouter = require('./utils/workflow-router');
+      const result   = wfRouter.route(eventArg.toUpperCase(), {
+        from:    'ceo',
+        taskId:  taskIdArg,
+        summary: summaryArg,
+      });
+      const text = wfRouter.buildHandoffText(result);
+      await message.reply(text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // help
+    await message.reply(
+      '**!workflow — Workflow Automation（黒川）**\n\n' +
+      '```\n' +
+      '!workflow messages         → 返信待ちメッセージ一覧\n' +
+      '!workflow status           → ハンドオフ状態・長待ち検出\n' +
+      '!workflow route <event> <taskId> <概要> → ルーティング提案\n' +
+      '```\n\n' +
+      '⚠️ 黒川は配送・管理のみ。判断は CEO が行います。'
+    ).catch(() => {});
     return;
   }
 
@@ -8070,6 +8132,26 @@ client.on('messageCreate', async (message) => {
   }
 
   if (content.startsWith('!worker')) {
+    // !worker status — AI社員ステータス一覧 (Phase6)
+    const wkArgs = content.split(/\s+/).slice(1);
+    if (wkArgs[0] === 'status') {
+      const wkStatus = require('./utils/worker-status');
+      const r        = wkStatus.formatStatusReport();
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+    // !worker update <worker> <status> — ステータス更新 (Phase6)
+    if (wkArgs[0] === 'update') {
+      const wkStatus = require('./utils/worker-status');
+      const worker   = wkArgs[1] || '';
+      const status   = wkArgs[2] || '';
+      const taskId   = wkArgs[3] || undefined;
+      const r        = wkStatus.updateStatus(worker, status, { taskId });
+      await message.reply(
+        r.ok ? `✅ ${worker} → \`${status}\`` : `❌ ${r.error}`
+      ).catch(() => {});
+      return;
+    }
     await handleWorker(message, content);
     return;
   }
