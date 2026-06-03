@@ -7311,6 +7311,71 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  // ─────────────────────────────────────────────────────
+  // !decision — Decision Log Manager（会社脳 Phase）
+  // 共通エンベロープ仕様 docs/envelope-spec.md 参照
+  //
+  // !decision log <title>              — 意思決定を記録
+  // !decision log <title> | <summary>  — タイトル+サマリーで記録
+  // !decision log ... refs:id1 tags:x  — refs / tags 付き
+  // !decision list                     — 最近10件を一覧
+  // !decision show <id>                — 詳細表示
+  // ─────────────────────────────────────────────────────
+  if (content.startsWith('!decision')) {
+    const decLog  = require('./utils/decision-log');
+    const decArgs = content.split(/\s+/).slice(1);
+    const decSub  = decArgs[0] || 'help';
+
+    if (decSub === 'log') {
+      const rawText = decArgs.slice(1).join(' ').trim();
+      if (!rawText) {
+        await message.reply(
+          '**!decision log — 意思決定を記録**\n\n' +
+          '```\n' +
+          '!decision log <タイトル>\n' +
+          '!decision log <タイトル> | <サマリー>\n' +
+          '!decision log <タイトル> | <サマリー> refs:task_xxx tags:security\n' +
+          '```\n\n' +
+          '既存のタスク・レビュー・commitはコピーせず refs で参照してください。\n' +
+          '`!decision list` で記録一覧を確認できます。'
+        ).catch(() => {});
+        return;
+      }
+      const { title, summary, refs, tags } = decLog.parseLogArgs(rawText);
+      const currentDecPid = projectManager.getCurrentProject(message.channelId) || 'default';
+      const r = decLog.logDecision({ title, summary, projectId: currentDecPid, refs, tags });
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    if (decSub === 'list') {
+      const r = decLog.listDecisions(10);
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    if (decSub === 'show') {
+      const decId = decArgs[1] || '';
+      const r = decLog.showDecision(decId);
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // ヘルプ
+    await message.reply(
+      '**!decision — 意思決定ログ**\n\n' +
+      '```\n' +
+      '!decision log <タイトル>                    → 記録\n' +
+      '!decision log <タイトル> | <サマリー>        → サマリー付きで記録\n' +
+      '!decision log ... refs:task_xxx tags:sec    → refs/tags付き\n' +
+      '!decision list                              → 直近10件\n' +
+      '!decision show <ID>                         → 詳細表示\n' +
+      '```\n\n' +
+      '仕様: `docs/envelope-spec.md`'
+    ).catch(() => {});
+    return;
+  }
+
   // !close — 日次クロージング（更新ログ付き）
   if (content === '!close' || /^!close\b/.test(content)) {
     const { buildClosingSummary } = require('./utils/client-ops');
