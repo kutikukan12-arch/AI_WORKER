@@ -4,14 +4,17 @@
 // task-type.js - タスク種別 & サイズバリデーター
 //
 // 役割:
-//   1. TaskType 判定: IMPLEMENT / RESEARCH / DESIGN / REVIEW
+//   1. TaskType 判定: IMPLEMENT / RESEARCH / DESIGN / REVIEW / REVIEW_CODE / REVIEW_PRODUCT / REVIEW_SECURITY
 //   2. TaskSize 判定: SMALL / MEDIUM / LARGE（大すぎる場合は分割提案）
 //
 // TaskType 別完了条件:
-//   IMPLEMENT → コード変更あり必須
-//   RESEARCH  → 出力内容があれば完了（変更なしでOK）
-//   DESIGN    → 出力内容があれば完了（変更なしでOK）
-//   REVIEW    → 出力内容があれば完了（変更なしでOK）
+//   IMPLEMENT      → コード変更あり必須
+//   RESEARCH       → 出力内容があれば完了（変更なしでOK）
+//   DESIGN         → 出力内容があれば完了（変更なしでOK）
+//   REVIEW         → 出力内容があれば完了（変更なしでOK）
+//   REVIEW_CODE    → コードレビュー結果の出力があれば完了（変更なしでOK）
+//   REVIEW_PRODUCT → 商品/プロダクトレビュー結果の出力があれば完了（変更なしでOK）
+//   REVIEW_SECURITY→ セキュリティレビュー結果の出力があれば完了（変更なしでOK）
 //
 // TaskSize 判定基準:
 //   変更予定ファイル > 3 → LARGE
@@ -28,11 +31,14 @@ const logger = require('./logger');
 
 // ─── TaskType 定数 ───
 const TASK_TYPES = {
-  IMPLEMENT: 'IMPLEMENT', // コード変更必須
-  RESEARCH:  'RESEARCH',  // 調査・確認（変更不要）
-  DESIGN:    'DESIGN',    // 設計・方針（変更不要）
-  REVIEW:    'REVIEW',    // レビュー（変更不要）
-  OPS:       'OPS',       // 運用・診断・Git操作（変更不要）
+  IMPLEMENT:       'IMPLEMENT',       // コード変更必須
+  RESEARCH:        'RESEARCH',        // 調査・確認（変更不要）
+  DESIGN:          'DESIGN',          // 設計・方針（変更不要）
+  REVIEW:          'REVIEW',          // レビュー汎用（変更不要）
+  REVIEW_CODE:     'REVIEW_CODE',     // コードレビュー（変更不要）
+  REVIEW_PRODUCT:  'REVIEW_PRODUCT',  // 商品/プロダクトレビュー（変更不要）
+  REVIEW_SECURITY: 'REVIEW_SECURITY', // セキュリティレビュー（変更不要）
+  OPS:             'OPS',             // 運用・診断・Git操作（変更不要）
 };
 
 // ─── TaskSize 定数 ───
@@ -44,11 +50,14 @@ const TASK_SIZES = {
 
 // ─── TaskType絵文字 ───
 const TYPE_EMOJI = {
-  IMPLEMENT: '🔨',
-  RESEARCH:  '🔍',
-  DESIGN:    '📐',
-  REVIEW:    '🧐',
-  OPS:       '⚙️',
+  IMPLEMENT:       '🔨',
+  RESEARCH:        '🔍',
+  DESIGN:          '📐',
+  REVIEW:          '🧐',
+  REVIEW_CODE:     '💻',
+  REVIEW_PRODUCT:  '📦',
+  REVIEW_SECURITY: '🔒',
+  OPS:             '⚙️',
 };
 
 // ─── TaskSize絵文字 ───
@@ -87,11 +96,38 @@ const DESIGN_KEYWORDS = [
 ];
 
 // ─────────────────────────────────────────────────────
-// REVIEW 強シグナル
+// REVIEW_CODE 強シグナル（コードレビュー）
+// ─────────────────────────────────────────────────────
+const REVIEW_CODE_KEYWORDS = [
+  'コードレビュー', 'code review', 'pr確認', 'prレビュー',
+  'コードを確認', 'コードチェック', 'コードを見て', '実装をレビュー',
+  'diff確認', 'コードの問題点', 'コードの改善点',
+];
+
+// ─────────────────────────────────────────────────────
+// REVIEW_PRODUCT 強シグナル（商品/プロダクトレビュー）
+// ─────────────────────────────────────────────────────
+const REVIEW_PRODUCT_KEYWORDS = [
+  '商品レビュー', '商品戦略', '商品評価', '商品を評価',
+  'プロダクトレビュー', 'product review', '製品評価', '製品レビュー',
+  '商品を確認', '商品の問題点', '商品の改善点', '商品分析',
+];
+
+// ─────────────────────────────────────────────────────
+// REVIEW_SECURITY 強シグナル（セキュリティレビュー）
+// ─────────────────────────────────────────────────────
+const REVIEW_SECURITY_KEYWORDS = [
+  'セキュリティレビュー', 'security review', '脆弱性', '脆弱性チェック',
+  'セキュリティ確認', 'セキュリティ監査', 'セキュリティ診断',
+  '脆弱性を確認', '攻撃リスク', 'security audit', 'pentest',
+];
+
+// ─────────────────────────────────────────────────────
+// REVIEW 汎用シグナル（上記サブタイプにマッチしない場合のフォールバック）
 // ─────────────────────────────────────────────────────
 const REVIEW_KEYWORDS = [
-  'レビュー', 'review', 'コードレビュー',
-  '問題点を指摘', '改善点を教えて', 'チェックして', 'コードを確認',
+  'レビュー', 'review',
+  '問題点を指摘', '改善点を教えて', 'チェックして',
 ];
 
 // ─────────────────────────────────────────────────────
@@ -116,7 +152,7 @@ const OPS_KEYWORDS = [
 // ─────────────────────────────────────────────────────
 function detectTaskType(prompt) {
   // 1. 明示的プレフィックス [TYPE] または [type]
-  const prefixMatch = prompt.match(/^\[(IMPLEMENT|RESEARCH|DESIGN|REVIEW|OPS)\]\s*/i);
+  const prefixMatch = prompt.match(/^\[(IMPLEMENT|RESEARCH|DESIGN|REVIEW_CODE|REVIEW_PRODUCT|REVIEW_SECURITY|REVIEW|OPS)\]\s*/i);
   if (prefixMatch) {
     const t = prefixMatch[1].toUpperCase();
     logger.info(`TaskType 明示指定: ${t}`);
@@ -140,17 +176,28 @@ function detectTaskType(prompt) {
     return TASK_TYPES.DESIGN;
   }
 
-  // 5. REVIEW
+  // 5. REVIEW サブタイプ（具体的なものを先に判定）
+  if (REVIEW_SECURITY_KEYWORDS.some(kw => text.includes(kw.toLowerCase()))) {
+    return TASK_TYPES.REVIEW_SECURITY;
+  }
+  if (REVIEW_CODE_KEYWORDS.some(kw => text.includes(kw.toLowerCase()))) {
+    return TASK_TYPES.REVIEW_CODE;
+  }
+  if (REVIEW_PRODUCT_KEYWORDS.some(kw => text.includes(kw.toLowerCase()))) {
+    return TASK_TYPES.REVIEW_PRODUCT;
+  }
+
+  // 6. REVIEW 汎用フォールバック
   if (REVIEW_KEYWORDS.some(kw => text.includes(kw.toLowerCase()))) {
     return TASK_TYPES.REVIEW;
   }
 
-  // 6. OPS（診断・Git操作・運用確認）
+  // 7. OPS（診断・Git操作・運用確認）
   if (OPS_KEYWORDS.some(kw => text.includes(kw.toLowerCase()))) {
     return TASK_TYPES.OPS;
   }
 
-  // 7. デフォルト
+  // 8. デフォルト
   return TASK_TYPES.IMPLEMENT;
 }
 
@@ -346,12 +393,15 @@ function formatTaskInfo(taskType, taskSize) {
 // ─────────────────────────────────────────────────────
 function getCompletionCriteria(taskType) {
   switch (taskType) {
-    case TASK_TYPES.IMPLEMENT: return 'コード変更あり必須';
-    case TASK_TYPES.RESEARCH:  return '調査結果の出力があれば完了';
-    case TASK_TYPES.DESIGN:    return '設計案・方針書の出力があれば完了';
-    case TASK_TYPES.REVIEW:    return 'レビュー結果の出力があれば完了';
-    case TASK_TYPES.OPS:       return '実行ログ・診断結果の出力があれば完了';
-    default:                   return 'コード変更あり必須';
+    case TASK_TYPES.IMPLEMENT:       return 'コード変更あり必須';
+    case TASK_TYPES.RESEARCH:        return '調査結果の出力があれば完了';
+    case TASK_TYPES.DESIGN:          return '設計案・方針書の出力があれば完了';
+    case TASK_TYPES.REVIEW:          return 'レビュー結果の出力があれば完了';
+    case TASK_TYPES.REVIEW_CODE:     return 'コードレビュー結果の出力があれば完了';
+    case TASK_TYPES.REVIEW_PRODUCT:  return '商品レビュー結果の出力があれば完了';
+    case TASK_TYPES.REVIEW_SECURITY: return 'セキュリティレビュー結果の出力があれば完了';
+    case TASK_TYPES.OPS:             return '実行ログ・診断結果の出力があれば完了';
+    default:                         return 'コード変更あり必須';
   }
 }
 

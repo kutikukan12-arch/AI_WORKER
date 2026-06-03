@@ -372,7 +372,7 @@ function buildValidationSummary(result) {
 //   - 質問文で終わる
 // ─────────────────────────────────────────────────────
 const NON_IMPLEMENT_MIN_LENGTH = 200; // 調査/設計/レビュー結果の最低文字数
-const NON_CODE_CHANGE_TYPES = new Set(['RESEARCH', 'DESIGN', 'REVIEW', 'DOCS', 'OPS']);
+const NON_CODE_CHANGE_TYPES = new Set(['RESEARCH', 'DESIGN', 'REVIEW', 'REVIEW_CODE', 'REVIEW_PRODUCT', 'REVIEW_SECURITY', 'DOCS', 'OPS']);
 const CODE_CHANGE_REQUIRED_TYPES = new Set(['IMPLEMENT', 'FIX', 'REFACTOR']);
 const OPS_PROMPT_PATTERNS = [
   /\bpush\b/i,
