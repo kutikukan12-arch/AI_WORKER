@@ -7733,6 +7733,60 @@ client.on('messageCreate', async (message) => {
   }
 
   // ─────────────────────────────────────────────────────
+  // !kurokawa — 黒川 Workflow Intelligence (Phase1)
+  // ─────────────────────────────────────────────────────
+  if (content.startsWith('!kurokawa')) {
+    const kurArgs = content.split(/\s+/).slice(1);
+    const kurSub  = kurArgs[0] || 'report';
+    if (kurSub === 'report') {
+      const kr = require('./utils/kurokawa-report');
+      const r  = kr.generateReport();
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+    await message.reply(
+      '**!kurokawa — 黒川 Workflow Intelligence**\n\n' +
+      '```\n!kurokawa report  → 会社全体の進行状況レポート\n```'
+    ).catch(() => {});
+    return;
+  }
+
+  // ─────────────────────────────────────────────────────
+  // !start-day / !end-day — Morning Brief / Daily Closing (Phase4)
+  // ─────────────────────────────────────────────────────
+  if (content === '!start-day' || content.startsWith('!start-day')) {
+    const db = require('./utils/daily-brief');
+    const r  = db.buildMorningBrief();
+    await message.reply(r.text.slice(0, 1900)).catch(() => {});
+    return;
+  }
+
+  if (content === '!end-day' || content.startsWith('!end-day')) {
+    const db = require('./utils/daily-brief');
+    const r  = db.buildDailyClosing();
+    await message.reply(r.text.slice(0, 1900)).catch(() => {});
+    return;
+  }
+
+  // ─────────────────────────────────────────────────────
+  // !system health — System Health Manager (Phase6)
+  // ─────────────────────────────────────────────────────
+  if (content.startsWith('!system')) {
+    const sysArgs = content.split(/\s+/).slice(1);
+    if ((sysArgs[0] || '') === 'health') {
+      const sh = require('./utils/system-health');
+      const r  = sh.checkHealth();
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+    await message.reply(
+      '**!system — System Health**\n\n' +
+      '```\n!system health  → システム全体の健全性確認（出力のみ・修正なし）\n```'
+    ).catch(() => {});
+    return;
+  }
+
+  // ─────────────────────────────────────────────────────
   // !workflow — Workflow Automation (Phase5-9)
   //
   // !workflow messages — 返信待ちメッセージ（Phase2 別名）
@@ -7863,6 +7917,17 @@ client.on('messageCreate', async (message) => {
         return;
       }
       const r = vpBrain.buildReview(topic);
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // decide — Phase3: CEOの最終選択を記録（learn の別名）
+    if (vpSub === 'decide') {
+      const vpBrain  = require('./utils/vp-brain');
+      const reviewId = vpArgs[1] || '';
+      const chosen   = vpArgs[2] || '';
+      const reason   = vpArgs.slice(3).join(' ').trim();
+      const r = vpBrain.decideVP(reviewId, chosen, reason);
       await message.reply(r.text.slice(0, 1900)).catch(() => {});
       return;
     }

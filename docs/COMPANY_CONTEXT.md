@@ -124,6 +124,10 @@
 | Discord Company Infrastructure | 16チャンネル / 3カテゴリ | ✅ 本番稼働 |
 | Internal Messages | `!msg send` `!msg pending` | ✅ 稼働中 |
 | Company Context Manager | `!company context` | ✅ 稼働中 |
+| Kurokawa Workflow Intelligence | `!kurokawa report` | ✅ 稼働中 |
+| Morning Brief / Daily Closing | `!start-day` `!end-day` | ✅ 稼働中 |
+| VP Brain (神崎) | `!vp review` `!vp decide` `!vp export` | ✅ 稼働中 |
+| System Health | `!system health` | ✅ 稼働中 |
 
 ---
 

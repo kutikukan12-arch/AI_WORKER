@@ -126,6 +126,25 @@ function _shiraishiPerspective(topic, topics) {
   return parts.slice(0, 2).join('\n  ');
 }
 
+// 育野 Learning Manager の視点（過去 Decision 参照）
+function _ikunoPerspective(topic, topics) {
+  try {
+    const dl      = require('./decision-log');
+    const active  = dl.listActiveDecisions(30);
+    // トピックと関連する過去 Decision を検索
+    const related = active.filter(d =>
+      topics.some(t => {
+        const lower = d.title.toLowerCase() + ' ' + (d.summary || '').toLowerCase();
+        return lower.includes(t);
+      })
+    ).slice(-2);
+    if (related.length > 0) {
+      return related.map(d => `過去Decision「${d.title.slice(0, 40)}」が参考になります`).join('\n  ');
+    }
+  } catch { /* ignore */ }
+  return '関連する過去の Decision を確認し、整合性を保ってください';
+}
+
 // 守谷 CTO の視点
 function _moriyaPerspective(topic, topics) {
   const parts = [];
@@ -247,10 +266,11 @@ function buildReview(topic) {
 
   // 各社員の視点
   const perspectives = {
-    ichikawa: _ichikawaPerspective(safeTopic, topics),
-    kanemori: _kanemoriPerspective(safeTopic, topics),
+    ichikawa:  _ichikawaPerspective(safeTopic, topics),
+    kanemori:  _kanemoriPerspective(safeTopic, topics),
     shiraishi: _shiraishiPerspective(safeTopic, topics),
-    moriya:   _moriyaPerspective(safeTopic, topics),
+    moriya:    _moriyaPerspective(safeTopic, topics),
+    ikuno:     _ikunoPerspective(safeTopic, topics),
   };
 
   // Discord 表示テキスト生成
@@ -280,6 +300,9 @@ function buildReview(topic) {
     `🅱️ 守谷 CTO（技術リスク）:`,
     `  ${perspectives.moriya}`,
     ``,
+    `🅷 育野 Learning（過去 Decision）:`,
+    `  ${perspectives.ikuno}`,
+    ``,
     `**【選択肢】**`,
     ``,
     `**${aOption.label}**`,
@@ -298,7 +321,7 @@ function buildReview(topic) {
     `⚠️ これは「提案」です。**決定ではありません。**`,
     `   最終判断: **CEO（社長）**`,
     ``,
-    `> 判断後: \`!vp learn <review_id> <A|B> [理由]\` で学習記録ができます。`,
+    `> 判断後: \`!vp decide <review_id> <A|B|none> [理由]\` で学習記録ができます。`,
   ].join('\n');
 
   // 保存
@@ -392,9 +415,13 @@ function listReviews(limit = 5) {
   return { ok: true, text: lines.join('\n').trimEnd() };
 }
 
+// Phase3: !vp decide は !vp learn の別名（同じ機能）
+const decideVP = recordLearning;
+
 module.exports = {
   buildReview,
   recordLearning,
+  decideVP,
   listReviews,
   REVIEWS_FILE,
   // テスト用
@@ -403,4 +430,5 @@ module.exports = {
   _detectTopics,
   _buildOptions,
   _buildRecommendation,
+  _ikunoPerspective,
 };
