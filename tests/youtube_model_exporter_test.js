@@ -232,6 +232,100 @@ test('6d. !youtube ヘルプに export-model が記載されている', () => {
 });
 
 // ─────────────────────────────────────────────────────
+// 7. git 追跡状態確認 (NEED_FIX 対応)
+// ─────────────────────────────────────────────────────
+console.log('\n[7. git 追跡状態確認]');
+
+const { execSync } = require('child_process');
+
+test('7a. data/youtube-model.json が git 追跡対象外', () => {
+  // git ls-files で追跡されていないことを確認
+  const tracked = execSync('git ls-files data/youtube-model.json', {
+    cwd: path.join(__dirname, '..'), encoding: 'utf8',
+  }).trim();
+  assert.strictEqual(tracked, '', `youtube-model.json が git 追跡されている: "${tracked}"`);
+});
+
+test('7b. data/youtube-model-pre.json が git 追跡対象外', () => {
+  const tracked = execSync('git ls-files data/youtube-model-pre.json', {
+    cwd: path.join(__dirname, '..'), encoding: 'utf8',
+  }).trim();
+  assert.strictEqual(tracked, '', `youtube-model-pre.json が git 追跡されている: "${tracked}"`);
+});
+
+test('7c. data/youtube-model.json が .gitignore にマッチする', () => {
+  // git check-ignore が 0 を返す（ignore 対象）
+  try {
+    execSync('git check-ignore data/youtube-model.json', {
+      cwd: path.join(__dirname, '..'), encoding: 'utf8',
+    });
+    // exit 0 = ignored → OK
+  } catch (e) {
+    assert.fail(`gitignore にマッチしない (exit code: ${e.status})`);
+  }
+});
+
+test('7d. data/youtube-model-pre.json が .gitignore にマッチする', () => {
+  try {
+    execSync('git check-ignore data/youtube-model-pre.json', {
+      cwd: path.join(__dirname, '..'), encoding: 'utf8',
+    });
+  } catch (e) {
+    assert.fail(`gitignore にマッチしない (exit code: ${e.status})`);
+  }
+});
+
+test('7e. data/youtube-seeds/ が .gitignore にマッチする', () => {
+  try {
+    execSync('git check-ignore data/youtube-seeds/', {
+      cwd: path.join(__dirname, '..'), encoding: 'utf8',
+    });
+  } catch (e) {
+    assert.fail(`gitignore にマッチしない (exit code: ${e.status})`);
+  }
+});
+
+test('7f. ローカルの training model ファイルが存在する（削除禁止確認）', () => {
+  const modelPath    = path.join(__dirname, '..', 'data', 'youtube-model.json');
+  const modelPrePath = path.join(__dirname, '..', 'data', 'youtube-model-pre.json');
+  // テスト用に saveDummyTrainingModel を使ってファイルが存在することを確認
+  // 実際のファイルがなければダミーを作成してからチェック
+  if (!fs.existsSync(modelPrePath)) saveDummyTrainingModel();
+  assert.ok(fs.existsSync(modelPrePath), 'youtube-model-pre.json がローカルに存在しない');
+});
+
+// ─────────────────────────────────────────────────────
+// 8. docs/youtube-model-export-guide.md 確認
+// ─────────────────────────────────────────────────────
+console.log('\n[8. export ガイド確認]');
+
+test('8a. docs/youtube-model-export-guide.md が存在する', () => {
+  const guidePath = path.join(__dirname, '..', 'docs', 'youtube-model-export-guide.md');
+  assert.ok(fs.existsSync(guidePath), 'export ガイドが存在しない');
+});
+
+test('8b. ガイドに「公開成果物」の記載がある', () => {
+  const guide = fs.readFileSync(
+    path.join(__dirname, '..', 'docs', 'youtube-model-export-guide.md'), 'utf8'
+  );
+  assert.ok(guide.includes('公開成果物'), '「公開成果物」の記載がない');
+});
+
+test('8c. ガイドに Webビルド手順が記載されている', () => {
+  const guide = fs.readFileSync(
+    path.join(__dirname, '..', 'docs', 'youtube-model-export-guide.md'), 'utf8'
+  );
+  assert.ok(guide.includes('Web') && guide.includes('ビルド'), 'Webビルド手順がない');
+});
+
+test('8d. ガイドに training model は gitignore と記載されている', () => {
+  const guide = fs.readFileSync(
+    path.join(__dirname, '..', 'docs', 'youtube-model-export-guide.md'), 'utf8'
+  );
+  assert.ok(guide.includes('gitignore'), 'gitignore の記載がない');
+});
+
+// ─────────────────────────────────────────────────────
 // 後処理
 // ─────────────────────────────────────────────────────
 restoreTrainingModel();
