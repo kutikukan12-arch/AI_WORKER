@@ -17,7 +17,7 @@ const fs   = require('fs');
 const path = require('path');
 
 const { encode, FEATURE_NAMES, FEATURE_DIM } = require('../bot/utils/youtube-feature-extractor');
-const { predict, train, getModelStatus, buildSummary } = require('../bot/utils/youtube-predictor');
+const { predict, predictPrePub, train, getModelStatus, buildSummary } = require('../bot/utils/youtube-predictor');
 
 // ── テスト用ファクトリ ─────────────────────────────────
 
@@ -1622,5 +1622,95 @@ describe('buildSummary() — 主要因セクション', () => {
     const result  = predict(video);
     const summary = buildSummary(video, result);
     assert.ok(summary.includes('主要因') || summary.includes('このスコア'), '投稿前モードで主要因がない');
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// predictPrePub() — 投稿後特徴量を一切使わない明示的 API
+// ─────────────────────────────────────────────────────
+
+describe('predictPrePub() — 投稿後特徴量の強制除外', () => {
+  const MODEL_FILE     = path.join(__dirname, '..', 'data', 'youtube-model.json');
+  const MODEL_BAK      = MODEL_FILE + '.test-bak-prepub';
+  const PRE_MODEL_FILE = path.join(__dirname, '..', 'data', 'youtube-model-pre.json');
+  const PRE_MODEL_BAK  = PRE_MODEL_FILE + '.test-bak-prepub';
+
+  before(() => {
+    if (fs.existsSync(MODEL_FILE))     fs.renameSync(MODEL_FILE,     MODEL_BAK);
+    if (fs.existsSync(PRE_MODEL_FILE)) fs.renameSync(PRE_MODEL_FILE, PRE_MODEL_BAK);
+  });
+  after(() => {
+    if (fs.existsSync(MODEL_FILE))     fs.unlinkSync(MODEL_FILE);
+    if (fs.existsSync(PRE_MODEL_FILE)) fs.unlinkSync(PRE_MODEL_FILE);
+    if (fs.existsSync(MODEL_BAK))      fs.renameSync(MODEL_BAK,      MODEL_FILE);
+    if (fs.existsSync(PRE_MODEL_BAK))  fs.renameSync(PRE_MODEL_BAK,  PRE_MODEL_FILE);
+  });
+
+  test('viewCount>0 を渡しても buzzRatio=null（投稿前モードが強制される）', () => {
+    // buzz_ratio を計算する post-pub モードになっていないこと
+    const video = makeVideo({ viewCount: 99999, likeCount: 5000, commentCount: 200, subscriberCount: 1000 });
+    const result = predictPrePub(video);
+    assert.equal(result.buzzRatio, null, `buzzRatio=${result.buzzRatio} (期待: null)`);
+  });
+
+  test('viewCount>0 を渡しても label が hit/miss/unknown のいずれか（MISS 固定にならない）', () => {
+    const video = makeVideo({ viewCount: 50000, likeCount: 2000, commentCount: 100, subscriberCount: 1000 });
+    const result = predictPrePub(video);
+    assert.ok(['hit', 'miss', 'unknown'].includes(result.label), `label=${result.label}`);
+  });
+
+  test('predictPrePub の結果が predict({...v, viewCount:0, likeCount:0, commentCount:0}) と一致する', () => {
+    const video = makeVideo({
+      title: '【衝撃】AIが仕事を奪う！', tags: ['AI', '未来'], duration: 600,
+      subscriberCount: 50000, viewCount: 99999, likeCount: 5000, commentCount: 200,
+    });
+    const pre   = predictPrePub(video);
+    const base  = predict({ ...video, viewCount: 0, likeCount: 0, commentCount: 0 });
+    assert.equal(pre.probability, base.probability, `probability: pre=${pre.probability} base=${base.probability}`);
+    assert.equal(pre.label,       base.label,       `label: pre=${pre.label} base=${base.label}`);
+    assert.equal(pre.buzzRatio,   base.buzzRatio,   `buzzRatio: pre=${pre.buzzRatio} base=${base.buzzRatio}`);
+  });
+
+  test('probability が 0〜100 の整数', () => {
+    const result = predictPrePub(makeVideo({ viewCount: 50000, subscriberCount: 1000 }));
+    assert.ok(Number.isInteger(result.probability) && result.probability >= 0 && result.probability <= 100,
+      `probability=${result.probability}`);
+  });
+
+  test('引数なし（undefined）でもエラーにならない', () => {
+    assert.doesNotThrow(() => predictPrePub(undefined));
+  });
+
+  test('空オブジェクトでもエラーにならない', () => {
+    assert.doesNotThrow(() => predictPrePub({}));
+  });
+
+  test('reasons が返り、全て投稿前モードの factor を持つ（buzz/いいね率/コメント率が含まれない）', () => {
+    const video  = makeVideo({ viewCount: 100000, likeCount: 5000, subscriberCount: 10000 });
+    const result = predictPrePub(video);
+    const postPubFactors = ['視聴数/登録者比(buzz)', 'いいね率', 'コメント率'];
+    for (const r of result.reasons) {
+      assert.ok(
+        !postPubFactors.includes(r.factor),
+        `投稿後 factor "${r.factor}" が predictPrePub の reasons に含まれている`
+      );
+    }
+  });
+
+  test('サブスク大きい→スコア高め、小さい→スコア低め（単調性）', () => {
+    const small = predictPrePub(makeVideo({ subscriberCount: 100,    viewCount: 0 }));
+    const large = predictPrePub(makeVideo({ subscriberCount: 100000, viewCount: 0 }));
+    assert.ok(
+      large.probability >= small.probability,
+      `large(${large.probability}) < small(${small.probability})`
+    );
+  });
+
+  test('buildSummary() が predictPrePub の結果でもエラーなく動作する', () => {
+    const video  = makeVideo({ viewCount: 50000, subscriberCount: 5000 });
+    const result = predictPrePub(video);
+    assert.doesNotThrow(() => buildSummary(video, result));
+    const summary = buildSummary(video, result);
+    assert.ok(summary.includes('YouTube ヒット予測'), 'ヘッダーがない');
   });
 });

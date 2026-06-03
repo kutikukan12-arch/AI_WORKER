@@ -593,4 +593,15 @@ function buildSummary(video, result) {
   return lines.join('\n');
 }
 
-module.exports = { predict, train, getModelStatus, buildSummary };
+// ── 投稿前専用 predict API ────────────────────────────────────
+// viewCount / likeCount / commentCount を呼び出し側が誤って渡しても
+// 強制的に除外し、常に投稿前モード（encodePre / _ruleScorePrePub）で動作する。
+function predictPrePub(video) {
+  const {
+    viewCount: _v, likeCount: _l, commentCount: _c,
+    ...rest
+  } = video || {};
+  return predict({ ...rest, viewCount: 0, likeCount: 0, commentCount: 0 });
+}
+
+module.exports = { predict, predictPrePub, train, getModelStatus, buildSummary };
