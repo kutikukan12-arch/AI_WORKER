@@ -2451,6 +2451,153 @@ async function handleTask(message, args) {
     return;
   }
 
+  // ─────────────────────────────────────────────────────
+  // !task run <id> — 指定IDのタスクを直接実行（優先キューをバイパス）
+  //
+  // 対象状態: PENDING / ON_HOLD
+  // 安全ゲート: セキュリティ / BLOCKED / HUMAN_APPROVAL_REQUIRED / LARGE
+  // 実行フロー: 通常の executeClaudeTask / executeReviewTask / executeResearchTask を使用
+  // `!auto run 1` / `!auto on` の挙動は変更しない
+  // ─────────────────────────────────────────────────────
+  if (sub === 'run' && args[1]) {
+    const runTaskId = args[1];
+    const runTask   = taskManager.getTask(runTaskId);
+
+    if (!runTask) {
+      await message.reply(
+        `❌ \`${runTaskId}\` が見つかりません。\n\`!task list\` で確認してください。`
+      );
+      return;
+    }
+
+    // ── 対象状態チェック ──
+    const validRunStates = [taskManager.STATES.PENDING, taskManager.STATES.ON_HOLD];
+    if (!validRunStates.includes(runTask.state)) {
+      await message.reply(
+        `❌ \`${runTaskId}\` は実行できません。\n\n` +
+        `現在の状態: **${runTask.state}**\n\n` +
+        `実行可能な状態: ${taskManager.STATES.PENDING} / ${taskManager.STATES.ON_HOLD}`
+      );
+      return;
+    }
+
+    // ── セキュリティチェック ──
+    const runSec = security.checkPrompt(runTask.prompt || '');
+    if (!runSec.safe) {
+      await message.reply(
+        `🚫 **セキュリティチェックで拒否**\n\n` +
+        `タスク: \`${runTaskId}\`\n理由: ${runSec.reason}`
+      );
+      return;
+    }
+
+    // ── Auto Policy チェック（BLOCKED / HUMAN_APPROVAL_REQUIRED は停止）──
+    const runPolicy = autoPolicy.classifyTask(runTask, { danger: runTask.dangerLevel || '低' });
+    if (runPolicy === autoPolicy.AUTO_POLICY.BLOCKED ||
+        runPolicy === autoPolicy.AUTO_POLICY.HUMAN_APPROVAL_REQUIRED) {
+      const policyLabel = runPolicy === autoPolicy.AUTO_POLICY.BLOCKED
+        ? '🚫 BLOCKED'
+        : '⚠️ 人間確認が必要 (HUMAN_APPROVAL_REQUIRED)';
+      await message.reply(
+        `${policyLabel}\n\n` +
+        `タスク: \`${runTaskId}\`\n\n` +
+        `このタスクは自動実行できません。\`!claude\` から直接実行し、承認フロー（\`!approve\`）を経てください。`
+      );
+      return;
+    }
+
+    // ── LARGE サイズチェック ──
+    const runSizeResult = taskTypeUtil.estimateTaskSize(runTask.prompt || '');
+    if (runSizeResult.size === taskTypeUtil.TASK_SIZES.LARGE) {
+      const splitMsg = taskTypeUtil.buildSplitSuggestion(runTask.prompt || '', runSizeResult);
+      await message.reply(
+        `⚠️ **タスクが大きすぎます**\n\nタスク: \`${runTaskId}\`\n\n` + splitMsg
+      );
+      return;
+    }
+
+    // ── ON_HOLD → PENDING に一時解除してからクレーム ──
+    const wasOnHold = runTask.state === taskManager.STATES.ON_HOLD;
+    if (wasOnHold) {
+      taskManager.updateState(runTaskId, taskManager.STATES.PENDING, 'task run 一時解除');
+    }
+
+    // 特定IDのみを対象にクレーム（原子的 PENDING → IN_PROGRESS）
+    const claimedRunTask = taskManager.claimNextTaskByFilter(
+      t => t.id === runTaskId, 'run-task-cmd'
+    );
+    if (!claimedRunTask) {
+      // クレームに失敗した場合は元の状態に戻す
+      if (wasOnHold) {
+        taskManager.updateState(runTaskId, taskManager.STATES.ON_HOLD, 'task run claim 失敗・復元');
+      }
+      await message.reply(
+        `❌ \`${runTaskId}\` のクレームに失敗しました。\n` +
+        `他のワーカーが実行中か、リース期間内の可能性があります。`
+      );
+      return;
+    }
+
+    // ── 実行パラメータ構築 ──
+    const runProjectId  = claimedRunTask.projectId
+      || projectDetector.detectProjectId(message.channel)
+      || projectManager.getCurrentProject(message.channelId)
+      || 'default';
+    const runStoredType = claimedRunTask.type || taskManager.TASK_TYPES.IMPLEMENT;
+    const runTypeEmoji  = taskManager.TYPE_EMOJI[runStoredType] || '📋';
+    const runSizeEmoji  = taskManager.SIZE_EMOJI[claimedRunTask.size || taskManager.TASK_SIZES.MEDIUM] || '🟡';
+    const runPrompt     = claimedRunTask.prompt || '';
+
+    await message.reply(
+      `▶️ **!task run: 指定タスク実行開始**\n\n` +
+      `タスク: \`${runTaskId}\`\n` +
+      `[${runStoredType}] ${runTypeEmoji}${runSizeEmoji}\n` +
+      `指示: ${runPrompt.slice(0, 80)}${runPrompt.length > 80 ? '...' : ''}\n\n` +
+      `completionValidator・AIレビュー・Codex を通常通り実行します。`
+    ).catch(() => {});
+
+    // ── REVIEW タスクは Codex へ転送 ──
+    if (runStoredType === taskManager.TASK_TYPES.REVIEW) {
+      const runReviewFn = async () =>
+        executeReviewTask({ message, task: claimedRunTask, projectId: runProjectId });
+      const runReviewQueuePos = taskQueue.enqueue(runTaskId, runReviewFn);
+      if (runReviewQueuePos > 0) {
+        await message.reply(
+          `📋 **キューに追加しました（待機 ${runReviewQueuePos} 番目）**\n` +
+          `\`${runTaskId}\` は ${taskQueue.activeCount} 件の処理完了後に自動実行されます。`
+        ).catch(() => {});
+      }
+      return;
+    }
+
+    // ── RESEARCH タスクは調査専用モードで実行 ──
+    if (runStoredType === taskManager.TASK_TYPES.RESEARCH) {
+      const runResearchFn = async () =>
+        executeResearchTask({ message, task: claimedRunTask, projectId: runProjectId });
+      const runResearchQueuePos = taskQueue.enqueue(runTaskId, runResearchFn);
+      if (runResearchQueuePos > 0) {
+        await message.reply(
+          `📋 **キューに追加しました（待機 ${runResearchQueuePos} 番目）**\n` +
+          `\`${runTaskId}\` は ${taskQueue.activeCount} 件の処理完了後に自動実行されます。`
+        ).catch(() => {});
+      }
+      return;
+    }
+
+    // ── その他（IMPLEMENT / FIX / REFACTOR / TEST / DOCS 等）──
+    const runExecParams = buildExecuteParamsFromTask(claimedRunTask, message, runProjectId);
+    const runClaudeFn   = async () => executeClaudeTask({ ...runExecParams, source: 'run-task-cmd' });
+    const runClaudeQueuePos = taskQueue.enqueue(runTaskId, runClaudeFn);
+    if (runClaudeQueuePos > 0) {
+      await message.reply(
+        `📋 **キューに追加しました（待機 ${runClaudeQueuePos} 番目）**\n` +
+        `\`${runTaskId}\` は ${taskQueue.activeCount} 件の処理完了後に自動実行されます。\n` +
+        `\`!queue\` でキュー状況を確認できます。`
+      ).catch(() => {});
+    }
+    return;
+  }
+
   // !task merge <id1> <id2> — 2つのタスクを1つに統合
   if (sub === 'merge') {
     const mergeId1 = args[1] || '';
