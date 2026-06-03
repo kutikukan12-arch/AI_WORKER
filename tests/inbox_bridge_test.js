@@ -271,7 +271,7 @@ test("7a. startsWith('!inbox') が実装されている", () => {
 
 function inboxArea() {
   const idx = src.indexOf("startsWith('!inbox')");
-  return src.slice(idx, idx + 1500);
+  return src.slice(idx, idx + 2500); // Phase3 追加で長くなったため拡張
 }
 
 test("7b. check / status / clear が実装されている", () => {

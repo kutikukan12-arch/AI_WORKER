@@ -1,31 +1,27 @@
 'use strict';
 // =====================================================
-// inbox-bridge.js — Desktop Inbox Bridge (黒川 Phase2)
+// inbox-bridge.js — Desktop Inbox Bridge (黒川 Phase2+3)
 //
-// 目的:
-//   ChatGPT Desktop / 副社長相談内容を AI_WORKER へ橋渡し。
-//   CEOが毎回Discordへ手動コピペする負担を減らす。
+// Phase2: GPT Inbox Bridge
+//   data/inbox/gpt/incoming.md → 分類 → report.md
 //
-// 処理フロー:
-//   data/inbox/gpt/incoming.md
-//     ↓ read + redact
-//   分類 (decision/incident/task/msg/ceo_review/memo)
-//     ↓
-//   data/outbox/gpt/report.md に保存
-//     ↓
-//   Discord に要約表示 + 実行候補コマンドを提案
+// Phase3: Desktop Worker Loop
+//   AI_WORKER → data/outbox/<worker>/outgoing.md (sendToWorker)
+//   Desktop  → data/inbox/<worker>/incoming.md   (checkWorkerInbox)
+//   !inbox status → 全社員の inbox/outbox 状態一覧
 //
 // 禁止事項:
-//   ❌ 自動 !task add / !decision log / !incident open / !msg send
-//   ❌ Git 操作
-//   ❌ 外部通信
-//   ❌ ChatGPTメモの外部公開
+//   ❌ 自動 createTask / decision-log / incident-manager 呼び出し
+//   ❌ incoming.md の内容をコマンドとして実行
+//   ❌ eval / execSync
+//   ❌ Git 操作 / 外部通信
+//   ❌ 黒川が判断を代理する
 //
 // セーフガード:
-//   ✅ redact() 適用
-//   ✅ data/inbox/gpt/*.md は gitignore
-//   ✅ data/outbox/gpt/*.md は gitignore
-//   ✅ 提案まで。実行は CEO が手動で行う
+//   ✅ redact() を全出力に適用
+//   ✅ data/inbox/ data/outbox/ は gitignore
+//   ✅ worker 名はホワイトリストで検証（パストラバーサル防止）
+//   ✅ 提案のみ。実行は CEO が確認してから手動で行う
 // =====================================================
 
 const fs   = require('fs');
@@ -37,6 +33,44 @@ const INBOX_DIR   = path.join(DATA_DIR, 'inbox', 'gpt');
 const OUTBOX_DIR  = path.join(DATA_DIR, 'outbox', 'gpt');
 const INCOMING    = path.join(INBOX_DIR,  'incoming.md');
 const REPORT      = path.join(OUTBOX_DIR, 'report.md');
+
+// ─────────────────────────────────────────────────────
+// Phase3: 社員別ディレクトリ
+// ─────────────────────────────────────────────────────
+// ホワイトリスト: パストラバーサル防止。ここ以外の worker 名は拒否する。
+const VALID_WORKERS = ['miyagi', 'moriya', 'shiraishi', 'aizawa', 'ichikawa', 'kanemori', 'kurokawa', 'ikuno'];
+
+const WORKER_DISPLAY = {
+  miyagi:    '宮城 Lead Engineer',
+  moriya:    '守谷 CTO',
+  shiraishi: '白石 COO',
+  aizawa:    '相沢 AI Engineer',
+  ichikawa:  '市川 PM',
+  kanemori:  '金森 CFO',
+  kurokawa:  '黒川 Chief of Staff',
+  ikuno:     '育野',
+};
+
+function _workerInboxPath(worker)   { return path.join(DATA_DIR, 'inbox',  worker, 'incoming.md'); }
+function _workerOutboxPath(worker)  { return path.join(DATA_DIR, 'outbox', worker, 'outgoing.md'); }
+function _workerReportPath(worker)  { return path.join(DATA_DIR, 'outbox', worker, 'report.md');   }
+
+// worker 名を正規化（エイリアス解決 + ホワイトリスト確認）
+// 日本語名 / アルファベット / 上記 valid のみ許可
+const WORKER_ALIAS = {
+  '宮城': 'miyagi', '守谷': 'moriya', '白石': 'shiraishi', '相沢': 'aizawa',
+  '市川': 'ichikawa', '金森': 'kanemori', '黒川': 'kurokawa', '育野': 'ikuno',
+  a: 'miyagi', b: 'moriya', c: 'shiraishi', d: 'aizawa',
+  e: 'ichikawa', f: 'kanemori', g: 'kurokawa', h: 'ikuno',
+};
+
+function resolveWorker(input) {
+  if (!input) return null;
+  const s = String(input).trim().toLowerCase();
+  const fromAlias = WORKER_ALIAS[input.trim()] || WORKER_ALIAS[s];
+  if (fromAlias) return fromAlias;
+  return VALID_WORKERS.includes(s) ? s : null;
+}
 
 // ─────────────────────────────────────────────────────
 // 分類キーワード
@@ -91,6 +125,25 @@ const CLASSIFIERS = {
     ],
     cmdTemplate: () => `# CEO確認後に手動実行してください`,
   },
+  // Phase3 追加カテゴリ
+  review: {
+    label: 'Review候補',
+    emoji: '🔍',
+    keywords: [
+      'NEED_FIX', 'need_fix', 'レビュー', 'コードレビュー', '修正指示',
+      '指摘', 'フィードバック', 'review', '再確認', '見直し', 'チェック',
+    ],
+    cmdTemplate: (title) => `# レビュー: ${title.slice(0, 60)}`,
+  },
+  lesson: {
+    label: 'Lesson候補',
+    emoji: '📖',
+    keywords: [
+      '教訓', '学んだ', '気づき', 'ハマった', '失敗から', '再発防止',
+      '反省', 'lesson', '改善点', '次回', 'わかった',
+    ],
+    cmdTemplate: (title) => `# Lesson候補: ${title.slice(0, 60)}\n# → LESSONS.md への追記を検討`,
+  },
 };
 
 // ─────────────────────────────────────────────────────
@@ -129,14 +182,19 @@ function _classifyLine(line) {
 }
 
 // ─────────────────────────────────────────────────────
-// incoming.md を読んで分類
+// parseIncoming(filePath?) — 指定ファイルを読んで分類
+//
+// Phase2: 省略時は gpt/incoming.md を対象
+// Phase3: worker 別の incoming.md を対象
 // ─────────────────────────────────────────────────────
-function parseIncoming() {
-  if (!fs.existsSync(INCOMING)) {
+function parseIncoming(filePath) {
+  const target = filePath || INCOMING;
+
+  if (!fs.existsSync(target)) {
     return { ok: false, reason: 'no_file' };
   }
 
-  const raw     = fs.readFileSync(INCOMING, 'utf8');
+  const raw     = fs.readFileSync(target, 'utf8');
   const content = redact(raw);
 
   if (!content.trim()) {
@@ -145,7 +203,10 @@ function parseIncoming() {
 
   // セクションヘッダー対応の行パーサー
   const lines    = content.split('\n');
-  const sections = { decision: [], incident: [], task: [], msg: [], ceo_review: [], memo: [] };
+  // CLASSIFIERS のキー全てを初期化（Phase3 追加の review / lesson も含む）
+  const sections = Object.fromEntries(
+    [...Object.keys(CLASSIFIERS), 'memo'].map(k => [k, []])
+  );
   let   ctxCat   = null; // ## ヘッダーから推定したカテゴリ
 
   const SECTION_MAP = {
@@ -156,6 +217,8 @@ function parseIncoming() {
     '緊急': 'incident',
     'メモ': 'memo', 'memo': 'memo', 'その他': 'memo',
     'ceo': 'ceo_review', '判断待ち': 'ceo_review',
+    'レビュー': 'review', 'review': 'review', 'need_fix': 'review',
+    '教訓': 'lesson', 'lesson': 'lesson', '学び': 'lesson',
   };
 
   for (const line of lines) {
@@ -404,10 +467,190 @@ function clearInbox() {
   return { ok: true, text: '🗑️ **incoming.md をクリアしました**\n\n次のメモをペーストする準備ができました。' };
 }
 
+// ─────────────────────────────────────────────────────
+// Phase3: sendToWorker(worker, message) — 社員への依頼を outbox に保存
+//
+// data/outbox/<worker>/outgoing.md に追記する。
+// Discord にも提案として表示する。自動実行しない。
+//
+// 戻り値: { ok, text }
+// ─────────────────────────────────────────────────────
+function sendToWorker(workerInput, message) {
+  const worker = resolveWorker(workerInput);
+  if (!worker) {
+    return {
+      ok:   false,
+      text: `❌ 社員名 \`${workerInput}\` が不明です。\n有効な社員: ${VALID_WORKERS.join(' / ')}`,
+    };
+  }
+  if (!message || !String(message).trim()) {
+    return {
+      ok:   false,
+      text: `❌ メッセージ内容は必須です。\n使い方: \`!inbox send <社員> <内容>\``,
+    };
+  }
+
+  const safeMsg = redact(String(message).trim()).slice(0, 1000);
+  const outPath = _workerOutboxPath(worker);
+  const dir     = path.dirname(outPath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+  const now     = new Date().toLocaleString('ja-JP');
+  const entry   = `\n---\n**${now}**\n\n${safeMsg}\n`;
+  fs.appendFileSync(outPath, entry, 'utf8');
+
+  const display = WORKER_DISPLAY[worker] || worker;
+  return {
+    ok:   true,
+    text: `📤 **${display} への依頼を outbox に保存しました**\n\n` +
+          `ファイル: \`data/outbox/${worker}/outgoing.md\`\n\n` +
+          `内容:\n> ${safeMsg.slice(0, 120)}${safeMsg.length > 120 ? '…' : ''}\n\n` +
+          `⚠️ これは**保存のみ**です。Desktop 側で ${display} が確認するまでお待ちください。`,
+  };
+}
+
+// ─────────────────────────────────────────────────────
+// Phase3: checkWorkerInbox(worker) — 社員の incoming.md を読んで分類
+//
+// data/inbox/<worker>/incoming.md を分析し
+// Decision / Task / Review / Incident / Lesson / Message候補を表示する。
+// 提案のみ。CEO確認なしに実行しない。
+//
+// 戻り値: { ok, text, reportPath?, sections?, suggestions? }
+// ─────────────────────────────────────────────────────
+function checkWorkerInbox(workerInput) {
+  const worker = resolveWorker(workerInput);
+  if (!worker) {
+    return {
+      ok:   false,
+      text: `❌ 社員名 \`${workerInput}\` が不明です。\n有効な社員: ${VALID_WORKERS.join(' / ')}`,
+    };
+  }
+
+  const inPath  = _workerInboxPath(worker);
+  const display = WORKER_DISPLAY[worker] || worker;
+  const parsed  = parseIncoming(inPath);
+
+  if (!parsed.ok) {
+    const hint = parsed.reason === 'no_file'
+      ? `\`data/inbox/${worker}/incoming.md\` が存在しません。\n${display} が Desktop 上の作業結果を貼るまでお待ちください。`
+      : `\`data/inbox/${worker}/incoming.md\` が空です。`;
+    return { ok: false, text: `📭 **${display} の Inbox は空です**\n\n${hint}` };
+  }
+
+  const suggestions = _buildSuggestions(parsed.sections);
+  const report      = _buildReport(parsed, suggestions);
+
+  // report.md を保存
+  const reportPath = _workerReportPath(worker);
+  const reportDir  = path.dirname(reportPath);
+  if (!fs.existsSync(reportDir)) fs.mkdirSync(reportDir, { recursive: true });
+  fs.writeFileSync(reportPath, report, 'utf8');
+
+  // Discord 要約
+  const counts = Object.entries(CLASSIFIERS)
+    .map(([cat, { label, emoji }]) => {
+      const n = (parsed.sections[cat] || []).length;
+      return n > 0 ? `${emoji} ${label}: ${n}件` : null;
+    })
+    .filter(Boolean);
+  const memoN = parsed.sections.memo.length;
+  if (memoN > 0) counts.push(`📝 メモ: ${memoN}件`);
+
+  const total = Object.values(parsed.sections).reduce((a, b) => a + b.length, 0);
+  const discordLines = [
+    `📥 **${display} Inbox Report** (計 ${total} 項目)`,
+    ``,
+    `**分類:**`,
+    ...counts.map(c => `・${c}`),
+    ``,
+  ];
+
+  if (suggestions.length > 0) {
+    discordLines.push(`**推奨アクション (${suggestions.length}件):**`);
+    suggestions.forEach((s, i) => {
+      discordLines.push(`${i + 1}. **[${s.label}]**`);
+      discordLines.push(`\`\`\`\n${s.cmd}\n\`\`\``);
+    });
+    discordLines.push('');
+  }
+
+  discordLines.push(`> ⚠️ 上記は**提案のみ**です。CEOが確認してから手動実行してください。`);
+  discordLines.push(`> 詳細: \`data/outbox/${worker}/report.md\``);
+
+  return {
+    ok:          true,
+    worker,
+    text:        discordLines.join('\n'),
+    reportPath,
+    sections:    parsed.sections,
+    suggestions,
+    total,
+  };
+}
+
+// ─────────────────────────────────────────────────────
+// Phase3: getWorkerStatus() — 全社員の inbox/outbox 状態一覧
+//
+// 黒川向け進行管理ビュー。
+// 戻り値: { ok, text }
+// ─────────────────────────────────────────────────────
+function getWorkerStatus() {
+  const lines = [
+    `📊 **Worker Inbox Status** (黒川 進行管理)`,
+    `*黒川は配送と進行管理のみ。判断の代理は禁止。*`,
+    ``,
+  ];
+
+  let hasAny = false;
+
+  for (const worker of VALID_WORKERS) {
+    const display  = WORKER_DISPLAY[worker] || worker;
+    const inPath   = _workerInboxPath(worker);
+    const outPath  = _workerOutboxPath(worker);
+    const inExists = fs.existsSync(inPath);
+    const outExists= fs.existsSync(outPath);
+
+    if (!inExists && !outExists) continue;
+    hasAny = true;
+
+    const inSize  = inExists  ? fs.statSync(inPath).size  : 0;
+    const outSize = outExists ? fs.statSync(outPath).size : 0;
+
+    lines.push(`**${display}**`);
+    if (inExists  && inSize  > 0) lines.push(`  📥 incoming: ${inSize} bytes  ← 未確認`);
+    if (outExists && outSize > 0) lines.push(`  📤 outgoing: ${outSize} bytes  → 送信済み`);
+    lines.push('');
+  }
+
+  if (!hasAny) {
+    lines.push('📭 全社員の inbox/outbox が空です。');
+  }
+
+  lines.push('コマンド:');
+  lines.push('  `!inbox check <社員>` — 社員の inbox を確認');
+  lines.push('  `!inbox send <社員> <内容>` — 社員に依頼を送信');
+
+  return { ok: true, text: lines.join('\n').trimEnd() };
+}
+
+// ─────────────────────────────────────────────────────
+// (既存) getStatus() — Phase2 の GPT inbox 状態確認（後方互換維持）
+// Phase3 では !inbox status がまとめて両方表示する
+// ─────────────────────────────────────────────────────
+
 module.exports = {
+  // Phase2
   checkInbox,
   getStatus,
   clearInbox,
+  // Phase3
+  sendToWorker,
+  checkWorkerInbox,
+  getWorkerStatus,
+  resolveWorker,
+  VALID_WORKERS,
+  WORKER_DISPLAY,
   // テスト用
   parseIncoming,
   _classifyLine,
@@ -416,4 +659,7 @@ module.exports = {
   REPORT,
   INBOX_DIR,
   OUTBOX_DIR,
+  _workerInboxPath,
+  _workerOutboxPath,
+  _workerReportPath,
 };

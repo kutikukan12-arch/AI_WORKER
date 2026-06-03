@@ -7530,18 +7530,48 @@ client.on('messageCreate', async (message) => {
     const inboxArgs   = content.split(/\s+/).slice(1);
     const inboxSub    = inboxArgs[0] || 'help';
 
+    // check — Phase2: gpt inbox / Phase3: worker inbox
     if (inboxSub === 'check') {
-      const r = inboxBridge.checkInbox();
+      const workerArg = inboxArgs[1] || '';
+      if (workerArg) {
+        // Phase3: !inbox check <worker>
+        const r = inboxBridge.checkWorkerInbox(workerArg);
+        await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      } else {
+        // Phase2: !inbox check (gpt)
+        const r = inboxBridge.checkInbox();
+        await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      }
+      return;
+    }
+
+    // send — Phase3: !inbox send <worker> <message>
+    if (inboxSub === 'send') {
+      const workerArg = inboxArgs[1] || '';
+      const msgBody   = inboxArgs.slice(2).join(' ').trim();
+      if (!workerArg || !msgBody) {
+        await message.reply(
+          '**使い方**\n```\n!inbox send <社員> <内容>\n```\n\n' +
+          '例: `!inbox send miyagi Phase1の実装をお願いします`\n\n' +
+          `有効な社員: ${inboxBridge.VALID_WORKERS.join(' / ')}`
+        ).catch(() => {});
+        return;
+      }
+      const r = inboxBridge.sendToWorker(workerArg, msgBody);
       await message.reply(r.text.slice(0, 1900)).catch(() => {});
       return;
     }
 
+    // status — Phase2+3 統合ステータス
     if (inboxSub === 'status') {
-      const r = inboxBridge.getStatus();
-      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      const gptStatus    = inboxBridge.getStatus();
+      const workerStatus = inboxBridge.getWorkerStatus();
+      const combined     = gptStatus.text + '\n\n' + workerStatus.text;
+      await message.reply(combined.slice(0, 1900)).catch(() => {});
       return;
     }
 
+    // clear — Phase2 gpt inbox のみ（Owner 限定）
     if (inboxSub === 'clear') {
       if (DISCORD_OWNER_ID && message.author.id !== DISCORD_OWNER_ID) {
         await message.reply('🚫 `!inbox clear` は Owner のみ実行できます。').catch(() => {});
@@ -7554,16 +7584,15 @@ client.on('messageCreate', async (message) => {
 
     // help
     await message.reply(
-      '**!inbox — Desktop Inbox Bridge（黒川）**\n\n' +
+      '**!inbox — Desktop Inbox Bridge（黒川 Phase2+3）**\n\n' +
       '```\n' +
-      '!inbox check   → incoming.md を分析・レポート生成\n' +
-      '!inbox status  → Inbox の状態確認\n' +
-      '!inbox clear   → incoming.md をクリア（Owner）\n' +
+      '!inbox check             → GPT inbox を分析（Phase2）\n' +
+      '!inbox check <社員>      → 社員 inbox を分析（Phase3）\n' +
+      '!inbox send <社員> <内容> → 社員への依頼を outbox に保存\n' +
+      '!inbox status            → 全体の inbox/outbox 状態確認\n' +
+      '!inbox clear             → GPT incoming.md をクリア（Owner）\n' +
       '```\n\n' +
-      '**使い方:**\n' +
-      '1. `data/inbox/gpt/incoming.md` に ChatGPT のメモをペースト\n' +
-      '2. `!inbox check` で分析実行\n' +
-      '3. 提案コマンドを確認して手動実行\n\n' +
+      `有効な社員: ${inboxBridge.VALID_WORKERS.join(' / ')}\n\n` +
       '⚠️ 黒川は**提案のみ**。自動実行しません。\n' +
       '詳細ルール: `docs/vp-room-operations.md`'
     ).catch(() => {});
