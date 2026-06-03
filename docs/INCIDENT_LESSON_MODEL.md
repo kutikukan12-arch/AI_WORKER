@@ -1,7 +1,8 @@
-# Incident / Lesson 対応モデル（会社標準プレイブック）
+# Incident / Lesson 対応モデル（= AI_WORKER 標準改善フロー）
 
 > 管理: 🅷 Claude H (Learning / Memory Guardian)
 > 制定: 2026-06-04（育野 Learning Manager 指示）
+> **位置づけ: AI_WORKER 標準改善フローとして正式採用（2026-06-04）。今後 Incident 発生時はこのモデルを基本形とする。**
 > 目的: インシデントや学び候補を「個別対応」で終わらせず、**会社ルールと実行可能な手順**に変えて再発を防ぐ。
 
 今後すべての Incident / Lesson 候補は、原則この7ステップで処理する。
@@ -26,6 +27,7 @@
 - `scripts/security-check.js`（`npm run security-check`）… L-16 公開境界の標準チェック
 - `scripts/lessons-patrol.js`（`npm run patrol`）… reviews/logs の週次学習巡回
 
-## 今後の採用候補（保持）
-- `npm run security-check` を **重要変更後チェック** と **週次巡回** に組み込む。
-  → **System Health Manager 構築時に正式採用候補**として保持（育野指示・2026-06-04）。
+## 今後の採用候補（保持）— System Health Manager 構築時に正式採用候補（育野指示・2026-06-04）
+1. `npm run security-check` の **定期巡回**
+2. **重要変更後チェック**（security-check を変更後に必ず実行）
+3. **健康診断 Report**（巡回・チェック結果をまとめた定期ヘルスレポート）
