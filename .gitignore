@@ -77,6 +77,10 @@ data/decisions.json
 data/incidents.json
 data/internal-messages.json
 
+# ─── Desktop Inbox Bridge（社内情報・外部公開禁止）─────
+data/inbox/
+data/outbox/
+
 # ─── 顧客案件学習データ（個人情報漏洩防止）───
 learning/
 data/finance-config.json

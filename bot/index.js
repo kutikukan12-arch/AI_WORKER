@@ -7515,6 +7515,62 @@ client.on('messageCreate', async (message) => {
   }
 
   // ─────────────────────────────────────────────────────
+  // !inbox — Desktop Inbox Bridge（黒川 Phase2）
+  //
+  // ChatGPT Desktop メモを分類し実行候補を提案する。
+  // 自動実行しない。提案まで。
+  //
+  // !inbox check  — incoming.md を分析してレポート生成
+  // !inbox status — Inbox の状態確認
+  // !inbox clear  — incoming.md をクリア（Owner 限定）
+  // !inbox help   — コマンド一覧
+  // ─────────────────────────────────────────────────────
+  if (content.startsWith('!inbox')) {
+    const inboxBridge = require('./utils/inbox-bridge');
+    const inboxArgs   = content.split(/\s+/).slice(1);
+    const inboxSub    = inboxArgs[0] || 'help';
+
+    if (inboxSub === 'check') {
+      const r = inboxBridge.checkInbox();
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    if (inboxSub === 'status') {
+      const r = inboxBridge.getStatus();
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    if (inboxSub === 'clear') {
+      if (DISCORD_OWNER_ID && message.author.id !== DISCORD_OWNER_ID) {
+        await message.reply('🚫 `!inbox clear` は Owner のみ実行できます。').catch(() => {});
+        return;
+      }
+      const r = inboxBridge.clearInbox();
+      await message.reply(r.text).catch(() => {});
+      return;
+    }
+
+    // help
+    await message.reply(
+      '**!inbox — Desktop Inbox Bridge（黒川）**\n\n' +
+      '```\n' +
+      '!inbox check   → incoming.md を分析・レポート生成\n' +
+      '!inbox status  → Inbox の状態確認\n' +
+      '!inbox clear   → incoming.md をクリア（Owner）\n' +
+      '```\n\n' +
+      '**使い方:**\n' +
+      '1. `data/inbox/gpt/incoming.md` に ChatGPT のメモをペースト\n' +
+      '2. `!inbox check` で分析実行\n' +
+      '3. 提案コマンドを確認して手動実行\n\n' +
+      '⚠️ 黒川は**提案のみ**。自動実行しません。\n' +
+      '詳細ルール: `docs/vp-room-operations.md`'
+    ).catch(() => {});
+    return;
+  }
+
+  // ─────────────────────────────────────────────────────
   // !msg — 社内メッセージ配送（黒川 Chief of Staff）
   //
   // 黒川の役割: 配送・進行管理のみ。判断の代理は禁止。
