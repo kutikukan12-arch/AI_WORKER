@@ -57,6 +57,8 @@ function getContextSummary() {
     `**フェーズ:** 社内基盤完了 → 実案件Workflow検証中`,
     ``,
     `**稼働システム:** 16種 (Task/Workflow/Inbox/Discord/Context 等)`,
+    // Phase5: active Decision 数をコンテキストに反映
+    (() => { try { const dl = require('./decision-log'); const n = dl.listActiveDecisions().length; return n > 0 ? `**有効 Decision:** ${n} 件 (🟢 active)` : ''; } catch { return ''; } })(),
     ``,
     `**基本方針:** 安全な会社運用 > 過剰自動化`,
     `**黒川ルール:** 配送・管理のみ。判断代理禁止。`,

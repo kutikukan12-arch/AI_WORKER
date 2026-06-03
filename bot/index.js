@@ -7408,7 +7408,9 @@ client.on('messageCreate', async (message) => {
     }
 
     if (decSub === 'list') {
-      const r = decLog.listDecisions(10);
+      // !decision list all → archived 含む全件
+      const showAll = (decArgs[1] || '') === 'all';
+      const r = decLog.listDecisions(10, showAll);
       await message.reply(r.text.slice(0, 1900)).catch(() => {});
       return;
     }
@@ -7420,6 +7422,34 @@ client.on('messageCreate', async (message) => {
       return;
     }
 
+    // Phase2: cleanup — 重複検出・育野への提案
+    if (decSub === 'cleanup') {
+      const r = decLog.buildCleanupReport();
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // Phase3: archive <id> <newId> — archived 化（削除禁止・履歴保持）
+    if (decSub === 'archive') {
+      const archId    = decArgs[1] || '';
+      const newDecId  = decArgs[2] || null;
+      const archReason= decArgs.slice(3).join(' ').trim();
+      if (!archId) {
+        await message.reply(
+          '使い方: `!decision archive <ID> [<置換先ID>] [<理由>]`\n\n' +
+          '削除ではなくアーカイブします（履歴は保持）。\n' +
+          '`!decision cleanup` で archive 候補を確認できます。'
+        ).catch(() => {});
+        return;
+      }
+      const r = decLog.archiveDecision(archId, newDecId || null, archReason);
+      const text = r.ok
+        ? `📦 **アーカイブしました**\n\nID: \`${r.rec.id}\`\nタイトル: ${r.rec.title}\n置換先: ${r.rec.supersededBy ? `\`${r.rec.supersededBy}\`` : '（なし）'}\n\n履歴は保持されています。`
+        : `❌ ${r.reason}`;
+      await message.reply(text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
     // ヘルプ
     await message.reply(
       '**!decision — 意思決定ログ**\n\n' +
@@ -7427,8 +7457,11 @@ client.on('messageCreate', async (message) => {
       '!decision log <タイトル>                    → 記録\n' +
       '!decision log <タイトル> | <サマリー>        → サマリー付きで記録\n' +
       '!decision log ... refs:task_xxx tags:sec    → refs/tags付き\n' +
-      '!decision list                              → 直近10件\n' +
+      '!decision list                              → 🟢 active 直近10件\n' +
+      '!decision list all                          → 📦 archived 含む全件\n' +
       '!decision show <ID>                         → 詳細表示\n' +
+      '!decision cleanup                           → 重複検出・育野への提案\n' +
+      '!decision archive <ID> [<新ID>] [<理由>]   → アーカイブ（削除禁止）\n' +
       '```\n\n' +
       '仕様: `docs/envelope-spec.md`'
     ).catch(() => {});

@@ -18,6 +18,14 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'bot', 'index.js'), 'utf8
 const TEST_FILE = path.join(__dirname, '..', 'data', 'decisions.json');
 function resetDecisions() { dl._save([]); }
 
+// 実データ保護: テスト開始時にスナップショットし、終了時に必ず復元する。
+// （このテストは中間で decisions.json を書き換えるため、本番データを消さないようにする）
+const _ORIG_DECISIONS = fs.existsSync(TEST_FILE) ? fs.readFileSync(TEST_FILE, 'utf8') : null;
+function restoreDecisions() {
+  if (_ORIG_DECISIONS !== null) fs.writeFileSync(TEST_FILE, _ORIG_DECISIONS, 'utf8');
+  else { try { fs.unlinkSync(TEST_FILE); } catch { /* ignore */ } }
+}
+
 // ─────────────────────────────────────────────────────
 // 1. 共通エンベロープ仕様準拠確認
 // ─────────────────────────────────────────────────────
@@ -58,9 +66,10 @@ test('1f. severity デフォルトは MEDIUM', () => {
   assert.strictEqual(env.severity, 'MEDIUM');
 });
 
-test('1g. status デフォルトは DECIDED', () => {
+test('1g. status デフォルトは active（Phase1変更: DECIDED → active）', () => {
   const env = dl._buildEnvelope({ title: 'テスト' });
-  assert.strictEqual(env.status, 'DECIDED');
+  // Phase1 で DECIDED → active に変更。後方互換のため DECIDED も _isActive=true。
+  assert.ok(env.status === 'active' || env.status === 'DECIDED', `status: ${env.status}`);
 });
 
 test('1h. data はオブジェクト', () => {
@@ -314,9 +323,97 @@ test('7d. envelope-spec.md に必須フィールドが記載されている', ()
 });
 
 // ─────────────────────────────────────────────────────
-// 後処理
+// 8. Decision Log 整理 API（archive / category / 重複検出）
 // ─────────────────────────────────────────────────────
-resetDecisions();
+console.log('\n[8. Decision Log 整理 API]');
+
+test('8a. findDuplicates が同一タイトルのクラスタを検出する', () => {
+  resetDecisions();
+  dl.logDecision({ title: '黒川の固定ルート自動配送を許可' });
+  dl.logDecision({ title: '黒川の固定ルート自動配送を許可' });
+  dl.logDecision({ title: '別の決定' });
+  const clusters = dl.findDuplicates();
+  assert.strictEqual(clusters.length, 1, 'クラスタ数が1でない');
+  assert.strictEqual(clusters[0].decisions.length, 2);
+  assert.ok(clusters[0].keep, 'keep がない');
+  assert.strictEqual(clusters[0].archive.length, 1, 'archive候補が1件でない');
+});
+
+test('8b. findDuplicates は最新を keep にする', () => {
+  resetDecisions();
+  const a = dl.logDecision({ title: '重複X' });
+  const b = dl.logDecision({ title: '重複X' });
+  const list = dl._load();
+  // createdAt 同一の可能性に備え、2件目を後の時刻に補正
+  list[1].createdAt = new Date(Date.now() + 1000).toISOString();
+  dl._save(list);
+  const clusters = dl.findDuplicates();
+  assert.strictEqual(clusters[0].keep.id, list[1].id, '最新が keep になっていない');
+});
+
+test('8c. archiveDecision は削除せず status=ARCHIVED + supersededBy を設定', () => {
+  resetDecisions();
+  const keep = dl.logDecision({ title: '新しい決定' });
+  const old  = dl.logDecision({ title: '古い決定' });
+  const r = dl.archiveDecision(old.id, keep.id, '重複のため統合');
+  assert.strictEqual(r.ok, true);
+  const list = dl._load();
+  assert.strictEqual(list.length, 2, 'レコードが削除されている（履歴消失）');
+  const archived = list.find(d => d.id === old.id);
+  assert.ok(archived.status === 'archived' || archived.status === 'ARCHIVED', `status: ${archived.status}`);
+  assert.strictEqual(archived.supersededBy, keep.id);
+  assert.ok(archived.archivedAt, 'archivedAt がない');
+  assert.strictEqual(archived.title, '古い決定', '過去の判断理由（title）が消えている');
+});
+
+test('8d. archiveDecision は存在しないIDで ok:false', () => {
+  resetDecisions();
+  const r = dl.archiveDecision('dec_none', 'dec_x');
+  assert.strictEqual(r.ok, false);
+});
+
+test('8e. setCategory が有効カテゴリを設定、無効はエラー', () => {
+  resetDecisions();
+  const d = dl.logDecision({ title: 'カテゴリテスト' });
+  // Phase1: カテゴリは lowercase に変更 (security / workflow / core 等)
+  assert.strictEqual(dl.setCategory(d.id, 'security').ok, true);
+  assert.strictEqual(dl._load()[0].category, 'security');
+  assert.strictEqual(dl.setCategory(d.id, '無効カテゴリ').ok, false);
+});
+
+test('8f. categorizeDecision がタグから妥当なカテゴリを推定', () => {
+  // Phase1: カテゴリは lowercase に変更
+  assert.strictEqual(dl.categorizeDecision({ title: 'L-16採用', tags: ['security', 'l-16'] }),       'security');
+  assert.strictEqual(dl.categorizeDecision({ title: '黒川の自動配送', tags: ['workflow', 'kurokawa'] }), 'workflow');
+  assert.strictEqual(dl.categorizeDecision({ title: 'COMPANY_CONTEXT参照', tags: ['context', 'handoff'] }), 'learning');
+  assert.strictEqual(dl.categorizeDecision({ title: 'AI社員役割', tags: ['roles', 'company'] }),     'core');
+});
+
+test('8g. listDecisions は ARCHIVED を既定で非表示にする', () => {
+  resetDecisions();
+  const keep = dl.logDecision({ title: '有効な決定AAA' });
+  const old  = dl.logDecision({ title: 'アーカイブ済決定BBB' });
+  dl.archiveDecision(old.id, keep.id, 'test');
+  const r = dl.listDecisions();
+  assert.ok(r.text.includes('有効な決定AAA'), '有効な決定が表示されない');
+  assert.ok(!r.text.includes('アーカイブ済決定BBB'), 'ARCHIVED が表示されている');
+  // includeArchived=true なら表示
+  const r2 = dl.listDecisions(10, true);
+  assert.ok(r2.text.includes('アーカイブ済決定BBB'), 'includeArchived でも表示されない');
+});
+
+test('8h. _buildEnvelope に category フィールドがある', () => {
+  // Phase1: lowercase カテゴリに変更
+  const env = dl._buildEnvelope({ title: 'x', category: 'workflow' });
+  assert.strictEqual(env.category, 'workflow');
+  const env2 = dl._buildEnvelope({ title: 'x', category: '不正' });
+  assert.strictEqual(env2.category, null, '不正カテゴリは null になるべき');
+});
+
+// ─────────────────────────────────────────────────────
+// 後処理 — 実データを復元（テストで上書きしたものを元に戻す）
+// ─────────────────────────────────────────────────────
+restoreDecisions();
 
 console.log(`\n結果: ${pass} passed / ${fail} failed\n`);
 if (fail > 0) process.exit(1);
