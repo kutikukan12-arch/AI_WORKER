@@ -75,6 +75,8 @@ data/sales-learning.json
 data/daily-changes.json
 data/pending-rules.json
 data/decisions.json
+data/decisions.backup_*.json
+data/decisions.organized_snapshot.json
 data/incidents.json
 data/internal-messages.json
 data/worker-status.json
