@@ -6,6 +6,7 @@
 > 初版: 2026-06-01（reviews 137件 / logs 5日分の棚卸し）
 
 各ワーカー・codexレビューは着手前に本ファイルを参照すること。新しい教訓は末尾に `L-xx` で追記する。
+Incident / Lesson の処理手順は **[INCIDENT_LESSON_MODEL.md](INCIDENT_LESSON_MODEL.md)**（会社標準プレイブック）に従う。
 
 ---
 
