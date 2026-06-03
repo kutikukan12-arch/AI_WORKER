@@ -631,17 +631,18 @@ function getStats() {
 // 孤立タスクを一括で保留に移動する（!task cleanup 用）
 //
 // 対象:
-//   作業中(IN_PROGRESS)・レビュー待ち(REVIEWING) のタスクのうち
-//   最終更新から thresholdHours 時間以上経過したもの
+//   1. stale claim: IN_PROGRESS かつ leaseExpiresAt が期限切れ（updatedAt に関わらず即検出）
+//   2. 時間超過: IN_PROGRESS / REVIEWING かつ最終更新から thresholdHours 時間以上経過
+//
+// LARGE タスクの stale claim は必ず ON_HOLD へ戻す（PENDING 再キュー禁止）。
 //
 // 戻り値:
 //   { inProgress: number, reviewing: number, total: number }
 // ─────────────────────────────────────────────────────
 function cleanupStaleTasks(thresholdHours = 24) {
-  const tasks    = loadTasks();
-  const now      = Date.now();
-  const limitMs  = thresholdHours * 60 * 60 * 1000;
-  const noteText = `孤立タスク整理（${thresholdHours}時間超過 → 保留）`;
+  const tasks   = loadTasks();
+  const now     = Date.now();
+  const limitMs = thresholdHours * 60 * 60 * 1000;
 
   let countInProgress = 0;
   let countReviewing  = 0;
@@ -652,18 +653,32 @@ function cleanupStaleTasks(thresholdHours = 24) {
       task.state === STATES.REVIEWING;
     if (!isTarget) return;
 
+    // stale claim: IN_PROGRESS かつ leaseExpiresAt が期限切れ
+    const isStaleClaim = task.state === STATES.IN_PROGRESS &&
+      task.leaseExpiresAt &&
+      new Date(task.leaseExpiresAt).getTime() < now;
+
     const elapsed = now - new Date(task.updatedAt).getTime();
-    if (elapsed < limitMs) return;
+    if (!isStaleClaim && elapsed < limitMs) return;
 
     const prevState = task.state;
+    const noteText  = isStaleClaim
+      ? `stale claim: leaseExpiresAt 期限切れ → 保留`
+      : `孤立タスク整理（${thresholdHours}時間超過 → 保留）`;
+
     task.state     = STATES.ON_HOLD;
+    if (isStaleClaim) {
+      task.leaseOwner     = null;
+      task.leaseExpiresAt = null;
+      task.leaseRole      = null;
+    }
     task.updatedAt = new Date().toISOString();
     task.stateHistory.push({ state: STATES.ON_HOLD, at: task.updatedAt, note: noteText });
 
     if (prevState === STATES.IN_PROGRESS) countInProgress++;
     if (prevState === STATES.REVIEWING)   countReviewing++;
 
-    logger.info(`孤立タスク保留: ${task.id} (${prevState} → 保留)`);
+    logger.info(`孤立タスク保留: ${task.id} (${prevState} → 保留)${isStaleClaim ? ' [stale claim]' : ''}`);
   });
 
   if (countInProgress + countReviewing > 0) {
