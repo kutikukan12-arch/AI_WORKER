@@ -7848,6 +7848,44 @@ client.on('messageCreate', async (message) => {
     const vpArgs = content.split(/\s+/).slice(1);
     const vpSub  = vpArgs[0] || 'help';
 
+    // review — VP Brain: 状況整理 + 社員視点 + 選択肢 + 推奨
+    if (vpSub === 'review') {
+      const vpBrain = require('./utils/vp-brain');
+      const topic   = vpArgs.slice(1).join(' ').trim();
+      if (!topic) {
+        await message.reply(
+          '**!vp review — 神崎 VP Brain**\n\n' +
+          '```\n!vp review <相談テーマ>\n```\n\n' +
+          '例: `!vp review YouTube診断AIを有料プランにするか判断したい`\n\n' +
+          '状況整理 → 社員意見 → 選択肢A/B → 神崎推奨 の順で出力します。\n' +
+          '⚠️ 提案のみ。決定は社長が行います。'
+        ).catch(() => {});
+        return;
+      }
+      const r = vpBrain.buildReview(topic);
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // learn — CEOの選択を学習記録
+    if (vpSub === 'learn') {
+      const vpBrain  = require('./utils/vp-brain');
+      const reviewId = vpArgs[1] || '';
+      const chosen   = vpArgs[2] || '';
+      const reason   = vpArgs.slice(3).join(' ').trim();
+      const r = vpBrain.recordLearning(reviewId, chosen, reason);
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // list — VP Review 一覧
+    if (vpSub === 'list') {
+      const vpBrain = require('./utils/vp-brain');
+      const r = vpBrain.listReviews(5);
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
     // ask — 判断材料の整理（提案のみ・決定しない）
     if (vpSub === 'ask') {
       const topic = vpArgs.slice(1).join(' ').trim();
@@ -7904,6 +7942,9 @@ client.on('messageCreate', async (message) => {
     await message.reply(
       '**!vp — 神崎 VP（Strategy Officer）**\n\n' +
       '```\n' +
+      '!vp review <テーマ>        → 状況整理+社員意見+選択肢A/B+推奨 (VP Brain)\n' +
+      '!vp learn <id> <A|B|none> [理由] → CEOの選択を学習記録\n' +
+      '!vp list                   → VP Review 一覧\n' +
       '!vp ask <相談内容>         → 判断材料を整理（状況/選択肢/メリット/リスク/推奨案）\n' +
       '!vp summary                → 経営状況整理（プロジェクト/Decision/リスク）\n' +
       '!vp export [<相談テーマ>]  → ChatGPT外部相談用コンテキスト生成\n' +

@@ -81,6 +81,7 @@ data/incidents.json
 data/internal-messages.json
 data/worker-status.json
 data/workflow-state.json
+data/vp-reviews.json
 
 # ─── Desktop Inbox Bridge / Agent（社内情報・外部公開禁止）─────
 data/inbox/
