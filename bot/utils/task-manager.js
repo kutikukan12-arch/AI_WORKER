@@ -170,6 +170,27 @@ function saveTasks(tasks) {
 }
 
 // ─────────────────────────────────────────────────────
+// _generateTaskId(tasks) — 衝突しない一意タスクIDを生成
+//
+// 方式: timestamp(ms) + 3桁16進サフィックス
+//   例: task_17804934051232f8
+//
+// Date.now() 単体では同一ミリ秒内の連続呼び出しで衝突が起きる。
+// サフィックスを付与し、既存IDとの重複チェックで一意性を保証する。
+// ─────────────────────────────────────────────────────
+function _generateTaskId(tasks) {
+  const existingIds = new Set(tasks.map(t => t.id));
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const ts     = Date.now();
+    const suffix = Math.floor(Math.random() * 0x1000).toString(16).padStart(3, '0');
+    const id     = `task_${ts}${suffix}`;
+    if (!existingIds.has(id)) return id;
+  }
+  // フォールバック（100回試行後も衝突する場合: 理論上ほぼ発生しない）
+  return `task_${Date.now()}${Math.random().toString(36).slice(2, 7)}`;
+}
+
+// ─────────────────────────────────────────────────────
 // タスクを作成する
 //
 // 引数:
@@ -184,7 +205,7 @@ function saveTasks(tasks) {
 // ─────────────────────────────────────────────────────
 function createTask(prompt, discordUserId, taskId = null, dangerLevel = '低', projectId = 'default', taskType = null) {
   const tasks = loadTasks();
-  const id    = taskId || `task_${Date.now()}`;
+  const id    = taskId || _generateTaskId(tasks);
   const now   = new Date().toISOString();
   const { priority: p, reason: pReason } = priority.calculate(prompt, dangerLevel);
   const type  = normalizeTaskType(taskType) || TASK_TYPES.IMPLEMENT;
@@ -1169,7 +1190,7 @@ function mergeTasks(taskId1, taskId2) {
   const mergedSize = estimateTaskSize(mergedPrompt);
 
   const now       = new Date().toISOString();
-  const mergedId  = `task_${Date.now()}`;
+  const mergedId  = _generateTaskId(loadTasks()); // 衝突防止: timestamp + suffix
   const projectId = task1.projectId || task2.projectId || 'default';
 
   const mergedTask = {
