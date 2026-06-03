@@ -9,3 +9,5 @@
 {"ts":"2026-06-02T19:27:56.616Z","taskId":"task_1780427878099","costUsd":0.30921235,"durationSec":147,"numTurns":2,"source":null}
 {"ts":"2026-06-03T00:04:49.468Z","taskId":"task_1780328089433_s3","costUsd":0.2591007000000001,"durationSec":54,"numTurns":12,"source":null}
 {"ts":"2026-06-03T00:09:32.318Z","taskId":"task_1780427878101","costUsd":1.0920240500000005,"durationSec":265,"numTurns":36,"source":null}
+{"ts":"2026-06-03T03:33:49.382Z","taskId":"task_1780457419306","costUsd":0.76203895,"durationSec":162,"numTurns":29,"source":null}
+{"ts":"2026-06-03T09:06:18.478Z","taskId":"task_1780328089433_s1","costUsd":0.8598654499999999,"durationSec":218,"numTurns":29,"source":null}
