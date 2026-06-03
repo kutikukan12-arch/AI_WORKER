@@ -39,7 +39,7 @@ const CHANGE_TYPES = {
 };
 const VALID_TYPES = Object.keys(CHANGE_TYPES);
 const MAX_PER_TYPE = 5;
-const SIMILARITY_THRESHOLD = 0.6; // Jaccard bigram 類似度の警告閾値
+const SIMILARITY_THRESHOLD = 0.7; // Jaccard bigram 類似度の警告閾値（0.6 は末尾1文字違いが誤検知するため0.7）
 
 // ─────────────────────────────────────────────────────
 // 類似度計算（文字 bigram Jaccard）
@@ -153,15 +153,13 @@ function addChange(type, content) {
   // force: プレフィックスを除去（重複警告回避フラグ）
   const finalText = sanitized.replace(/^force:\s*/i, '').trim();
 
-  // 最大5件に制限（rule 型のみ pending へ）
+  // 最大5件に制限（全 type 共通でエラーにする）
+  // rule 上限超過時の pending 自動登録は廃止（!change promote で明示的に登録する）
   if (today[t].length >= MAX_PER_TYPE) {
-    if (t === 'rule') {
-      return _addPendingRule(finalText);
-    }
     return {
       ok: false,
       text: `${CHANGE_TYPES[t].emoji} **${CHANGE_TYPES[t].label}** は今日すでに ${MAX_PER_TYPE} 件登録されています。\n` +
-            `\`!change clear\` でリセットするか、古い項目を削除してください。`,
+            `\`!change clear\` でリセットするか、\`!change promote <id>\` で保留ルールを昇格させてください。`,
     };
   }
 

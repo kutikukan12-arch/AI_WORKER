@@ -72,6 +72,7 @@ data/project-insights.json
 data/client-projects.json
 data/sales-learning.json
 data/daily-changes.json
+data/pending-rules.json
 
 # ─── 顧客案件学習データ（個人情報漏洩防止）───
 learning/

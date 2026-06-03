@@ -62,6 +62,9 @@ const SECRET_PATTERNS = [
     // DISCORD_TOKEN= / GITHUB_TOKEN= / OPENAI_API_KEY= に値が続く形式
     pattern: /(DISCORD_TOKEN|GITHUB_TOKEN|OPENAI_API_KEY|API_KEY|ACCESS_TOKEN)\s*=\s*[A-Za-z0-9._\-]{20,}/,
     severity: 'HIGH',
+    // 「= process.env.VAR_NAME」のみで完結している行はスキップ（純粋な env 参照）
+    // || / ?? などフォールバック値がある行は引き続き検出する
+    skipWhenPureEnvRef: true,
   },
 ];
 
@@ -76,13 +79,15 @@ const SAFE_FILE_PATTERNS = [
   /secret-guardian\.js$/,  // このファイル自体
 ];
 
-// テスト用ダミー値 / 安全な参照として無視するパターン
+// テスト用ダミー値として無視するパターン
 const DUMMY_VALUE_HINTS = [
   /DUMMY|FAKE|TEST|EXAMPLE|PLACEHOLDER|your[-_]?token|your[-_]?key|xxxxxxx/i,
-  // process.env.* 参照は値がなく安全（false positive 抑制）
-  // 例: const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-  /process\.env\./,
 ];
+
+// 純粋な process.env 参照判定 — Generic Secret Assignment 用
+// 「= process.env.VARNAME」のみで完結（; や末尾スペースは許容）している行かどうかを検査する。
+// process.env.X || "fallback" や process.env.X = "value" は false を返す。
+const PURE_ENV_REF_RE = /=\s*process\.env\.[A-Za-z0-9_]+\s*[;,)\s]*$/;
 
 // ─────────────────────────────────────────────────────
 // scanContent(filename, content) — 1ファイルの内容を走査
@@ -102,11 +107,15 @@ function scanContent(filename, content) {
     // コメント行は比較的安全なので severity を下げる
     const isComment = /^\s*(#|\/\/|\/\*)/.test(line);
 
-    for (const { name, pattern, severity } of SECRET_PATTERNS) {
+    for (const { name, pattern, severity, skipWhenPureEnvRef } of SECRET_PATTERNS) {
       if (!pattern.test(line)) continue;
 
       // ダミー値ヒントが含まれる行はスキップ（偽陽性抑制）
       if (DUMMY_VALUE_HINTS.some(d => d.test(line))) continue;
+
+      // Generic Secret Assignment: 純粋な process.env.X 参照のみの行はスキップ
+      // フォールバック値がある場合（|| "ghp_..." 等）はスキップしない
+      if (skipWhenPureEnvRef && PURE_ENV_REF_RE.test(line)) continue;
 
       findings.push({
         name,

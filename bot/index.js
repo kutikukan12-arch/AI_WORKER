@@ -7249,6 +7249,17 @@ client.on('messageCreate', async (message) => {
       return;
     }
 
+    // !change clear — Owner のみ（pending/promote より先に置き Owner チェックを 800 文字以内に収める）
+    if (sub === 'clear') {
+      if (DISCORD_OWNER_ID && message.author.id !== DISCORD_OWNER_ID) {
+        await message.reply('🚫 `!change clear` は Owner のみ実行できます。').catch(() => {});
+        return;
+      }
+      const r = dc.clearChanges();
+      await message.reply(r.text).catch(() => {});
+      return;
+    }
+
     // !change pending
     if (sub === 'pending') {
       const r = dc.listPending();
@@ -7265,17 +7276,6 @@ client.on('messageCreate', async (message) => {
       }
       const r = dc.promoteRule(id);
       await message.reply(r.text.slice(0, 1900)).catch(() => {});
-      return;
-    }
-
-    // !change clear — Owner のみ
-    if (sub === 'clear') {
-      if (DISCORD_OWNER_ID && message.author.id !== DISCORD_OWNER_ID) {
-        await message.reply('🚫 `!change clear` は Owner のみ実行できます。').catch(() => {});
-        return;
-      }
-      const r = dc.clearChanges();
-      await message.reply(r.text).catch(() => {});
       return;
     }
 
