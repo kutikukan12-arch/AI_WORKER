@@ -76,9 +76,12 @@ const SAFE_FILE_PATTERNS = [
   /secret-guardian\.js$/,  // このファイル自体
 ];
 
-// テスト用ダミー値として無視するパターン
+// テスト用ダミー値 / 安全な参照として無視するパターン
 const DUMMY_VALUE_HINTS = [
   /DUMMY|FAKE|TEST|EXAMPLE|PLACEHOLDER|your[-_]?token|your[-_]?key|xxxxxxx/i,
+  // process.env.* 参照は値がなく安全（false positive 抑制）
+  // 例: const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
+  /process\.env\./,
 ];
 
 // ─────────────────────────────────────────────────────

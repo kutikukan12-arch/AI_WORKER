@@ -7,9 +7,11 @@
 //   「今日更新されたもの」セクションを追加する。
 //
 // コマンド:
-//   !change <type> <内容> — 更新を記録
-//   !change list          — 今日の更新一覧
-//   !change clear         — 今日の記録をクリア（Owner のみ）
+//   !change <type> <内容>   — 更新を記録（重複検出あり）
+//   !change list            — 今日の更新一覧
+//   !change pending         — 保留中ルール一覧
+//   !change promote <id>    — 保留ルールを正式登録
+//   !change clear           — 今日の記録をクリア（Owner のみ）
 //
 // type:
 //   command / rule / ops / category / channel
@@ -24,8 +26,9 @@ const fs   = require('fs');
 const path = require('path');
 const { redact } = require('./redact');
 
-const DATA_DIR    = path.join(__dirname, '..', '..', 'data');
-const CHANGES_FILE = path.join(DATA_DIR, 'daily-changes.json');
+const DATA_DIR      = path.join(__dirname, '..', '..', 'data');
+const CHANGES_FILE  = path.join(DATA_DIR, 'daily-changes.json');
+const PENDING_FILE  = path.join(DATA_DIR, 'pending-rules.json');
 
 const CHANGE_TYPES = {
   command:  { label: 'コマンド',     emoji: '📘' },
@@ -36,6 +39,49 @@ const CHANGE_TYPES = {
 };
 const VALID_TYPES = Object.keys(CHANGE_TYPES);
 const MAX_PER_TYPE = 5;
+const SIMILARITY_THRESHOLD = 0.6; // Jaccard bigram 類似度の警告閾値
+
+// ─────────────────────────────────────────────────────
+// 類似度計算（文字 bigram Jaccard）
+// ─────────────────────────────────────────────────────
+function _bigrams(str) {
+  const s = str.replace(/\s+/g, '');
+  const set = new Set();
+  for (let i = 0; i < s.length - 1; i++) set.add(s.slice(i, i + 2));
+  return set;
+}
+
+function _similarity(a, b) {
+  const ba = _bigrams(a);
+  const bb = _bigrams(b);
+  if (ba.size === 0 && bb.size === 0) return 1;
+  if (ba.size === 0 || bb.size === 0) return 0;
+  let inter = 0;
+  for (const g of ba) if (bb.has(g)) inter++;
+  return inter / (ba.size + bb.size - inter);
+}
+
+// ─────────────────────────────────────────────────────
+// pending-rules ファイル操作
+// ─────────────────────────────────────────────────────
+function _loadPending() {
+  try {
+    if (!fs.existsSync(PENDING_FILE)) return { nextId: 1, rules: {} };
+    return JSON.parse(fs.readFileSync(PENDING_FILE, 'utf8'));
+  } catch { return { nextId: 1, rules: {} }; }
+}
+
+function _savePending(data) {
+  const dir = path.dirname(PENDING_FILE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const tmp = PENDING_FILE + '.tmp';
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
+    fs.renameSync(tmp, PENDING_FILE);
+  } finally {
+    try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch { /* ignore */ }
+  }
+}
 
 // ─────────────────────────────────────────────────────
 // ファイル操作
@@ -88,8 +134,30 @@ function addChange(type, content) {
 
   if (!Array.isArray(today[t])) today[t] = [];
 
-  // 最大5件に制限
+  // 重複検出: 同カテゴリ内の類似エントリを確認
+  for (const entry of today[t]) {
+    const sim = _similarity(sanitized, entry.text);
+    if (sim >= SIMILARITY_THRESHOLD) {
+      return {
+        ok: false,
+        duplicate: true,
+        text: `⚠️ **重複の可能性があります**\n\n` +
+              `登録済み: ${entry.text}\n` +
+              `新規入力: ${sanitized}\n` +
+              `類似度: ${Math.round(sim * 100)}%\n\n` +
+              `登録するには \`!change ${t} force: ${sanitized}\` のように \`force: \` を先頭につけてください。`,
+      };
+    }
+  }
+
+  // force: プレフィックスを除去（重複警告回避フラグ）
+  const finalText = sanitized.replace(/^force:\s*/i, '').trim();
+
+  // 最大5件に制限（rule 型のみ pending へ）
   if (today[t].length >= MAX_PER_TYPE) {
+    if (t === 'rule') {
+      return _addPendingRule(finalText);
+    }
     return {
       ok: false,
       text: `${CHANGE_TYPES[t].emoji} **${CHANGE_TYPES[t].label}** は今日すでに ${MAX_PER_TYPE} 件登録されています。\n` +
@@ -97,7 +165,7 @@ function addChange(type, content) {
     };
   }
 
-  today[t].push({ at: new Date().toISOString(), text: sanitized });
+  today[t].push({ at: new Date().toISOString(), text: finalText });
   _saveAll(all);
 
   const total = Object.values(today).flat().length;
@@ -106,9 +174,28 @@ function addChange(type, content) {
     type: t,
     text:
       `${CHANGE_TYPES[t].emoji} **${CHANGE_TYPES[t].label}** を記録しました\n\n` +
-      `内容: ${sanitized}\n` +
+      `内容: ${finalText}\n` +
       `本日の更新数: ${total} 件\n\n` +
       `> \`!change list\` で今日の更新一覧を確認できます。`,
+  };
+}
+
+// ─────────────────────────────────────────────────────
+// _addPendingRule(text) — rule 上限超過時に pending へ保存
+// ─────────────────────────────────────────────────────
+function _addPendingRule(text) {
+  const data = _loadPending();
+  const id   = data.nextId;
+  data.rules[id] = { id, at: new Date().toISOString(), date: _today(), text };
+  data.nextId    = id + 1;
+  _savePending(data);
+  return {
+    ok: true,
+    pending: true,
+    text: `📋 **ルールは上限 (${MAX_PER_TYPE}件) に達しているため保留リストに保存しました**\n\n` +
+          `ID: \`${id}\`\n内容: ${text}\n\n` +
+          `> \`!change pending\` で保留一覧を確認\n` +
+          `> \`!change promote ${id}\` で正式登録`,
   };
 }
 
@@ -159,6 +246,75 @@ function buildChangesSection(date) {
   return result.text;
 }
 
+// ─────────────────────────────────────────────────────
+// listPending() — 保留中ルール一覧
+// ─────────────────────────────────────────────────────
+function listPending() {
+  const data  = _loadPending();
+  const rules = Object.values(data.rules);
+
+  if (rules.length === 0) {
+    return { ok: true, text: '📋 **保留中ルール — なし**\n\n保留ルールはありません。', hasAny: false };
+  }
+
+  const lines = [`📋 **保留中ルール (${rules.length}件)**`, ''];
+  for (const r of rules.sort((a, b) => a.id - b.id)) {
+    lines.push(`**[${r.id}]** ${r.text}`);
+    lines.push(`  登録日: ${r.date}`);
+    lines.push('');
+  }
+  lines.push(`> \`!change promote <id>\` で正式登録`);
+
+  return { ok: true, text: lines.join('\n').trim(), hasAny: true };
+}
+
+// ─────────────────────────────────────────────────────
+// promoteRule(id) — 保留ルールを正式登録
+// ─────────────────────────────────────────────────────
+function promoteRule(id) {
+  const numId = parseInt(id, 10);
+  if (isNaN(numId)) return { ok: false, text: `無効な ID です: ${id}` };
+
+  const data = _loadPending();
+  const rule = data.rules[numId];
+  if (!rule) return { ok: false, text: `ID ${numId} の保留ルールは存在しません。\`!change pending\` で一覧を確認してください。` };
+
+  const all   = _loadAll();
+  const today = _todayEntry(all);
+  if (!Array.isArray(today.rule)) today.rule = [];
+
+  if (today.rule.length >= MAX_PER_TYPE) {
+    return {
+      ok: false,
+      text: `📐 **ルール** は今日すでに ${MAX_PER_TYPE} 件登録されています。先に古いルールを確認してください。`,
+    };
+  }
+
+  // 重複チェック
+  for (const entry of today.rule) {
+    const sim = _similarity(rule.text, entry.text);
+    if (sim >= SIMILARITY_THRESHOLD) {
+      return {
+        ok: false,
+        text: `⚠️ 登録済みの類似ルールがあります (類似度 ${Math.round(sim * 100)}%):\n${entry.text}\n\n` +
+              `保留ルール: ${rule.text}`,
+      };
+    }
+  }
+
+  today.rule.push({ at: new Date().toISOString(), text: rule.text });
+  _saveAll(all);
+
+  // pending から削除
+  delete data.rules[numId];
+  _savePending(data);
+
+  return {
+    ok: true,
+    text: `📐 **保留ルール [${numId}] を正式登録しました**\n\n内容: ${rule.text}`,
+  };
+}
+
 module.exports = {
   CHANGE_TYPES,
   VALID_TYPES,
@@ -166,8 +322,11 @@ module.exports = {
   listChanges,
   clearChanges,
   buildChangesSection,
+  listPending,
+  promoteRule,
   // テスト用
   _loadAll,
   _saveAll,
   _today,
+  _similarity,
 };

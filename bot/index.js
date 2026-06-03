@@ -7249,6 +7249,25 @@ client.on('messageCreate', async (message) => {
       return;
     }
 
+    // !change pending
+    if (sub === 'pending') {
+      const r = dc.listPending();
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // !change promote <id>
+    if (sub === 'promote') {
+      const id = args[1];
+      if (!id) {
+        await message.reply('使い方: `!change promote <id>`\n例: `!change promote 3`').catch(() => {});
+        return;
+      }
+      const r = dc.promoteRule(id);
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
     // !change clear — Owner のみ
     if (sub === 'clear') {
       if (DISCORD_OWNER_ID && message.author.id !== DISCORD_OWNER_ID) {
@@ -7284,6 +7303,8 @@ client.on('messageCreate', async (message) => {
       '!change category <内容>  → カテゴリ変更を記録\n' +
       '!change channel <内容>   → チャンネル変更を記録\n' +
       '!change list             → 今日の更新一覧\n' +
+      '!change pending          → 保留中ルール一覧\n' +
+      '!change promote <id>     → 保留ルールを正式登録\n' +
       '!change clear            → 今日のログをクリア（Owner）\n' +
       '```'
     ).catch(() => {});
