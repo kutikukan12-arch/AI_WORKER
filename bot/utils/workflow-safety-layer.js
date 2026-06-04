@@ -32,14 +32,14 @@ const { redact } = require('./redact');
 
 // ─── 許可されたワークフローチェーン ─────────────────
 const ALLOWED_CHAINS = [
-  { from: 'miyagi',    to: 'moriya',   event: 'IMPLEMENT_DONE'   },
-  { from: 'moriya',    to: 'miyagi',   event: 'NEED_FIX'         },
-  { from: 'moriya',    to: 'ichikawa', event: 'REVIEW_READY'     },
-  { from: 'ichikawa',  to: 'miyagi',   event: 'IMPLEMENT_DONE'   },
-  { from: 'ichikawa',  to: 'miyagi',   event: 'SPEC_READY'       }, // Phase3
-  { from: 'any',       to: 'ikuno',    event: 'LESSON_CANDIDATE'    },
-  { from: 'any',       to: 'ikuno',    event: 'INCIDENT_CANDIDATE'  },
-  { from: 'ceo',       to: 'kanzaki',  event: 'VP_BRIEF_REQUEST'    },
+  { from: 'miyagi',   to: 'moriya',   event: 'IMPLEMENT_DONE'    },
+  { from: 'moriya',   to: 'miyagi',   event: 'NEED_FIX'          },
+  { from: 'moriya',   to: 'ichikawa', event: 'REVIEW_READY'      },
+  // Phase4: ichikawa→miyagi は SPEC_READY のみ（IMPLEMENT_DONE は削除）
+  { from: 'ichikawa', to: 'miyagi',   event: 'SPEC_READY'        },
+  { from: 'any',      to: 'ikuno',    event: 'LESSON_CANDIDATE'  },
+  { from: 'any',      to: 'ikuno',    event: 'INCIDENT_CANDIDATE'},
+  { from: 'ceo',      to: 'kanzaki',  event: 'VP_BRIEF_REQUEST'  },
 ];
 
 // ─────────────────────────────────────────────────────

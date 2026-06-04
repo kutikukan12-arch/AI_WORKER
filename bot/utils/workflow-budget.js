@@ -197,12 +197,33 @@ function buildEscalationMessage(conv) {
   ].join('\n');
 }
 
+// ─────────────────────────────────────────────────────
+// pruneOldConversations(maxAgeDays?) — 古い closed 会話を削除
+// Budget ファイルの肥大化防止
+// ─────────────────────────────────────────────────────
+function pruneOldConversations(maxAgeDays = 7) {
+  const data     = _load();
+  const threshold= Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+  let   pruned   = 0;
+  for (const [id, conv] of Object.entries(data)) {
+    // closed かつ古いもの、または open だが openedAt が閾値超えのもの
+    const age = new Date(conv.closedAt || conv.openedAt || 0).getTime();
+    if (conv.status === 'closed' && age < threshold) {
+      delete data[id];
+      pruned++;
+    }
+  }
+  if (pruned > 0) _save(data);
+  return pruned;
+}
+
 module.exports = {
   openConversation,
   recordTurn,
   closeConversation,
   getConversation,
   buildEscalationMessage,
+  pruneOldConversations,
   DEFAULT_MAX_TURNS,
   SAME_PAIR_MAX,
   LOOP_DETECT_WINDOW,

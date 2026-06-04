@@ -390,21 +390,24 @@ function autoHandoff(event, payload = {}) {
     return { ok: false, error: routeResult.error };
   }
 
-  // ── 4. Phase1: Safety Layer Gate ─────────────────
-  // 配送実行前に必ず checkSafeToHandoff() を通す
-  // safe:false の場合は配送停止・監査ログ記録・黒川通知
-  const convId     = payload.taskId ? `conv_${payload.taskId}` : `conv_${Date.now()}`;
+  // ── 4. Safety Layer Gate ─────────────────────────
+  const convId      = payload.taskId ? `conv_${payload.taskId}` : `conv_${Date.now()}`;
   const safetyLayer = require('./workflow-safety-layer');
   const audit       = require('./workflow-audit');
+
+  // Phase3: payload.summary だけでなく実際の送信全文で検査
+  const routeMsg    = routeResult.message || '';
+  const scanTarget  = [payload.summary || '', routeMsg].join('\n');
+
   const safeCheck   = safetyLayer.checkSafeToHandoff({
     convId,
     from,
-    to:    routeResult.to,
+    to:           routeResult.to,
     event,
-    inboxContent: payload.summary || '',
+    inboxContent: scanTarget,
   });
 
-  // 監査ログ記録（safe/unsafe 問わず全記録）
+  // 監査ログ（safe/unsafe 問わず全記録）
   audit.appendAudit({
     convId,
     from,
@@ -417,40 +420,50 @@ function autoHandoff(event, payload = {}) {
   });
 
   if (!safeCheck.safe) {
-    // 黒川 inbox へ停止通知を配送（判断はしない）
+    const inboxBridgeNotify = require('./inbox-bridge');
+    const budgetMod = require('./workflow-budget');
+
+    // Phase2: escalate_vp / loop_detected → 神崎 VP へ判断材料整理依頼
+    if (safeCheck.action === 'escalate_vp' || safeCheck.action === 'loop_detected') {
+      const conv = budgetMod.getConversation(convId);
+      if (conv) {
+        const escalationMsg = budgetMod.buildEscalationMessage(conv);
+        // 神崎 VP inbox へ配送（判断はしない）
+        try { inboxBridgeNotify.sendToWorker('kanzaki', escalationMsg); } catch {}
+      }
+    }
+
+    // 黒川 inbox へ停止通知
     try {
-      const inboxBridgeNotify = require('./inbox-bridge');
       const stopMsg = [
         `【Safety Gate 停止通知】`,
-        `黒川 CoS からの配送停止報告です。`,
-        ``,
         `配送停止: ${from} → ${routeResult.to} (${event})`,
         `理由: ${safeCheck.reason}`,
         `アクション: ${safeCheck.action}`,
         `会話ID: ${convId}`,
-        ``,
         `→ 社長または神崎 VP が確認してください。`,
       ].join('\n');
       inboxBridgeNotify.sendToWorker('kurokawa', stopMsg);
-    } catch { /* ignore */ }
+    } catch {}
+
+    // Phase1: 停止時は会話をクローズ
+    safetyLayer.autoCloseIfNeeded(convId, safeCheck.action === 'ceo_required' ? 'BLOCKED' : 'REVIEW_READY');
 
     return {
-      ok:         true,
-      dispatched: false,
-      reason:     safeCheck.reason,
-      action:     safeCheck.action,
-      hint:       `Safety Gate が配送を停止しました: ${safeCheck.reason}`,
+      ok: true, dispatched: false,
+      reason: safeCheck.reason, action: safeCheck.action,
+      hint: `Safety Gate が配送を停止しました: ${safeCheck.reason}`,
     };
   }
 
-  // ── 5. outbox への書き込み（sendToWorker を使用）──
+  // ── 5. outbox への書き込み ─────────────────────────
   const inboxBridge = require('./inbox-bridge');
   const sendResult  = inboxBridge.sendToWorker(routeResult.to, routeResult.message);
   if (!sendResult.ok) {
     return { ok: false, error: `outbox 書き込み失敗: ${sendResult.text}` };
   }
 
-  // ── 6. handoff log に記録 ─────────────────────────
+  // ── 6. handoff log + Phase1 lifecycle ───────────
   const wfState = require('./workflow-state');
   const handoffId = wfState.recordHandoff({
     ...routeResult,
@@ -459,18 +472,15 @@ function autoHandoff(event, payload = {}) {
     fixedRouteReason: fixedRoute.reason,
   }, payload.taskId);
 
+  // Phase1: 完了/終了イベントで会話をクローズ
+  safetyLayer.autoCloseIfNeeded(convId, event);
+
   return {
-    ok:           true,
-    dispatched:   true,
-    event,
-    to:           routeResult.to,
-    toLabel:      routeResult.toLabel,
-    handoffId,
-    convId,
-    autoExecuted: true,
-    reason:       fixedRoute.reason,
-    message:      routeResult.message,
-    turns:        safeCheck.turns,
+    ok: true, dispatched: true,
+    event, to: routeResult.to, toLabel: routeResult.toLabel,
+    handoffId, convId, autoExecuted: true,
+    reason: fixedRoute.reason, message: routeResult.message,
+    turns: safeCheck.turns,
   };
 }
 
