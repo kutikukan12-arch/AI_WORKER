@@ -226,6 +226,13 @@ function copyToClipboard(text) {
 // processWorker(worker) — 1 社員の outbox を処理
 // ─────────────────────────────────────────────────────
 function processWorker(worker) {
+  // Phase5: pause チェック
+  const bridge = require(path.join(ROOT, 'bot', 'utils', 'operator-bridge'));
+  if (bridge.isPaused(opState)) {
+    if (process.argv[2] !== 'watch') return null; // watch 以外では警告なし
+    return null;
+  }
+
   const outPath = inboxBridge._workerOutboxPath(worker);
   if (!fs.existsSync(outPath)) return null;
 
@@ -324,6 +331,16 @@ function processWorker(worker) {
 // checkOnce() — 全社員 outbox を一度チェック
 // ─────────────────────────────────────────────────────
 function checkOnce() {
+  // Phase5: pause チェック
+  const bridge = require(path.join(ROOT, 'bot', 'utils', 'operator-bridge'));
+  if (bridge.isPaused(opState)) {
+    const state = opState.loadState();
+    if (process.argv[2] === 'watch') {
+      console.log(`[${new Date().toLocaleString('ja-JP')}] ⏸️ 一時停止中: ${state.pausedReason || '理由なし'}`);
+    }
+    return { results: [], newCount: 0, blockedCnt: 0 };
+  }
+
   const workers    = inboxBridge.VALID_WORKERS;
   const results    = [];
   const now        = new Date().toLocaleString('ja-JP');

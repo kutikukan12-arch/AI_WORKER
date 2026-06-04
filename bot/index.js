@@ -7808,6 +7808,30 @@ client.on('messageCreate', async (message) => {
       return;
     }
 
+    if (opSub === 'pause') {
+      const opState  = require('./utils/desktop-operator-state');
+      const opBridge = require('./utils/operator-bridge');
+      const reason   = opArgs.slice(1).join(' ').trim() || '手動停止';
+      opBridge.setPaused(opState, true, reason);
+      await message.reply(
+        `⏸️ **黒川 Desktop Operator を一時停止しました**\n\n` +
+        `理由: ${reason}\n\n` +
+        `再開: \`!operator resume\``
+      ).catch(() => {});
+      return;
+    }
+
+    if (opSub === 'resume') {
+      const opState  = require('./utils/desktop-operator-state');
+      const opBridge = require('./utils/operator-bridge');
+      opBridge.setPaused(opState, false);
+      await message.reply(
+        `▶️ **黒川 Desktop Operator を再開しました**\n\n` +
+        `次の監視サイクルから自動配送を再開します。`
+      ).catch(() => {});
+      return;
+    }
+
     if (opSub === 'dry-run') {
       const opScript = require('../scripts/desktop-operator');
       const r        = opScript.checkOnce ? opScript.checkOnce() : null;
@@ -7823,6 +7847,8 @@ client.on('messageCreate', async (message) => {
       '**!operator — 黒川 Desktop Operator**\n\n' +
       '```\n' +
       '!operator status   → 処理履歴確認\n' +
+      '!operator pause [理由] → 一時停止（緊急停止）\n' +
+      '!operator resume   → 再開\n' +
       '!operator dry-run  → 確認のみ（auto-send なし）\n' +
       '```\n\n' +
       '本番 auto-send はローカル CLI で起動してください:\n' +
