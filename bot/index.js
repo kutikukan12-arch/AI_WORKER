@@ -7744,9 +7744,20 @@ client.on('messageCreate', async (message) => {
       await message.reply(r.text.slice(0, 1900)).catch(() => {});
       return;
     }
+
+    if (kurSub === 'watch') {
+      const ow = require('./utils/operation-watch');
+      const r  = ow.runWatch();
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
     await message.reply(
       '**!kurokawa — 黒川 Workflow Intelligence**\n\n' +
-      '```\n!kurokawa report  → 会社全体の進行状況レポート\n```'
+      '```\n' +
+      '!kurokawa report  → 会社全体の進行状況レポート\n' +
+      '!kurokawa watch   → 運用上の問題を検出（削除・変更なし）\n' +
+      '```'
     ).catch(() => {});
     return;
   }
