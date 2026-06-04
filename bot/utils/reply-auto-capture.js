@@ -52,7 +52,7 @@ const MIN_REPLY_LENGTH     = 50;
 //   - クリップボードからテキストを読み取り
 //   - 入力欄はクリアしない（安全のため Escape → Ctrl+A は使わない）
 // ─────────────────────────────────────────────────────
-function getClaueWindowText() {
+function getClaudeWindowText() {
   if (process.platform !== 'win32') return null;
 
   const { spawnSync } = require('child_process');
@@ -216,7 +216,7 @@ function captureLatestClaudeReply(worker, preText) {
   }
 
   // Claude ウィンドウからテキスト取得
-  const currentText = getClaueWindowText();
+  const currentText = getClaudeWindowText();
   if (!currentText) {
     // Windows 以外 or ウィンドウ未検出 → fallback
     if (attempts >= 2) {
@@ -297,7 +297,7 @@ function startAutoCapture(worker, preText, callback, intervalMs = 5000) {
 // getPreText() — 送信前のウィンドウテキストを取得
 // ─────────────────────────────────────────────────────
 function getPreText() {
-  return getClaueWindowText(); // 送信前に呼んで差分基準とする
+  return getClaudeWindowText(); // 送信前に呼んで差分基準とする
 }
 
 module.exports = {
@@ -305,7 +305,7 @@ module.exports = {
   processCapturedReply,
   startAutoCapture,
   getPreText,
-  getClaueWindowText,
+  getClaudeWindowText,
   extractLatestReply,
   degradeToClipboard,
   CAPTURE_MODE_DEFAULT,

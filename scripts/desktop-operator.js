@@ -278,6 +278,23 @@ function processWorker(worker) {
   } else if (!allowCheck.allowed) {
     blockedReason = allowCheck.reason;
     console.log(`\n⛔ [${worker}] 送信NG: ${blockedReason}`);
+
+    // handoff_record_not_found の場合は黒川へ「未承認配送として停止」通知
+    if (!DRY_RUN && blockedReason.startsWith('handoff_record_not_found')) {
+      try {
+        const stopNotice = [
+          `【未承認配送 停止通知】`,
+          `黒川 CoS: 以下の outbox が !workflow handoff 経由でなく停止されました。`,
+          ``,
+          `対象 worker: ${worker}`,
+          `理由: ${blockedReason}`,
+          ``,
+          `対応: !workflow handoff <EVENT> <from> <taskId> <summary> で正式配送するか、`,
+          `      !inbox send を使用する場合は --operator フラグが必要です（将来実装）。`,
+        ].join('\n');
+        inboxBridge.sendToWorker('kurokawa', stopNotice);
+      } catch { /* ignore */ }
+    }
   } else if (!DRY_RUN) {
     const reliability = require(path.join(ROOT, 'bot', 'utils', 'operator-reliability'));
     // auto-send 判定

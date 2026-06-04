@@ -130,6 +130,36 @@ node scripts/desktop-operator.js status  # 状態表示
 
 ---
 
+## E2E テスト手順 (L-20)
+
+### 前提条件
+- `npm run operator` 起動済み
+- `!operator mode autosend-limited` 設定済み
+
+### 推奨テストコマンド
+
+```
+!workflow handoff VP_BRIEF_REQUEST ceo e2e_test 神崎さん、E2Eテストです。## 結論 を含めて返してください。
+```
+
+### よくある停止理由と対処
+
+| reason | 意味 | 対処 |
+|--------|------|------|
+| `handoff_record_not_found` | !inbox send 経由（!workflow handoff 未使用）| `!workflow handoff` を使う |
+| `risk_blocked` | secret / token 検出 | 内容を確認してクリーン化 |
+| `event_not_allowed` | FIXED_ROUTES 外のイベント | `!operator reliability` で確認 |
+| `blocked_keyword` | NG キーワード（支払い等）| 内容から除去 |
+
+### 確認コマンド
+
+```
+!operator reliability   → blockedReason の分類を表示
+!inbox check kanzaki    → 神崎の inbox に回答が保存されているか確認
+```
+
+---
+
 ## 注意
 
 1. クリップボードへコピー後、社長が内容を確認してから Claude Desktop へ貼り付けてください

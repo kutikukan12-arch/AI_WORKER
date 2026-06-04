@@ -472,3 +472,43 @@ cleanOutbox();
 
 console.log(`\n結果: ${pass} passed / ${fail} failed\n`);
 if (fail > 0) process.exit(1);
+
+// ─────────────────────────────────────────────────────
+// 11. L-20 修正確認
+// ─────────────────────────────────────────────────────
+console.log('\n[11. L-20 修正確認]');
+
+test('11a. getClaueWindowText タイポが修正されている（getClaudeWindowText）', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'bot', 'utils', 'reply-auto-capture.js'), 'utf8'
+  );
+  assert.ok(!src.includes('getClaueWindowText'), 'タイポが残っている');
+  assert.ok(src.includes('getClaudeWindowText'),  '修正後の名前がない');
+});
+
+test('11b. handoff_record_not_found で黒川へ通知するコードがある', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'desktop-operator.js'), 'utf8'
+  );
+  assert.ok(src.includes('handoff_record_not_found'), 'handoff_record_not_found の検出がない');
+  assert.ok(src.includes("sendToWorker('kurokawa'"), '黒川への通知がない');
+});
+
+test('11c. operator-reliability.js に blockedReason 分類表示がある', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'bot', 'utils', 'operator-reliability.js'), 'utf8'
+  );
+  assert.ok(src.includes('handoff_record_not_found'), '未承認配送の分類がない');
+  assert.ok(src.includes('risk_blocked'),            'リスク検知の分類がない');
+  assert.ok(src.includes('event_not_allowed'),       'allowlist外の分類がない');
+});
+
+test('11d. docs に E2E テスト手順が記載されている', () => {
+  const doc = fs.readFileSync(
+    path.join(__dirname, '..', 'docs', 'desktop-operator-guide.md'), 'utf8'
+  );
+  assert.ok(doc.includes('VP_BRIEF_REQUEST'), 'E2Eテストコマンドがない');
+  assert.ok(doc.includes('e2e_test'),         'テスト用タスクIDがない');
+  assert.ok(doc.includes('handoff_record_not_found'), 'ブロック理由の説明がない');
+});
+

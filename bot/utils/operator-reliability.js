@@ -194,8 +194,30 @@ function formatReliabilityReport(opState) {
     lines.push('');
   }
 
+  // 直近の blocked 分類を表示（診断用）
+  const hist = opState.loadHistory ? opState.loadHistory() : [];
+  const recentBlocked = hist.filter(h => h.blockedReason).slice(-5);
+  if (recentBlocked.length > 0) {
+    lines.push(`**直近ブロック (${recentBlocked.length}件):**`);
+    const reasonGroups = {};
+    recentBlocked.forEach(h => {
+      const cat = h.blockedReason.startsWith('handoff_record_not_found') ? '⚠️ 未承認配送'
+                : h.blockedReason.startsWith('risk_blocked')             ? '🚫 リスク検知'
+                : h.blockedReason.startsWith('event_not_allowed')        ? '❌ allowlist外'
+                : h.blockedReason.startsWith('blocked_keyword')          ? '🔴 NG キーワード'
+                : h.blockedReason.startsWith('send_failed')              ? '⚡ 送信失敗'
+                : '❓ その他';
+      const key = `[${h.worker || '?'}] ${cat}`;
+      reasonGroups[key] = (reasonGroups[key] || 0) + 1;
+    });
+    Object.entries(reasonGroups).forEach(([k, n]) => lines.push(`  ${k}: ${n}件`));
+    lines.push(`  → !workflow handoff 経由で送信してください`);
+    lines.push('');
+  }
+
   lines.push(`> モード変更: \`!operator mode <clipboard|autosend-limited|paused>\``);
   lines.push(`> 緊急停止: \`!operator pause\` (最優先)`);
+  lines.push(`> E2Eテスト: \`!workflow handoff VP_BRIEF_REQUEST ceo e2e_test 神崎さんへ\``);
 
   return { ok: true, text: lines.join('\n').trimEnd() };
 }
