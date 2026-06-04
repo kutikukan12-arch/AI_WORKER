@@ -219,7 +219,7 @@ test("5c. !vp list が実装されている", () => {
 
 test('5d. vp-brain.js を require している', () => {
   const idx  = src.indexOf("vpSub === 'review'");
-  const area = src.slice(idx, idx + 300);
+  const area = src.slice(idx, idx + 700);
   assert.ok(area.includes("require('./utils/vp-brain')"), 'vp-brain require がない');
 });
 

@@ -7915,14 +7915,25 @@ client.on('messageCreate', async (message) => {
 
     // review — VP Brain: 状況整理 + 社員視点 + 選択肢 + 推奨
     if (vpSub === 'review') {
+      const topic = vpArgs.slice(1).join(' ').trim();
+
+      // !vp review company — 会社全体エグゼクティブレビュー
+      if (topic === 'company' || topic === '会社') {
+        const exRev = require('./utils/executive-review');
+        const r     = exRev.buildExecutiveReview();
+        await message.reply(r.text.slice(0, 1900)).catch(() => {});
+        return;
+      }
+
       const vpBrain = require('./utils/vp-brain');
-      const topic   = vpArgs.slice(1).join(' ').trim();
       if (!topic) {
         await message.reply(
           '**!vp review — 神崎 VP Brain**\n\n' +
-          '```\n!vp review <相談テーマ>\n```\n\n' +
-          '例: `!vp review YouTube診断AIを有料プランにするか判断したい`\n\n' +
-          '状況整理 → 社員意見 → 選択肢A/B → 神崎推奨 の順で出力します。\n' +
+          '```\n' +
+          '!vp review <相談テーマ>  → 判断材料整理（状況/選択肢A/B/推奨）\n' +
+          '!vp review company      → 会社全体エグゼクティブレビュー\n' +
+          '```\n\n' +
+          '例: `!vp review YouTube診断AIを有料プランにするか判断したい`\n' +
           '⚠️ 提案のみ。決定は社長が行います。'
         ).catch(() => {});
         return;
@@ -8018,7 +8029,8 @@ client.on('messageCreate', async (message) => {
     await message.reply(
       '**!vp — 神崎 VP（Strategy Officer）**\n\n' +
       '```\n' +
-      '!vp review <テーマ>        → 状況整理+社員意見+選択肢A/B+推奨 (VP Brain)\n' +
+      '!vp review <テーマ>        → 判断材料整理 (VP Brain)\n' +
+      '!vp review company        → 会社全体エグゼクティブレビュー\n' +
       '!vp learn <id> <A|B|none> [理由] → CEOの選択を学習記録\n' +
       '!vp list                   → VP Review 一覧\n' +
       '!vp ask <相談内容>         → 判断材料を整理（状況/選択肢/メリット/リスク/推奨案）\n' +
