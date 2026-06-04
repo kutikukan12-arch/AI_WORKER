@@ -259,18 +259,32 @@ test('7b. IMPLEMENT_DONE 後は会話が open のまま', () => {
   assert.ok(conv?.status === 'open', `IMPLEMENT_DONE で早期クローズ: ${conv?.status}`);
 });
 
-test('7c. pruneOldConversations で古い closed 会話が削除される', () => {
+test('7c. closeConversation 実行後に古い closed が自動削除される（実行経路から prune）', () => {
   resetBudget();
+  // 8日前に closed になった会話をセット
+  const oldClosedAt = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
   const data = {};
-  const oldDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
-  data['conv_old_1'] = { status: 'closed', closedAt: oldDate, openedAt: oldDate };
-  data['conv_recent'] = { status: 'closed', closedAt: new Date().toISOString(), openedAt: new Date().toISOString() };
+  data['conv_old_stale'] = {
+    id: 'conv_old_stale', status: 'closed',
+    closedAt: oldClosedAt, openedAt: oldClosedAt,
+    maxTurns: 6, currentTurns: 1, history: [], closeReason: 'test'
+  };
+  data['conv_recent_open'] = {
+    id: 'conv_recent_open', status: 'open',
+    openedAt: new Date().toISOString(),
+    maxTurns: 6, currentTurns: 0, history: []
+  };
   budget._save(data);
-  const pruned = budget.pruneOldConversations(7);
-  assert.ok(pruned >= 1, '古い会話が削除されない');
+
+  // closeConversation を呼ぶ → 内部で pruneOldConversations が実行される
+  budget.openConversation('conv_trigger_prune', { maxTurns: 6 });
+  budget.closeConversation('conv_trigger_prune', 'test_close');
+
   const remaining = budget._load();
-  assert.ok(!remaining['conv_old_1'], '古い会話が残っている');
-  assert.ok(remaining['conv_recent'], '新しい会話が削除された');
+  // 8日前の closed は削除されている
+  assert.ok(!remaining['conv_old_stale'], '古い closed 会話が削除されていない（実行経路から prune されていない）');
+  // open は残っている
+  assert.ok(remaining['conv_recent_open'], 'open 会話が誤って削除された');
 });
 
 // ─────────────────────────────────────────────────────

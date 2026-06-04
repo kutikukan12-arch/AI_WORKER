@@ -165,6 +165,8 @@ function closeConversation(convId, reason = 'completed') {
   data[convId].closedAt  = new Date().toISOString();
   data[convId].closeReason = reason;
   _save(data);
+  // close 直後に 7日超の closed を削除（肥大化防止）
+  pruneOldConversations(7);
   return { ok: true };
 }
 
@@ -200,18 +202,24 @@ function buildEscalationMessage(conv) {
 // ─────────────────────────────────────────────────────
 // pruneOldConversations(maxAgeDays?) — 古い closed 会話を削除
 // Budget ファイルの肥大化防止
+// closeConversation() 内から自動呼び出しされる。
+// 対象: status==='closed' かつ closedAt が maxAgeDays 超えのもの
+// open / その他ステータスの会話は削除しない。
 // ─────────────────────────────────────────────────────
 function pruneOldConversations(maxAgeDays = 7) {
-  const data     = _load();
-  const threshold= Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
-  let   pruned   = 0;
+  const data      = _load();
+  const threshold = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+  let   pruned    = 0;
   for (const [id, conv] of Object.entries(data)) {
-    // closed かつ古いもの、または open だが openedAt が閾値超えのもの
-    const age = new Date(conv.closedAt || conv.openedAt || 0).getTime();
-    if (conv.status === 'closed' && age < threshold) {
-      delete data[id];
-      pruned++;
+    // closed かつ closedAt が閾値より古いもののみ削除
+    if (conv.status === 'closed') {
+      const closedTime = new Date(conv.closedAt || 0).getTime();
+      if (closedTime < threshold) {
+        delete data[id];
+        pruned++;
+      }
     }
+    // open / limit_reached / loop_detected 等は削除しない
   }
   if (pruned > 0) _save(data);
   return pruned;
