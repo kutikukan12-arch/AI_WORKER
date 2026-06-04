@@ -324,6 +324,39 @@ test('9c. readOperatorLock がロック情報を返す', () => {
   operator.releaseOperatorLock();
 });
 
+test('9d_pre. saveOperatorRunningState / readOperatorStatus が動作する', () => {
+  operator.releaseOperatorLock();
+  operator.saveOperatorStoppedState('test-reset');
+  // running 状態を保存
+  operator.acquireOperatorLock();
+  operator.saveOperatorRunningState({ status: 'running' });
+  const st = operator.readOperatorStatus();
+  assert.ok(st,                        'operatorStatus が null');
+  assert.strictEqual(st.status, 'running', 'status が running でない');
+  assert.ok(st.pid,                    'pid がない');
+  assert.ok(st.lastHeartbeat,          'lastHeartbeat がない');
+  assert.ok(st.lockFile,               'lockFile がない');
+  assert.ok(st.stateFile,              'stateFile がない');
+  assert.ok(st.cwd,                    'cwd がない');
+  operator.releaseOperatorLock();
+});
+
+test('9d_hb. heartbeat 後は勤務中と判定される', () => {
+  resetState();
+  operator.releaseOperatorLock();
+  operator.acquireOperatorLock();
+  operator.saveOperatorRunningState({ status: 'running' });
+
+  const opSt   = operator.readOperatorStatus();
+  const hbAge  = Date.now() - new Date(opSt.lastHeartbeat).getTime();
+  const lock   = operator.readOperatorLock();
+  const alive  = !!lock; // テスト中は同プロセスなので alive
+
+  assert.ok(hbAge < 5000, `heartbeat が古すぎる: ${hbAge}ms`);
+  assert.strictEqual(opSt.status, 'running', 'status が running でない');
+  operator.releaseOperatorLock();
+});
+
 test('9d. stale lock を検出して自動解除する', () => {
   operator.releaseOperatorLock();
   // 存在しない PID + 古いタイムスタンプで stale lock を作成

@@ -85,6 +85,47 @@ function readOperatorLock() {
   } catch { return null; }
 }
 
+// ─── Heartbeat / State 管理 ──────────────────────────
+const HEARTBEAT_INTERVAL_MS = 15_000; // 15秒ごとに更新
+
+// state.json に operator の稼働状態を保存
+function saveOperatorRunningState(extra = {}) {
+  const state = opState.loadState();
+  state.operatorStatus = {
+    status:        extra.status   || 'running',
+    pid:           process.pid,
+    startedAt:     STARTED_AT,
+    lastHeartbeat: new Date().toISOString(),
+    mode:          DRY_RUN ? 'dry-run' : 'live',
+    cwd:           process.cwd(),
+    lockFile:      OPERATOR_LOCK,
+    stateFile:     opState.STATE_FILE,
+    lastError:     extra.lastError || null,
+    ...extra,
+  };
+  opState.saveState(state);
+}
+
+function saveOperatorStoppedState(reason = 'normal') {
+  try {
+    const state = opState.loadState();
+    const prev  = state.operatorStatus || {};
+    state.operatorStatus = {
+      ...prev,
+      status:        'stopped',
+      stoppedAt:     new Date().toISOString(),
+      stoppedReason: reason,
+      lastHeartbeat: new Date().toISOString(),
+    };
+    opState.saveState(state);
+  } catch { /* ignore during shutdown */ }
+}
+
+function readOperatorStatus() {
+  const state = opState.loadState();
+  return state.operatorStatus || null;
+}
+
 // ─── Auto Send Allowlist (Phase3) ───────────────────
 // 固定ルート由来かつ autoExecuted:true のもののみ自動送信
 const ALLOWED_EVENTS = new Set([
@@ -322,26 +363,35 @@ function showStatus() {
   const history = opState.loadHistory();
   const now     = new Date().toLocaleString('ja-JP');
   const lock    = readOperatorLock();
+  const opSt    = readOperatorStatus();
 
-  // Phase5: 状態判定
-  const isRunning  = !!lock && (Date.now() - new Date(lock.startedAt).getTime() < 90_000);
+  // heartbeat ベースで 30秒以内なら「勤務中」（lock + heartbeat の二重確認）
+  const hbAge     = opSt?.lastHeartbeat
+    ? Date.now() - new Date(opSt.lastHeartbeat).getTime()
+    : Infinity;
+  const lockAlive = lock && _isPidAlive(lock.pid);
+  const isRunning = lockAlive && hbAge < 30_000;
+
   const statusLabel= isRunning ? '🟢 勤務中' : '🔴 停止中';
-  const startedStr = lock ? new Date(lock.startedAt).toLocaleString('ja-JP') : '—';
   const sentCount  = history.filter(h => h.autoSent).length;
   const blockedCnt = history.filter(h => h.blockedReason).length;
-
-  // 最終配送
   const lastSent   = history.filter(h => h.autoSent).slice(-1)[0];
   const lastLabel  = lastSent
-    ? `${inboxBridge.WORKER_DISPLAY[lastSent.worker] || lastSent.worker} (${lastSent.event || '?'})`
+    ? `${inboxBridge.WORKER_DISPLAY[lastSent.worker] || lastSent.worker} → ${lastSent.event || '?'}`
     : '（なし）';
 
   console.log(`\n🅶 **黒川 Desktop Operator**`);
   console.log(`状態: ${statusLabel}`);
-  console.log(`起動: ${startedStr}`);
+  console.log(`PID: ${opSt?.pid || lock?.pid || '—'}`);
+  console.log(`起動: ${opSt?.startedAt ? new Date(opSt.startedAt).toLocaleString('ja-JP') : '—'}`);
+  console.log(`最終 Heartbeat: ${opSt?.lastHeartbeat ? new Date(opSt.lastHeartbeat).toLocaleString('ja-JP') + ` (${Math.floor(hbAge/1000)}秒前)` : '—'}`);
+  console.log(`モード: ${opSt?.mode || '—'}`);
   console.log(`処理数: ${history.length}件 (送信 ${sentCount} / ブロック ${blockedCnt})`);
   console.log(`最終配送: ${lastLabel}`);
-  console.log(`モード: ${DRY_RUN ? 'DRY-RUN' : 'LIVE (clipboard)'}`);
+  if (opSt?.lastError) console.log(`最終エラー: ${opSt.lastError}`);
+  console.log(`Lock: ${OPERATOR_LOCK}`);
+  console.log(`State: ${opState.STATE_FILE}`);
+  console.log(`CWD: ${opSt?.cwd || process.cwd()}`);
   console.log('');
 
   const workers = inboxBridge.VALID_WORKERS;
@@ -351,13 +401,13 @@ function showStatus() {
     const disp = inboxBridge.WORKER_DISPLAY[worker] || worker;
     if (!ws?.lastHash) continue;
     any = true;
-    console.log(`  ${disp}: 最終確認 ${ws.lastSeenAt ? new Date(ws.lastSeenAt).toLocaleString('ja-JP') : '—'}`);
+    console.log(`  ${disp}: ${ws.lastSeenAt ? new Date(ws.lastSeenAt).toLocaleString('ja-JP') : '—'}`);
   }
   if (!any) console.log('  （処理履歴なし）');
 
   const recentBlocked = history.filter(h => h.blockedReason).slice(-3);
   if (recentBlocked.length) {
-    console.log(`\n🚫 直近ブロック (${recentBlocked.length}件):`);
+    console.log(`\n🚫 直近ブロック:`);
     recentBlocked.forEach(h => console.log(`  [${h.worker}] ${h.blockedReason}`));
   }
   console.log('');
@@ -381,22 +431,36 @@ function watch() {
 
   console.log('🤖 黒川 Desktop Operator 出勤 (watch モード)');
   console.log(`   起動時刻: ${new Date(STARTED_AT).toLocaleString('ja-JP')}`);
+  console.log(`   PID: ${process.pid}`);
   console.log(`   モード: ${DRY_RUN ? 'DRY-RUN' : 'LIVE (clipboard)'}`);
   console.log(`   間隔: ${WATCH_INTERVAL_MS / 1000}秒`);
+  console.log(`   Lock: ${OPERATOR_LOCK}`);
+  console.log(`   State: ${opState.STATE_FILE}`);
   console.log('   Ctrl+C で退勤\n');
 
-  checkOnce();
-  const timer = setInterval(checkOnce, WATCH_INTERVAL_MS);
+  // state.json に running 状態を保存（起動直後）
+  saveOperatorRunningState({ status: 'running' });
 
-  const shutdown = () => {
-    clearInterval(timer);
+  checkOnce();
+  const mainTimer      = setInterval(checkOnce, WATCH_INTERVAL_MS);
+  // heartbeat: 15秒ごとに state.json を更新（Discord からの確認用）
+  const heartbeatTimer = setInterval(() => saveOperatorRunningState(), HEARTBEAT_INTERVAL_MS);
+
+  const shutdown = (reason = 'SIGINT') => {
+    clearInterval(mainTimer);
+    clearInterval(heartbeatTimer);
+    saveOperatorStoppedState(reason);
     releaseOperatorLock();
-    console.log('\n🅶 黒川 退勤');
+    console.log(`\n🅶 黒川 退勤 (${reason})`);
     process.exit(0);
   };
-  process.on('SIGINT',  shutdown);
-  process.on('SIGTERM', shutdown);
-  process.on('exit',    releaseOperatorLock);
+  process.on('SIGINT',  () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('uncaughtException', (e) => {
+    saveOperatorStoppedState(`error: ${e.message}`);
+    releaseOperatorLock();
+    process.exit(1);
+  });
 }
 
 // ─────────────────────────────────────────────────────
@@ -438,5 +502,9 @@ module.exports = {
   acquireOperatorLock,
   releaseOperatorLock,
   readOperatorLock,
+  readOperatorStatus,
+  saveOperatorRunningState,
+  saveOperatorStoppedState,
   OPERATOR_LOCK,
+  HEARTBEAT_INTERVAL_MS,
 };

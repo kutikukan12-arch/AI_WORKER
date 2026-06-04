@@ -7746,18 +7746,28 @@ client.on('messageCreate', async (message) => {
       const fs      = require('fs');
       const path    = require('path');
       const hist    = opState.loadHistory();
-      const LOCK    = path.join(opState.OP_DIR, 'operator.lock');
 
-      // ロックファイルで勤務状態を確認
-      let isRunning = false;
-      let startedAt = null;
+      // state.json から operatorStatus を取得（heartbeat ベース）
+      const state = opState.loadState();
+      const opSt  = state.operatorStatus || null;
+
+      // lock ファイルで PID 確認
+      const LOCK  = path.join(opState.OP_DIR, 'operator.lock');
+      let lockPid = null;
+      let lockAlive = false;
       try {
         if (fs.existsSync(LOCK)) {
-          const lock = JSON.parse(fs.readFileSync(LOCK, 'utf8'));
-          const age  = Date.now() - new Date(lock.startedAt).getTime();
-          if (age < 90_000) { isRunning = true; startedAt = lock.startedAt; }
+          const l = JSON.parse(fs.readFileSync(LOCK, 'utf8'));
+          lockPid = l.pid;
+          try { process.kill(Number(l.pid), 0); lockAlive = true; } catch { lockAlive = false; }
         }
       } catch { /* ignore */ }
+
+      // heartbeat が 30秒以内かつ PID 生存なら「勤務中」
+      const hbAge     = opSt?.lastHeartbeat
+        ? Date.now() - new Date(opSt.lastHeartbeat).getTime()
+        : Infinity;
+      const isRunning = lockAlive && hbAge < 30_000;
 
       const sentCount  = hist.filter(h => h.autoSent).length;
       const blockedCnt = hist.filter(h => h.blockedReason).length;
@@ -7767,21 +7777,32 @@ client.on('messageCreate', async (message) => {
         ? `${ib.WORKER_DISPLAY[lastSent.worker] || lastSent.worker} → ${lastSent.event || '?'}`
         : '（なし）';
 
+      const hbStr = opSt?.lastHeartbeat
+        ? `${new Date(opSt.lastHeartbeat).toLocaleString('ja-JP')} (${Math.floor(hbAge/1000)}秒前)`
+        : '—';
+
       const lines = [
         `🅶 **黒川 Desktop Operator**`,
         ``,
         `状態: ${isRunning ? '🟢 勤務中' : '🔴 停止中'}`,
-        startedAt ? `起動: ${new Date(startedAt).toLocaleString('ja-JP')}` : '',
+        `PID: ${opSt?.pid || lockPid || '—'}`,
+        opSt?.startedAt ? `起動: ${new Date(opSt.startedAt).toLocaleString('ja-JP')}` : '',
+        `最終 Heartbeat: ${hbStr}`,
+        `モード: ${opSt?.mode || '—'}`,
         `処理数: ${hist.length}件 (送信 ${sentCount} / ブロック ${blockedCnt})`,
         `最終配送: ${lastLabel}`,
+        opSt?.lastError ? `⚠️ 最終エラー: ${opSt.lastError}` : '',
         ``,
-        hist.filter(h => h.blockedReason).slice(-2).map(h =>
+        `Lock: \`data/desktop-operator/operator.lock\``,
+        `State: \`data/desktop-operator/state.json\``,
+        ``,
+        ...hist.filter(h => h.blockedReason).slice(-2).map(h =>
           `🚫 [${h.worker}] ${h.blockedReason}`
-        ).join('\n'),
+        ),
         ``,
         isRunning
           ? '> 稼働中: `npm run operator:once` で即時チェック可'
-          : '> 起動: `npm run operator` または `start-ai-worker.bat`',
+          : '> 起動: `npm run operator` または `start-operator.bat`',
       ].filter(l => l !== '');
       await message.reply(lines.join('\n').slice(0, 1900)).catch(() => {});
       return;
