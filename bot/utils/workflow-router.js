@@ -38,13 +38,13 @@ const WORKFLOW_EVENTS = {
   COST_REQUIRED:       'COST_REQUIRED',
   INCIDENT_FOUND:      'INCIDENT_FOUND',
   BLOCKED:             'BLOCKED',
-  // Phase10 追加
+  // Phase10
   LESSON_CANDIDATE:    'LESSON_CANDIDATE',
   INCIDENT_CANDIDATE:  'INCIDENT_CANDIDATE',
-  // 神崎 VP 追加: 判断材料整理依頼
   VP_BRIEF_REQUEST:    'VP_BRIEF_REQUEST',
-  // 神崎 VP 追加: 大方針レビュー（社員 → 神崎 → 整理 → 社長判断）
   STRATEGY_REVIEW:     'STRATEGY_REVIEW',
+  // Phase3: 社員間ルート
+  SPEC_READY:          'SPEC_READY',   // 市川→宮城: 仕様確定 → 実装開始
 };
 
 // ─── Phase10: 固定ルート allowlist ──────────────────
@@ -79,9 +79,15 @@ const FIXED_ROUTES = {
   },
   // 神崎 VP: 社長 → 神崎への判断材料整理依頼
   VP_BRIEF_REQUEST: {
-    allowedFrom: ['ceo'],       // 社長のみ（VP は判断代行禁止のため経路を制限）
+    allowedFrom: ['ceo'],
     to:          'kanzaki',
     reason:      '固定ルート: CEO → 神崎 VP 判断材料整理',
+  },
+  // Phase3: 市川 → 宮城: 仕様確定 → 実装開始
+  SPEC_READY: {
+    allowedFrom: ['ichikawa'],
+    to:          'miyagi',
+    reason:      '固定ルート: 市川 PM 仕様確定 → 宮城 実装開始',
   },
 };
 
@@ -213,6 +219,17 @@ const ROUTING_TABLE = {
       `- メリット / リスク\n` +
       `- 長期ロードマップへの影響\n` +
       `\n→ 神崎は整理のみ。決定・直接実行はしません（最終判断は社長）。`,
+  },
+  // Phase3: 市川 → 宮城 仕様確定
+  SPEC_READY: {
+    to:      'miyagi',
+    label:   '宮城 Lead Engineer',
+    message: (ctx) =>
+      `【仕様確定・実装開始依頼】\n` +
+      `市川 PM から仕様が確定しました。実装を開始してください。\n` +
+      `\nタスク: ${ctx.taskId || '（未指定）'}\n` +
+      `\n仕様概要:\n${ctx.summary || '（詳細なし）'}\n` +
+      `\n→ 実装完了後、\`!workflow handoff IMPLEMENT_DONE\` で守谷 CTO にレビューを依頼してください。`,
   },
 };
 
@@ -373,14 +390,67 @@ function autoHandoff(event, payload = {}) {
     return { ok: false, error: routeResult.error };
   }
 
-  // ── 4. outbox への書き込み（sendToWorker を使用）──
+  // ── 4. Phase1: Safety Layer Gate ─────────────────
+  // 配送実行前に必ず checkSafeToHandoff() を通す
+  // safe:false の場合は配送停止・監査ログ記録・黒川通知
+  const convId     = payload.taskId ? `conv_${payload.taskId}` : `conv_${Date.now()}`;
+  const safetyLayer = require('./workflow-safety-layer');
+  const audit       = require('./workflow-audit');
+  const safeCheck   = safetyLayer.checkSafeToHandoff({
+    convId,
+    from,
+    to:    routeResult.to,
+    event,
+    inboxContent: payload.summary || '',
+  });
+
+  // 監査ログ記録（safe/unsafe 問わず全記録）
+  audit.appendAudit({
+    convId,
+    from,
+    to:         routeResult.to,
+    event,
+    safe:       safeCheck.safe,
+    stopReason: safeCheck.safe ? null : safeCheck.reason,
+    stopAction: safeCheck.safe ? null : safeCheck.action,
+    taskId:     payload.taskId || null,
+  });
+
+  if (!safeCheck.safe) {
+    // 黒川 inbox へ停止通知を配送（判断はしない）
+    try {
+      const inboxBridgeNotify = require('./inbox-bridge');
+      const stopMsg = [
+        `【Safety Gate 停止通知】`,
+        `黒川 CoS からの配送停止報告です。`,
+        ``,
+        `配送停止: ${from} → ${routeResult.to} (${event})`,
+        `理由: ${safeCheck.reason}`,
+        `アクション: ${safeCheck.action}`,
+        `会話ID: ${convId}`,
+        ``,
+        `→ 社長または神崎 VP が確認してください。`,
+      ].join('\n');
+      inboxBridgeNotify.sendToWorker('kurokawa', stopMsg);
+    } catch { /* ignore */ }
+
+    return {
+      ok:         true,
+      dispatched: false,
+      reason:     safeCheck.reason,
+      action:     safeCheck.action,
+      hint:       `Safety Gate が配送を停止しました: ${safeCheck.reason}`,
+    };
+  }
+
+  // ── 5. outbox への書き込み（sendToWorker を使用）──
   const inboxBridge = require('./inbox-bridge');
   const sendResult  = inboxBridge.sendToWorker(routeResult.to, routeResult.message);
   if (!sendResult.ok) {
     return { ok: false, error: `outbox 書き込み失敗: ${sendResult.text}` };
   }
 
-  // ── 5. handoff log に記録 ─────────────────────────
+  // ── 6. handoff log に記録 ─────────────────────────
   const wfState = require('./workflow-state');
   const handoffId = wfState.recordHandoff({
     ...routeResult,
@@ -396,9 +466,11 @@ function autoHandoff(event, payload = {}) {
     to:           routeResult.to,
     toLabel:      routeResult.toLabel,
     handoffId,
+    convId,
     autoExecuted: true,
     reason:       fixedRoute.reason,
     message:      routeResult.message,
+    turns:        safeCheck.turns,
   };
 }
 

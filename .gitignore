@@ -84,6 +84,7 @@ data/workflow-state.json
 data/vp-reviews.json
 data/workflow-learning.json
 data/workflow-budget.json
+data/workflow-audit.json
 data/version-state.json
 data/recovery-log.json
 data/daily-brief.json

@@ -66,7 +66,7 @@ function openConversation(convId, opts = {}) {
     id:           convId,
     taskId:       opts.taskId || null,
     openedAt:     new Date().toISOString(),
-    maxTurns:     opts.maxTurns || DEFAULT_MAX_TURNS,
+    maxTurns:     opts.maxTurns !== undefined ? opts.maxTurns : DEFAULT_MAX_TURNS,
     currentTurns: 0,
     history:      [],  // [{ from, to, event, at }]
     status:       'open',

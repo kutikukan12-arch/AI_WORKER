@@ -32,13 +32,14 @@ const { redact } = require('./redact');
 
 // ─── 許可されたワークフローチェーン ─────────────────
 const ALLOWED_CHAINS = [
-  { from: 'miyagi',   to: 'moriya',   event: 'IMPLEMENT_DONE' },
-  { from: 'moriya',   to: 'miyagi',   event: 'NEED_FIX'       },
-  { from: 'moriya',   to: 'ichikawa', event: 'REVIEW_READY'   },
-  { from: 'ichikawa', to: 'miyagi',   event: 'IMPLEMENT_DONE' },
-  { from: 'any',      to: 'ikuno',    event: 'LESSON_CANDIDATE'   },
-  { from: 'any',      to: 'ikuno',    event: 'INCIDENT_CANDIDATE' },
-  { from: 'ceo',      to: 'kanzaki',  event: 'VP_BRIEF_REQUEST'   },
+  { from: 'miyagi',    to: 'moriya',   event: 'IMPLEMENT_DONE'   },
+  { from: 'moriya',    to: 'miyagi',   event: 'NEED_FIX'         },
+  { from: 'moriya',    to: 'ichikawa', event: 'REVIEW_READY'     },
+  { from: 'ichikawa',  to: 'miyagi',   event: 'IMPLEMENT_DONE'   },
+  { from: 'ichikawa',  to: 'miyagi',   event: 'SPEC_READY'       }, // Phase3
+  { from: 'any',       to: 'ikuno',    event: 'LESSON_CANDIDATE'    },
+  { from: 'any',       to: 'ikuno',    event: 'INCIDENT_CANDIDATE'  },
+  { from: 'ceo',       to: 'kanzaki',  event: 'VP_BRIEF_REQUEST'    },
 ];
 
 // ─────────────────────────────────────────────────────
@@ -183,10 +184,34 @@ function getWorkflowStatus(convId) {
   };
 }
 
+// ─────────────────────────────────────────────────────
+// Phase2: conversationId lifecycle helpers
+// ─────────────────────────────────────────────────────
+
+// タスクIDから conversationId を生成
+function makeConvId(taskId) {
+  return taskId ? `conv_${taskId}` : `conv_${Date.now()}`;
+}
+
+// 終了イベントで会話をクローズ
+const CLOSE_EVENTS = new Set(['REVIEW_READY', 'BLOCKED', 'CEO_CONFIRM_REQUIRED']);
+
+function autoCloseIfNeeded(convId, event) {
+  if (!convId || !event) return false;
+  if (CLOSE_EVENTS.has(event)) {
+    budget.closeConversation(convId, `event:${event}`);
+    return true;
+  }
+  return false;
+}
+
 module.exports = {
   checkSafeToHandoff,
   processInbox,
   validateChain,
   getWorkflowStatus,
+  makeConvId,
+  autoCloseIfNeeded,
   ALLOWED_CHAINS,
+  CLOSE_EVENTS,
 };
