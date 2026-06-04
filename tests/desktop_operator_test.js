@@ -372,17 +372,28 @@ test('9d. stale lock を検出して自動解除する', () => {
   operator.releaseOperatorLock();
 });
 
-test('9e. bat ファイルに stale lock 解除コードがある', () => {
+test('9e. bat ファイルに lock チェックがある（check-operator-lock.js 経由）', () => {
   const bat = fs.readFileSync(path.join(__dirname, '..', 'start-ai-worker.bat'), 'utf8');
-  assert.ok(bat.includes('stale') || bat.includes('process.kill'),
-    'stale lock 解除コードがない');
-  assert.ok(bat.includes('operator.lock'), 'operator.lock の参照がない');
+  // 新実装: node -e インラインを廃止し check-operator-lock.js を使用
+  assert.ok(bat.includes('check-operator-lock'), 'check-operator-lock.js の呼び出しがない');
+  assert.ok(bat.includes('LOCK_CODE'), 'lock チェックコードがない');
 });
 
-test('9f. start-operator.bat にも stale lock 解除がある', () => {
+test('9f. start-operator.bat にも lock チェックがある（check-operator-lock.js 経由）', () => {
   const bat = fs.readFileSync(path.join(__dirname, '..', 'start-operator.bat'), 'utf8');
-  assert.ok(bat.includes('operator.lock'), 'operator.lock の参照がない');
-  assert.ok(bat.includes('process.kill') || bat.includes('stale'), 'stale lock 解除がない');
+  assert.ok(bat.includes('check-operator-lock'), 'check-operator-lock.js の呼び出しがない');
+  assert.ok(bat.includes('LOCK_CODE'), 'lock チェックコードがない');
+});
+
+test('9g. check-operator-lock.js が存在し正常動作する', () => {
+  assert.ok(fs.existsSync(path.join(__dirname, '..', 'scripts', 'check-operator-lock.js')),
+    'check-operator-lock.js が存在しない');
+  // stale lock がない場合は exit 0 であること
+  const { spawnSync } = require('child_process');
+  const r = spawnSync('node', ['scripts/check-operator-lock.js'], {
+    cwd: path.join(__dirname, '..'), encoding: 'utf8',
+  });
+  assert.ok(r.status === 0, `exit code が 0 でない: ${r.status}`);
 });
 
 // ─────────────────────────────────────────────────────
@@ -419,10 +430,24 @@ test('10d. install-startup.js に eval がない', () => {
   assert.ok(!code.includes('eval('), 'eval が含まれている');
 });
 
-test('10e. start-ai-worker.bat に二重起動チェックがある', () => {
+test('10e. start-ai-worker.bat に二重起動チェックと確実な pause がある', () => {
   const bat = fs.readFileSync(path.join(__dirname, '..', 'start-ai-worker.bat'), 'utf8');
-  assert.ok(bat.includes('operator.lock'), 'ロックチェックがない');
+  assert.ok(bat.includes('check-operator-lock'), '二重起動チェックがない');
   assert.ok(bat.includes('勤務中'), '「勤務中」の表示がない');
+  // 必ず pause で止まること（:error_exit と :normal_exit の両方に pause）
+  assert.ok(bat.includes(':error_exit'), 'エラー終了ラベルがない');
+  assert.ok(bat.includes(':normal_exit'), '正常終了ラベルがない');
+});
+
+test('10f. start-operator.ps1 が存在する', () => {
+  assert.ok(fs.existsSync(path.join(__dirname, '..', 'start-operator.ps1')),
+    'start-operator.ps1 が存在しない');
+});
+
+test('10g. start-operator.ps1 に check-operator-lock がある', () => {
+  const ps1 = fs.readFileSync(path.join(__dirname, '..', 'start-operator.ps1'), 'utf8');
+  assert.ok(ps1.includes('check-operator-lock'), 'check-operator-lock がない');
+  assert.ok(ps1.includes('Read-Host'), '終了前の Read-Host がない（画面が即閉じる）');
 });
 
 // ─────────────────────────────────────────────────────
