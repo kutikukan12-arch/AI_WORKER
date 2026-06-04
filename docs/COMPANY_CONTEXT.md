@@ -141,6 +141,7 @@
 6. **eval / exec禁止** — AI返信内容からの直接コマンド実行禁止
 7. **training model非公開** — `!youtube export-model`経由のclean exportのみ公開可
 8. **.gitignore変更時はsecurity-check** — `git ls-files` / `git check-ignore` / `npm run security-check`
+9. **完成 = 実運用で動く (L-20 Runtime Reachability)** — 実装 + test pass + 実行経路から到達可能を実証。軽微変更は「到達経路1行宣言」、重要機能は workflow/command経由テスト必須。単体テストで helper を直接呼ぶだけは完成と認めない（詳細は company-rules.md）
 
 ---
 
@@ -150,9 +151,9 @@
 ```
 市川 PM        — 要件整理・MVP範囲確定
   ↓
-宮城 Lead      — 実装・修正
-  ↓ (IMPLEMENT_DONE)
-守谷 CTO       — READY / NEED_FIX 判定
+宮城 Lead      — 実装・修正（完成条件: 実装 + test + Runtime Reachability実証 / L-20）
+  ↓ (IMPLEMENT_DONE: 到達経路を明示。重要機能は workflow/command経由テスト)
+守谷 CTO       — READY / NEED_FIX 判定（Runtime Reachability確認を必須）
   ↓ (REVIEW_READY)
 相沢 CS        — ユーザー視点確認・βテスト
   ↓

@@ -175,4 +175,43 @@ npm run security-check
 - GitHub PAT は `.env` のみで管理
 - OpenAI API Key は `.env` のみで管理
 - Secret Guardian は fail-closed（エラー時は commit を停止する）
+
+---
+
+## 完成の定義 / Definition of Done (L-20: Runtime Reachability)
+
+**目的:** 開発速度を落とすことではなく、完成判定を「実運用で動く」基準へ合わせる。
+「実装した・単体テストは通った・でも実行経路から一度も呼ばれない」を会社の仕組みで防ぐ。
+
+### 完成条件（IMPLEMENT_DONE を出す前提）
+
+機能を「完成・達成」と主張する場合、以下すべてを満たすこと:
+
+1. **実装が完了している**
+2. **テストが pass している**
+3. **Runtime Reachability を実証している** — production の実行経路
+   （コマンド / workflow / スケジューラ）から**到達可能**であること
+
+> ヘルパーを直接呼ぶだけの単体テストは「完成」の証拠と認めない。
+> （前例: `pruneOldConversations` を実装・単体テスト pass・export したが、
+> 実行経路から一度も呼ばれず肥大化防止が機能しなかった）
+
+### Runtime Reachability の実証方法
+
+| 変更の種類 | 必要な実証 |
+|-----------|-----------|
+| **軽微変更** | IMPLEMENT_DONE 報告に **「到達経路: `<entry>` → `<function>`」を1行宣言**。守谷 CTO が経路を確認する |
+| **重要機能** | **workflow / command 経由のテストを1本以上**含む（実行経路を実際に叩く統合テスト） |
+| **先行未配線（段階実装）** | コードに `// @staged: <配線予定>` を明記し、未配線が意図的であることを示す |
+
+### レビュー側（守谷 CTO）の責務
+
+- READY 判定時に **Runtime Reachability 確認を必須**とする
+- 「到達不能だが非ブロッカー」として**注記で見送ることを禁止**する
+  （到達不能は原則 NEED_FIX）
+
+### 関連ルール
+
+- **L-19**: require 追加と実体ファイルは同一 commit（HEAD がロード可能であること）
+- **L-20**: 上記 Runtime Reachability（実行経路から到達可能であることを実証）
 - training model の公開は `!youtube export-model` 経由の推論専用 export のみ
