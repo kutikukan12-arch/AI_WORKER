@@ -85,6 +85,7 @@ data/vp-reviews.json
 data/workflow-learning.json
 data/daily-brief.json
 data/sync-history.json
+data/desktop-operator/
 
 # ─── Desktop Inbox Bridge / Agent（社内情報・外部公開禁止）─────
 data/inbox/

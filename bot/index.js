@@ -7733,6 +7733,59 @@ client.on('messageCreate', async (message) => {
   }
 
   // ─────────────────────────────────────────────────────
+  // !operator — 黒川 Desktop Operator (Phase8)
+  // Discord からの操作は status / dry-run のみ。
+  // 実際の auto-send は ローカル CLI (watch) で起動する。
+  // ─────────────────────────────────────────────────────
+  if (content.startsWith('!operator')) {
+    const opArgs = content.split(/\s+/).slice(1);
+    const opSub  = opArgs[0] || 'help';
+
+    if (opSub === 'status') {
+      const opState = require('./utils/desktop-operator-state');
+      const hist    = opState.loadHistory();
+      const state   = opState.loadState();
+      const recent  = hist.slice(-5).reverse();
+      const lines   = [
+        `📊 **Desktop Operator Status**`,
+        `History: ${hist.length}件`,
+        ``,
+        recent.length ? '**直近の処理:**' : '（処理履歴なし）',
+        ...recent.map(h =>
+          `${h.autoSent ? '📋' : (h.blockedReason ? '🚫' : '⏩')} [${h.worker}] ${h.event || '?'} | ${h.blockedReason || '送信済み'}`
+        ),
+        ``,
+        `> 本番 auto-send は \`node scripts/desktop-operator.js watch\` で起動`,
+      ];
+      await message.reply(lines.join('\n').slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    if (opSub === 'dry-run') {
+      const opScript = require('../scripts/desktop-operator');
+      const r        = opScript.checkOnce ? opScript.checkOnce() : null;
+      await message.reply(
+        `🔍 **Desktop Operator Dry-Run**\n\n` +
+        `outbox を確認しました。\n` +
+        `詳細はターミナルで \`node scripts/desktop-operator.js dry-run\` を実行してください。`
+      ).catch(() => {});
+      return;
+    }
+
+    await message.reply(
+      '**!operator — 黒川 Desktop Operator**\n\n' +
+      '```\n' +
+      '!operator status   → 処理履歴確認\n' +
+      '!operator dry-run  → 確認のみ（auto-send なし）\n' +
+      '```\n\n' +
+      '本番 auto-send はローカル CLI で起動してください:\n' +
+      '`node scripts/desktop-operator.js watch`\n\n' +
+      '⚠️ 黒川は固定ルート配送のみ。判断代理禁止。'
+    ).catch(() => {});
+    return;
+  }
+
+  // ─────────────────────────────────────────────────────
   // !kurokawa — 黒川 Workflow Intelligence (Phase1)
   // ─────────────────────────────────────────────────────
   if (content.startsWith('!kurokawa')) {

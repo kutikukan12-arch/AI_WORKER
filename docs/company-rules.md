@@ -64,6 +64,8 @@ AI_WORKER Discord は社内運用専用。
 - 部門間の意見統合（事業/開発バランス）
 - 長期ロードマップへの影響確認
 - `VP_BRIEF_REQUEST` 固定ルートでの判断材料受信
+- **Desktop Operator**: 固定ルート由来メッセージの clipboard コピー (audit log 必須)
+  - 禁止: OSコマンドで本文実行 / eval / exec で本文実行 / 判断代理
 
 ### 禁止
 - CEO最終判断の代行
