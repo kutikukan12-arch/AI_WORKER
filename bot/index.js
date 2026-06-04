@@ -7808,13 +7808,17 @@ client.on('messageCreate', async (message) => {
       return;
     }
 
+    // ── 緊急停止 — 最優先（他の処理より先に実行）─────────
     if (opSub === 'pause') {
       const opState  = require('./utils/desktop-operator-state');
       const opBridge = require('./utils/operator-bridge');
+      const opRel    = require('./utils/operator-reliability');
       const reason   = opArgs.slice(1).join(' ').trim() || '手動停止';
+      // pause フラグ + mode=paused を両方設定
       opBridge.setPaused(opState, true, reason);
+      opRel.setMode(opState, opRel.MODES.PAUSED);
       await message.reply(
-        `⏸️ **黒川 Desktop Operator を一時停止しました**\n\n` +
+        `⏸️ **緊急停止: 黒川 Desktop Operator を停止しました**\n\n` +
         `理由: ${reason}\n\n` +
         `再開: \`!operator resume\``
       ).catch(() => {});
@@ -7824,11 +7828,53 @@ client.on('messageCreate', async (message) => {
     if (opSub === 'resume') {
       const opState  = require('./utils/desktop-operator-state');
       const opBridge = require('./utils/operator-bridge');
+      const opRel    = require('./utils/operator-reliability');
       opBridge.setPaused(opState, false);
+      opRel.setMode(opState, opRel.MODES.CLIPBOARD); // デフォルトは clipboard
       await message.reply(
         `▶️ **黒川 Desktop Operator を再開しました**\n\n` +
-        `次の監視サイクルから自動配送を再開します。`
+        `モード: clipboard\n` +
+        `auto-send を有効にするには: \`!operator mode autosend-limited\``
       ).catch(() => {});
+      return;
+    }
+
+    // mode — モード変更
+    if (opSub === 'mode') {
+      const targetMode = opArgs[1] || '';
+      const opState    = require('./utils/desktop-operator-state');
+      const opRel      = require('./utils/operator-reliability');
+      if (!targetMode) {
+        const current = opRel.getMode(opState);
+        await message.reply(
+          `**!operator mode — 現在: ${current}**\n\n` +
+          '```\n' +
+          '!operator mode clipboard          → クリップボードのみ\n' +
+          '!operator mode autosend-limited   → allowlist + 3回連続成功で auto-send\n' +
+          '!operator mode paused             → 全停止（!operator pause と同じ）\n' +
+          '```'
+        ).catch(() => {});
+        return;
+      }
+      const r = opRel.setMode(opState, targetMode);
+      if (!r.ok) {
+        await message.reply(`❌ ${r.error}`).catch(() => {});
+        return;
+      }
+      const emojis = { clipboard:'📋', 'autosend-limited':'🤖', paused:'⏸️' };
+      await message.reply(
+        `${emojis[targetMode] || '✅'} **モードを変更しました: ${targetMode}**\n\n` +
+        `\`!operator reliability\` で auto-send 解禁状態を確認できます。`
+      ).catch(() => {});
+      return;
+    }
+
+    // reliability — worker 別信頼度表示
+    if (opSub === 'reliability') {
+      const opState = require('./utils/desktop-operator-state');
+      const opRel   = require('./utils/operator-reliability');
+      const r = opRel.formatReliabilityReport(opState);
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
       return;
     }
 
@@ -7846,10 +7892,12 @@ client.on('messageCreate', async (message) => {
     await message.reply(
       '**!operator — 黒川 Desktop Operator**\n\n' +
       '```\n' +
-      '!operator status   → 処理履歴確認\n' +
-      '!operator pause [理由] → 一時停止（緊急停止）\n' +
-      '!operator resume   → 再開\n' +
-      '!operator dry-run  → 確認のみ（auto-send なし）\n' +
+      '!operator status              → 処理履歴確認\n' +
+      '!operator pause [理由]        → 緊急停止（最優先）\n' +
+      '!operator resume              → 再開\n' +
+      '!operator mode <mode>         → モード変更\n' +
+      '!operator reliability         → worker別成功/失敗/auto-send状態\n' +
+      '!operator dry-run             → 確認のみ（auto-send なし）\n' +
       '```\n\n' +
       '本番 auto-send はローカル CLI で起動してください:\n' +
       '`node scripts/desktop-operator.js watch`\n\n' +

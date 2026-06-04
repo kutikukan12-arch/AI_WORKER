@@ -279,17 +279,34 @@ function processWorker(worker) {
     blockedReason = allowCheck.reason;
     console.log(`\n⛔ [${worker}] 送信NG: ${blockedReason}`);
   } else if (!DRY_RUN) {
-    // clipboard へコピー
-    clipResult = copyToClipboard(wrappedPrompt);
-    if (clipResult.ok) {
+    const reliability = require(path.join(ROOT, 'bot', 'utils', 'operator-reliability'));
+    // auto-send 判定
+    const useAutoSend = reliability.shouldAutoSend(opState, worker);
+    const sendMode    = useAutoSend ? 'auto' : 'clipboard';
+
+    const bridgeMod = require(path.join(ROOT, 'bot', 'utils', 'operator-bridge'));
+    const sendResult = bridgeMod.bridgeToClaudeDesktop(wrappedPrompt, {
+      sendMode,
+      workerLabel: inboxBridge.WORKER_DISPLAY[worker] || worker,
+    });
+
+    if (sendResult.ok) {
       autoSent = true;
-      console.log(`\n📋 [${worker}] クリップボードへコピー完了 (${histId})`);
+      const { result: relResult } = { result: reliability.recordSuccess(opState, worker) };
+      const modeLabel = sendResult.mode === 'auto' ? '🤖 auto-send' : '📋 clipboard';
+      console.log(`\n${modeLabel} [${worker}] 送信完了 (${histId})`);
       console.log(`   イベント: ${handoffRecord?.event}`);
-      console.log(`   ハンドオフ: ${handoffRecord?.id}`);
+      if (relResult?.justUnlocked) {
+        console.log(`   🎉 ${worker} が auto-send 解禁されました！`);
+      }
     } else {
-      blockedReason = `clipboard_failed: ${clipResult.error}`;
-      console.log(`\n⚠️ [${worker}] クリップボードコピー失敗: ${clipResult.error}`);
+      blockedReason = `send_failed: ${sendResult.error || '不明'}`;
+      // 失敗 → clipboard 降格
+      const { downgraded } = reliability.recordFailure(opState, worker, blockedReason);
+      console.log(`\n⚠️ [${worker}] 送信失敗: ${blockedReason}`);
+      if (downgraded) console.log(`   📋 ${worker} を clipboard モードに降格しました`);
     }
+    clipResult = sendResult;
   } else {
     console.log(`\n[DRY-RUN] [${worker}] 送信候補: イベント=${handoffRecord?.event}`);
     console.log(`   プレビュー: ${wrappedPrompt.slice(0, 100)}…`);
