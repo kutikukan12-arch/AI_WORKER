@@ -379,10 +379,11 @@ test('9e. bat ファイルに lock チェックがある（check-operator-lock.j
   assert.ok(bat.includes('LOCK_CODE'), 'lock チェックコードがない');
 });
 
-test('9f. start-operator.bat にも lock チェックがある（check-operator-lock.js 経由）', () => {
+test('9f. start-operator.bat は PS1 ラッパーで lock チェックは PS1 に委譲', () => {
   const bat = fs.readFileSync(path.join(__dirname, '..', 'start-operator.bat'), 'utf8');
-  assert.ok(bat.includes('check-operator-lock'), 'check-operator-lock.js の呼び出しがない');
-  assert.ok(bat.includes('LOCK_CODE'), 'lock チェックコードがない');
+  // BAT は PS1 を呼ぶだけ。lock チェックは PS1 側が行う。
+  assert.ok(bat.includes('start-operator.ps1'), 'PS1 の呼び出しがない');
+  assert.ok(bat.includes('ExecutionPolicy'), 'ExecutionPolicy 設定がない');
 });
 
 test('9g. check-operator-lock.js が存在し正常動作する', () => {
@@ -444,10 +445,22 @@ test('10f. start-operator.ps1 が存在する', () => {
     'start-operator.ps1 が存在しない');
 });
 
-test('10g. start-operator.ps1 に check-operator-lock がある', () => {
+test('10g. start-operator.ps1 が正式版（PSScriptRoot / Set-Location / ログ）', () => {
   const ps1 = fs.readFileSync(path.join(__dirname, '..', 'start-operator.ps1'), 'utf8');
-  assert.ok(ps1.includes('check-operator-lock'), 'check-operator-lock がない');
-  assert.ok(ps1.includes('Read-Host'), '終了前の Read-Host がない（画面が即閉じる）');
+  assert.ok(ps1.includes('PSScriptRoot'),          'PSScriptRoot がない');
+  assert.ok(ps1.includes('Set-Location'),          'Set-Location がない');
+  assert.ok(ps1.includes('check-operator-lock'),   'check-operator-lock がない');
+  assert.ok(ps1.includes('Read-Host'),             '終了前の Read-Host がない');
+  assert.ok(ps1.includes('operator-startup.log'),  'ログ保存がない');
+});
+
+test('10h. start-operator.bat は PS1 ラッパーのみ（日本語・罫線なし）', () => {
+  const bat = fs.readFileSync(path.join(__dirname, '..', 'start-operator.bat'), 'utf8');
+  // PS1 を呼ぶ
+  assert.ok(bat.includes('start-operator.ps1'),    'PS1 呼び出しがない');
+  assert.ok(bat.includes('ExecutionPolicy Bypass'), 'ExecutionPolicy Bypass がない');
+  // 日本語文字・罫線がないこと
+  assert.ok(!/[　-鿿]/.test(bat), 'bat に日本語文字が含まれている');
 });
 
 // ─────────────────────────────────────────────────────

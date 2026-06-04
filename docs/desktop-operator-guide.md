@@ -36,20 +36,40 @@ Desktop Operator
 
 ---
 
-## CLI 使い方
+## 推奨起動方法
+
+### ✅ 推奨: PowerShell 版（日本語パス対応）
+
+```powershell
+# 直接実行（推奨）
+powershell -ExecutionPolicy Bypass -File start-operator.ps1
+
+# または右クリック → PowerShellで実行
+```
+
+### BAT 経由（PS1 ラッパー）
+
+```bat
+REM ダブルクリック → PS1 を呼ぶだけ（英数字のみ・文字化けなし）
+start-operator.bat
+```
+
+> BAT は PowerShell へのラッパーのみ。日本語メッセージなし。  
+> D:\璃蘭\AI_WORKER のような日本語パスでも start-operator.ps1 は正常動作します。
+
+### npm から
 
 ```bash
-# 1回だけチェック
-node scripts/desktop-operator.js once
+npm run operator
+```
 
-# 常駐監視（30秒ごと）
-node scripts/desktop-operator.js watch
+### CLI 直接
 
-# 確認のみ（送信なし）
-node scripts/desktop-operator.js dry-run
-
-# 状態表示
-node scripts/desktop-operator.js status
+```bash
+node scripts/desktop-operator.js watch   # 常駐監視（推奨）
+node scripts/desktop-operator.js once    # 1回チェック
+node scripts/desktop-operator.js dry-run # 確認のみ
+node scripts/desktop-operator.js status  # 状態表示
 ```
 
 ---
