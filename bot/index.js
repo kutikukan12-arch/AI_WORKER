@@ -8411,6 +8411,21 @@ client.on('messageCreate', async (message) => {
     const compArgs = content.slice('!company'.length).trim().split(/\s+/).filter(Boolean);
     const compSub  = compArgs[0] || '';
     // context — 会社共通コンテキスト表示 (Phase2)
+    // sync — 全社員に会社情報を同期
+    if (compSub === 'sync') {
+      const compSync = require('./utils/company-sync');
+      const forceArg = compArgs.includes('--force') || compArgs.includes('force');
+      // status サブコマンド
+      if (compArgs[1] === 'status') {
+        const r = compSync.getSyncStatus();
+        await message.reply(r.text.slice(0, 1900)).catch(() => {});
+        return;
+      }
+      const r = compSync.runSync({ force: forceArg });
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
     if (compSub === 'context') {
       const ctxMgr  = require('./utils/context-manager');
       const fullArg = compArgs[1] === 'full';
@@ -8434,6 +8449,9 @@ client.on('messageCreate', async (message) => {
     }
     await message.reply(
       '**!company の使い方**\n```\n' +
+      '!company sync                         → 全社員に会社情報を同期\n' +
+      '!company sync --force                 → 強制再送（バージョン未変更でも送信）\n' +
+      '!company sync status                  → 最終 sync 状況確認\n' +
       '!company context                      → 会社共通コンテキスト表示\n' +
       '!company context full                 → コンテキスト全文\n' +
       '!company staff                        → 現在プロジェクトの推奨人員を表示\n' +
