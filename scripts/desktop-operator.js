@@ -268,9 +268,10 @@ function processWorker(worker) {
   const wrappedPrompt = scanner.buildPrompt(worker, safeContent);
 
   const now = new Date().toISOString();
-  let clipResult = null;
-  let autoSent   = false;
+  let clipResult    = null;
+  let autoSent      = false;
   let blockedReason = null;
+  let sendMode      = 'clipboard'; // デフォルト; auto-send判定後に更新
 
   if (!riskResult.safe) {
     blockedReason = `risk_blocked: ${riskResult.blocked.map(b => b.name).join(', ')}`;
@@ -299,7 +300,7 @@ function processWorker(worker) {
     const reliability = require(path.join(ROOT, 'bot', 'utils', 'operator-reliability'));
     // auto-send 判定
     const useAutoSend = reliability.shouldAutoSend(opState, worker);
-    const sendMode    = useAutoSend ? 'auto' : 'clipboard';
+    sendMode = useAutoSend ? 'auto' : 'clipboard'; // 外側の let に上書き
 
     const bridgeMod = require(path.join(ROOT, 'bot', 'utils', 'operator-bridge'));
     const sendResult = bridgeMod.bridgeToClaudeDesktop(wrappedPrompt, {
@@ -309,11 +310,25 @@ function processWorker(worker) {
 
     if (sendResult.ok) {
       autoSent = true;
-      const { result: relResult } = { result: reliability.recordSuccess(opState, worker) };
-      const modeLabel = sendResult.mode === 'auto' ? '🤖 auto-send' : '📋 clipboard';
+      const actualMode = sendResult.mode || sendMode; // 'auto' | 'clipboard'
+      let justUnlocked = false;
+
+      if (actualMode === 'auto') {
+        // auto-send 成功 → 連続成功カウンタを進める
+        const relResult = reliability.recordSuccess(opState, worker);
+        justUnlocked = relResult.justUnlocked;
+      } else {
+        // clipboard コピー成功 → clipboard 配送カウンタのみ
+        reliability.recordClipboardDelivery(opState, worker);
+      }
+
+      const modeLabel = actualMode === 'auto' ? '🤖 auto-send' : '📋 clipboard';
       console.log(`\n${modeLabel} [${worker}] 送信完了 (${histId})`);
       console.log(`   イベント: ${handoffRecord?.event}`);
-      if (relResult?.justUnlocked) {
+      if (actualMode === 'clipboard') {
+        console.log(`   ▶ Claude Desktop で Ctrl+V → Enter で送信してください`);
+      }
+      if (justUnlocked) {
         console.log(`   🎉 ${worker} が auto-send 解禁されました！`);
       }
 
@@ -336,6 +351,8 @@ function processWorker(worker) {
           const onReplyResult = (result) => {
             const disp = inboxBridge.WORKER_DISPLAY[worker] || worker;
             if (result.result === 'captured' || result.reason === 'reply_collected') {
+              // 返信取得成功 → replyCapturedCount をインクリメント
+              try { reliability.recordReplyCapture(opState, worker); } catch { /* ignore */ }
               console.log(`\n📥 [${worker}] 回答を自動取得し inbox に保存しました`);
               console.log(`   !inbox check ${worker} で確認できます`);
             } else if (result.result === 'fallback_clipboard') {
@@ -386,7 +403,7 @@ function processWorker(worker) {
     sourceOutbox:  outPath,
     promptHash:    opState.hashContent(wrappedPrompt),
     promptPreview: redact(safeContent).slice(0, 80),
-    mode:          'clipboard',
+    mode:          clipResult?.mode || sendMode || 'clipboard',
     riskResult:    { safe: riskResult.safe, blocked: riskResult.blocked.map(b => b.name) },
     handoffId:     handoffRecord?.id || null,
     event:         handoffRecord?.event || null,

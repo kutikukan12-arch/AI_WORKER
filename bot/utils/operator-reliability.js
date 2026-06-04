@@ -60,37 +60,70 @@ function setMode(opState, mode) {
 }
 
 // ─────────────────────────────────────────────────────
+// _defaultRel() — 信頼度データの初期値
+// clipboard配送 / auto-send送信 / 返信取得 を独立カウンタで管理
+// ─────────────────────────────────────────────────────
+function _defaultRel() {
+  return {
+    // ── auto-send 解禁カウンタ（変更なし）─────────
+    successCount:       0,   // auto-send 成功件数
+    failureCount:       0,   // 送信失敗件数
+    consecutiveSuccess: 0,   // 連続 auto-send 成功数
+    autoSendEnabled:    false,
+    lastSuccess:        null,
+    lastFailure:        null,
+    lastFailureReason:  null,
+    // ── 配送段階別カウンタ（新規）─────────────────
+    clipboardCount:     0,   // clipboard へのコピー成功件数
+    autoSendCount:      0,   // Claude Desktop への自動送信成功件数
+    replyCapturedCount: 0,   // 返信の自動取得成功件数
+    lastClipboard:      null,
+    lastAutoSend:       null,
+    lastReplyCapture:   null,
+  };
+}
+
+// ─────────────────────────────────────────────────────
 // getWorkerReliability(opState, worker) — worker の信頼度取得
 // ─────────────────────────────────────────────────────
 function getWorkerReliability(opState, worker) {
   const state = opState.loadState();
-  const rel   = state.reliability?.[worker] || {
-    successCount:       0,
-    failureCount:       0,
-    consecutiveSuccess: 0,
-    autoSendEnabled:    false,
-    lastSuccess:        null,
-    lastFailure:        null,
-    lastAutoSendResult: null,
-  };
-  return rel;
+  return Object.assign(_defaultRel(), state.reliability?.[worker] || {});
 }
 
 // ─────────────────────────────────────────────────────
-// recordSuccess(opState, worker) — 成功を記録
+// recordClipboardDelivery(opState, worker) — clipboard コピー成功を記録
+//
+// clipboard モードでの配送完了。consecutiveSuccess には影響しない。
+// （auto-send 解禁には auto-send 成功が必要）
+// ─────────────────────────────────────────────────────
+function recordClipboardDelivery(opState, worker) {
+  const state = opState.loadState();
+  if (!state.reliability) state.reliability = {};
+  const rel = Object.assign(_defaultRel(), state.reliability[worker] || {});
+
+  rel.clipboardCount++;
+  rel.lastClipboard = new Date().toISOString();
+
+  state.reliability[worker] = rel;
+  opState.saveState(state);
+  return { rel };
+}
+
+// ─────────────────────────────────────────────────────
+// recordSuccess(opState, worker) — auto-send 成功を記録
 // 3回連続で allowlist worker なら auto-send 解禁
 // ─────────────────────────────────────────────────────
 function recordSuccess(opState, worker) {
   const state = opState.loadState();
   if (!state.reliability) state.reliability = {};
-  const rel = state.reliability[worker] || {
-    successCount: 0, failureCount: 0, consecutiveSuccess: 0,
-    autoSendEnabled: false, lastSuccess: null, lastFailure: null,
-  };
+  const rel = Object.assign(_defaultRel(), state.reliability[worker] || {});
 
   rel.successCount++;
+  rel.autoSendCount++;
   rel.consecutiveSuccess++;
-  rel.lastSuccess = new Date().toISOString();
+  rel.lastSuccess  = new Date().toISOString();
+  rel.lastAutoSend = rel.lastSuccess;
 
   // allowlist + 3回連続成功 → auto-send 解禁
   const wasEnabled = rel.autoSendEnabled;
@@ -105,16 +138,29 @@ function recordSuccess(opState, worker) {
 }
 
 // ─────────────────────────────────────────────────────
+// recordReplyCapture(opState, worker) — 返信自動取得成功を記録
+// ─────────────────────────────────────────────────────
+function recordReplyCapture(opState, worker) {
+  const state = opState.loadState();
+  if (!state.reliability) state.reliability = {};
+  const rel = Object.assign(_defaultRel(), state.reliability[worker] || {});
+
+  rel.replyCapturedCount++;
+  rel.lastReplyCapture = new Date().toISOString();
+
+  state.reliability[worker] = rel;
+  opState.saveState(state);
+  return { rel };
+}
+
+// ─────────────────────────────────────────────────────
 // recordFailure(opState, worker, reason) — 失敗を記録
 // clipboard モードへ自動降格（consecutiveSuccess リセット）
 // ─────────────────────────────────────────────────────
 function recordFailure(opState, worker, reason = '') {
   const state = opState.loadState();
   if (!state.reliability) state.reliability = {};
-  const rel = state.reliability[worker] || {
-    successCount: 0, failureCount: 0, consecutiveSuccess: 0,
-    autoSendEnabled: false, lastSuccess: null, lastFailure: null,
-  };
+  const rel = Object.assign(_defaultRel(), state.reliability[worker] || {});
 
   const wasAutoSendEnabled = rel.autoSendEnabled;
 
@@ -167,19 +213,38 @@ function formatReliabilityReport(opState) {
   const { WORKER_DISPLAY } = require('./inbox-bridge');
 
   for (const worker of [...AUTOSEND_ALLOWLIST]) {
-    const rel  = state.reliability?.[worker] || {};
+    const rel  = Object.assign(_defaultRel(), state.reliability?.[worker] || {});
     const disp = WORKER_DISPLAY?.[worker] || worker;
     const consecutive = rel.consecutiveSuccess || 0;
     const autoEnabled = !!rel.autoSendEnabled;
-    const progress    = `${consecutive}/${REQUIRED_CONSECUTIVE}`;
-    const statusEmoji = autoEnabled ? '✅ auto-send OK' : (consecutive > 0 ? `📈 ${progress}` : '📋 clipboard');
 
-    lines.push(`**${disp}**`);
-    lines.push(`  送信許可: ${statusEmoji}`);
-    lines.push(`  成功: ${rel.successCount || 0}件 / 失敗: ${rel.failureCount || 0}件 / 連続成功: ${consecutive}`);
-    if (rel.lastSuccess)  lines.push(`  最終成功: ${new Date(rel.lastSuccess).toLocaleString('ja-JP')}`);
-    if (rel.lastFailure)  lines.push(`  最終失敗: ${new Date(rel.lastFailure).toLocaleString('ja-JP')}`);
-    if (rel.lastFailureReason) lines.push(`  失敗理由: ${rel.lastFailureReason.slice(0, 60)}`);
+    // auto-send 解禁状態バッジ
+    let statusBadge;
+    if (autoEnabled) {
+      statusBadge = '✅ auto-send 解禁済';
+    } else if (consecutive > 0) {
+      statusBadge = `📈 auto-send まで残り ${REQUIRED_CONSECUTIVE - consecutive} 回`;
+    } else {
+      statusBadge = '📋 clipboard 待機中';
+    }
+
+    lines.push(`**${disp}**  ${statusBadge}`);
+
+    // 3段階配送ステータス
+    lines.push(`  📋 clipboard配送: ${rel.clipboardCount}件` +
+      (rel.lastClipboard ? `  (最終: ${new Date(rel.lastClipboard).toLocaleTimeString('ja-JP')})` : ''));
+    lines.push(`  🤖 auto-send送信:  ${rel.autoSendCount}件` +
+      (rel.lastAutoSend  ? `  (最終: ${new Date(rel.lastAutoSend).toLocaleTimeString('ja-JP')})` : ''));
+    lines.push(`  📥 返信自動取得:  ${rel.replyCapturedCount}件` +
+      (rel.lastReplyCapture ? `  (最終: ${new Date(rel.lastReplyCapture).toLocaleTimeString('ja-JP')})` : ''));
+    lines.push(`  ❌ 失敗:          ${rel.failureCount}件` +
+      (rel.lastFailureReason ? `  (${rel.lastFailureReason.slice(0, 50)})` : ''));
+
+    // clipboard モード時の次アクション案内
+    if (mode === MODES.CLIPBOARD && rel.clipboardCount > 0 && rel.autoSendCount === 0) {
+      lines.push(`  ▶ 次の手順: Claude Desktop で **Ctrl+V → Enter** → 返信後 Ctrl+C`);
+    }
+
     lines.push('');
   }
 
@@ -229,7 +294,9 @@ module.exports = {
   getMode,
   setMode,
   getWorkerReliability,
+  recordClipboardDelivery,
   recordSuccess,
+  recordReplyCapture,
   recordFailure,
   shouldAutoSend,
   formatReliabilityReport,

@@ -512,3 +512,78 @@ test('11d. docs に E2E テスト手順が記載されている', () => {
   assert.ok(doc.includes('handoff_record_not_found'), 'ブロック理由の説明がない');
 });
 
+
+// ─────────────────────────────────────────────────────
+// 12. 3段階メトリクス分離
+// ─────────────────────────────────────────────────────
+console.log('\n[12. 3段階メトリクス分離]');
+
+const reliability = require('../bot/utils/operator-reliability');
+const tmpOpState  = {
+  _data: null,
+  loadState()  { return this._data || (this._data = {}); },
+  saveState(s) { this._data = JSON.parse(JSON.stringify(s)); },
+};
+
+test('12a. recordClipboardDelivery が clipboardCount を増やす', () => {
+  tmpOpState._data = {};
+  reliability.recordClipboardDelivery(tmpOpState, 'miyagi');
+  reliability.recordClipboardDelivery(tmpOpState, 'miyagi');
+  const rel = reliability.getWorkerReliability(tmpOpState, 'miyagi');
+  assert.strictEqual(rel.clipboardCount, 2);
+  assert.strictEqual(rel.autoSendCount,  0);
+  assert.strictEqual(rel.consecutiveSuccess, 0, 'clipboard は consecutiveSuccess を増やさない');
+});
+
+test('12b. recordSuccess が autoSendCount と consecutiveSuccess を増やす', () => {
+  tmpOpState._data = {};
+  reliability.recordSuccess(tmpOpState, 'miyagi');
+  const rel = reliability.getWorkerReliability(tmpOpState, 'miyagi');
+  assert.strictEqual(rel.autoSendCount,       1);
+  assert.strictEqual(rel.successCount,        1);
+  assert.strictEqual(rel.consecutiveSuccess,  1);
+  assert.strictEqual(rel.clipboardCount,      0, 'auto-send は clipboardCount を増やさない');
+});
+
+test('12c. recordReplyCapture が replyCapturedCount を増やす', () => {
+  tmpOpState._data = {};
+  reliability.recordReplyCapture(tmpOpState, 'kanzaki');
+  reliability.recordReplyCapture(tmpOpState, 'kanzaki');
+  const rel = reliability.getWorkerReliability(tmpOpState, 'kanzaki');
+  assert.strictEqual(rel.replyCapturedCount, 2);
+});
+
+test('12d. formatReliabilityReport に3段階メトリクスが含まれる', () => {
+  tmpOpState._data = {};
+  reliability.recordClipboardDelivery(tmpOpState, 'kanzaki');
+  reliability.recordReplyCapture(tmpOpState, 'kanzaki');
+  const { text } = reliability.formatReliabilityReport(tmpOpState);
+  assert.ok(text.includes('clipboard配送'), 'clipboard配送 が表示されない');
+  assert.ok(text.includes('auto-send送信'),  'auto-send送信 が表示されない');
+  assert.ok(text.includes('返信自動取得'),   '返信自動取得 が表示されない');
+});
+
+test('12e. clipboard mode 時は次アクション案内が表示される', () => {
+  tmpOpState._data = { operatorMode: 'clipboard' };
+  reliability.recordClipboardDelivery(tmpOpState, 'kanzaki');
+  const { text } = reliability.formatReliabilityReport(tmpOpState);
+  assert.ok(text.includes('Ctrl+V'), 'clipboard mode の次アクション案内がない');
+});
+
+test('12f. auto-send mode で3回成功 → 解禁バッジが変わる', () => {
+  tmpOpState._data = { operatorMode: 'autosend-limited' };
+  reliability.recordSuccess(tmpOpState, 'kanzaki');
+  reliability.recordSuccess(tmpOpState, 'kanzaki');
+  reliability.recordSuccess(tmpOpState, 'kanzaki');
+  const { text } = reliability.formatReliabilityReport(tmpOpState);
+  assert.ok(text.includes('auto-send 解禁済'), '解禁済バッジがない');
+});
+
+test('12g. histEntry mode がハードコードされていない', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'desktop-operator.js'), 'utf8'
+  );
+  assert.ok(!src.includes("mode:          'clipboard',"), "mode が 'clipboard' にハードコードされている");
+  assert.ok(src.includes('clipResult?.mode'), 'sendResult.mode を参照していない');
+});
+
