@@ -3,9 +3,9 @@
 // operator-reliability.js — Desktop Operator 信頼度管理
 //
 // 目的:
-//   worker 別の送信成功/失敗を追跡し、
+//   worker 別の配送成功/失敗を追跡し、
 //   3回連続成功した worker だけ auto-send を許可する。
-//   失敗時は clipboard モードへ自動降格。
+//   失敗時は consecutiveSuccess をリセット。
 //
 // Auto-send Allowlist:
 //   ['moriya', 'miyagi', 'kanzaki'] のみが auto-send 候補。
@@ -15,6 +15,11 @@
 //   clipboard         — クリップボードのみ（デフォルト）
 //   autosend-limited  — allowlist かつ 3回連続成功した worker のみ auto-send
 //   paused            — 全停止（緊急停止と同義）
+//
+// 解禁条件 (autosend-limited):
+//   clipboard配送 OR auto-send送信 を 3回連続成功 かつ 失敗0
+//   → autoSendEnabled = true
+//   → !operator mode autosend-limited 設定後に有効
 // =====================================================
 
 // Auto-send を許可する worker のホワイトリスト
@@ -65,21 +70,21 @@ function setMode(opState, mode) {
 // ─────────────────────────────────────────────────────
 function _defaultRel() {
   return {
-    // ── auto-send 解禁カウンタ（変更なし）─────────
-    successCount:       0,   // auto-send 成功件数
-    failureCount:       0,   // 送信失敗件数
-    consecutiveSuccess: 0,   // 連続 auto-send 成功数
-    autoSendEnabled:    false,
-    lastSuccess:        null,
-    lastFailure:        null,
-    lastFailureReason:  null,
-    // ── 配送段階別カウンタ（新規）─────────────────
-    clipboardCount:     0,   // clipboard へのコピー成功件数
-    autoSendCount:      0,   // Claude Desktop への自動送信成功件数
-    replyCapturedCount: 0,   // 返信の自動取得成功件数
+    // ── 解禁カウンタ ────────────────────────────────
+    consecutiveSuccess: 0,       // 連続成功数 (clipboard + auto-send 両方でカウント)
+    autoSendEnabled:    false,   // true = auto-send 解禁済み
+    unlockReason:       null,    // 'clipboard_delivery' | 'auto_send'
+    // ── 配送段階別カウンタ ─────────────────────────
+    clipboardCount:     0,       // clipboard コピー成功件数
+    autoSendCount:      0,       // Claude Desktop 自動送信成功件数
+    replyCapturedCount: 0,       // 返信自動取得成功件数
+    failureCount:       0,       // 全失敗件数
+    // ── タイムスタンプ ──────────────────────────────
     lastClipboard:      null,
     lastAutoSend:       null,
     lastReplyCapture:   null,
+    lastFailure:        null,
+    lastFailureReason:  null,
   };
 }
 
@@ -88,14 +93,20 @@ function _defaultRel() {
 // ─────────────────────────────────────────────────────
 function getWorkerReliability(opState, worker) {
   const state = opState.loadState();
-  return Object.assign(_defaultRel(), state.reliability?.[worker] || {});
+  const raw   = state.reliability?.[worker] || {};
+  const rel   = Object.assign(_defaultRel(), raw);
+  // migration: 旧 successCount → autoSendCount
+  if (raw.successCount !== undefined && rel.autoSendCount === 0) {
+    rel.autoSendCount = raw.successCount;
+  }
+  return rel;
 }
 
 // ─────────────────────────────────────────────────────
 // recordClipboardDelivery(opState, worker) — clipboard コピー成功を記録
 //
-// clipboard モードでの配送完了。consecutiveSuccess には影響しない。
-// （auto-send 解禁には auto-send 成功が必要）
+// clipboard モードでの配送完了。
+// consecutiveSuccess を増やし、3回で auto-send 解禁条件を満たす。
 // ─────────────────────────────────────────────────────
 function recordClipboardDelivery(opState, worker) {
   const state = opState.loadState();
@@ -103,32 +114,40 @@ function recordClipboardDelivery(opState, worker) {
   const rel = Object.assign(_defaultRel(), state.reliability[worker] || {});
 
   rel.clipboardCount++;
+  rel.consecutiveSuccess++;
   rel.lastClipboard = new Date().toISOString();
+
+  // clipboard 3回連続成功 → auto-send 解禁
+  const wasEnabled = rel.autoSendEnabled;
+  if (AUTOSEND_ALLOWLIST.has(worker) && rel.consecutiveSuccess >= REQUIRED_CONSECUTIVE) {
+    rel.autoSendEnabled = true;
+    rel.unlockReason    = 'clipboard_delivery';
+  }
+  const justUnlocked = !wasEnabled && rel.autoSendEnabled;
 
   state.reliability[worker] = rel;
   opState.saveState(state);
-  return { rel };
+  return { rel, justUnlocked };
 }
 
 // ─────────────────────────────────────────────────────
 // recordSuccess(opState, worker) — auto-send 成功を記録
-// 3回連続で allowlist worker なら auto-send 解禁
+// consecutiveSuccess を増やし、3回で auto-send 解禁
 // ─────────────────────────────────────────────────────
 function recordSuccess(opState, worker) {
   const state = opState.loadState();
   if (!state.reliability) state.reliability = {};
   const rel = Object.assign(_defaultRel(), state.reliability[worker] || {});
 
-  rel.successCount++;
   rel.autoSendCount++;
   rel.consecutiveSuccess++;
-  rel.lastSuccess  = new Date().toISOString();
-  rel.lastAutoSend = rel.lastSuccess;
+  rel.lastAutoSend = new Date().toISOString();
 
-  // allowlist + 3回連続成功 → auto-send 解禁
+  // 3回連続成功 → auto-send 解禁
   const wasEnabled = rel.autoSendEnabled;
   if (AUTOSEND_ALLOWLIST.has(worker) && rel.consecutiveSuccess >= REQUIRED_CONSECUTIVE) {
     rel.autoSendEnabled = true;
+    rel.unlockReason    = 'auto_send';
   }
   const justUnlocked = !wasEnabled && rel.autoSendEnabled;
 
@@ -206,7 +225,8 @@ function formatReliabilityReport(opState) {
     `確認時刻: ${now}`,
     ``,
     `**auto-send allowlist: ${[...AUTOSEND_ALLOWLIST].join(' / ')}**`,
-    `(${REQUIRED_CONSECUTIVE}回連続成功で auto-send 解禁)`,
+    `解禁条件: clipboard配送 OR auto-send 送信 を **${REQUIRED_CONSECUTIVE}回連続成功** (失敗で連続リセット)`,
+    `有効化: 解禁後に \`!operator mode autosend-limited\` を実行`,
     ``,
   ];
 
@@ -219,13 +239,17 @@ function formatReliabilityReport(opState) {
     const autoEnabled = !!rel.autoSendEnabled;
 
     // auto-send 解禁状態バッジ
+    const totalDelivery = rel.clipboardCount + rel.autoSendCount;
     let statusBadge;
     if (autoEnabled) {
-      statusBadge = '✅ auto-send 解禁済';
+      const by = rel.unlockReason === 'clipboard_delivery' ? 'clipboard配送で' : 'auto-sendで';
+      statusBadge = `✅ auto-send 解禁済 (${by}解禁)`;
     } else if (consecutive > 0) {
-      statusBadge = `📈 auto-send まで残り ${REQUIRED_CONSECUTIVE - consecutive} 回`;
+      statusBadge = `📈 解禁まで残り ${REQUIRED_CONSECUTIVE - consecutive} 回 (連続${consecutive}/${REQUIRED_CONSECUTIVE})`;
+    } else if (totalDelivery > 0) {
+      statusBadge = `📋 配送実績あり (失敗でリセット済)`;
     } else {
-      statusBadge = '📋 clipboard 待機中';
+      statusBadge = `📋 clipboard 待機中 (配送実績なし)`;
     }
 
     lines.push(`**${disp}**  ${statusBadge}`);
@@ -254,7 +278,8 @@ function formatReliabilityReport(opState) {
   if (others.length > 0) {
     lines.push(`**その他 (clipboard のみ):**`);
     others.forEach(([w, r]) => {
-      lines.push(`  ${WORKER_DISPLAY?.[w] || w}: 成功${r.successCount||0} / 失敗${r.failureCount||0}`);
+      const cb = r.clipboardCount || r.successCount || 0; // migration対応
+      lines.push(`  ${WORKER_DISPLAY?.[w] || w}: clipboard${cb} / 失敗${r.failureCount||0}`);
     });
     lines.push('');
   }

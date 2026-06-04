@@ -318,8 +318,9 @@ function processWorker(worker) {
         const relResult = reliability.recordSuccess(opState, worker);
         justUnlocked = relResult.justUnlocked;
       } else {
-        // clipboard コピー成功 → clipboard 配送カウンタのみ
-        reliability.recordClipboardDelivery(opState, worker);
+        // clipboard コピー成功 → clipboardCount++ AND consecutiveSuccess++
+        const relResult = reliability.recordClipboardDelivery(opState, worker);
+        justUnlocked = relResult.justUnlocked;
       }
 
       const modeLabel = actualMode === 'auto' ? '🤖 auto-send' : '📋 clipboard';
@@ -329,7 +330,9 @@ function processWorker(worker) {
         console.log(`   ▶ Claude Desktop で Ctrl+V → Enter で送信してください`);
       }
       if (justUnlocked) {
-        console.log(`   🎉 ${worker} が auto-send 解禁されました！`);
+        const byWhat = actualMode === 'auto' ? 'auto-send 3回成功' : 'clipboard配送 3回成功';
+        console.log(`   🎉 ${worker} が auto-send 解禁されました！ (${byWhat})`);
+        console.log(`   → !operator mode autosend-limited で有効化してください`);
       }
 
       // Phase13: Reply Auto Capture — 送信後に自動取得ポーリング開始
@@ -416,13 +419,18 @@ function processWorker(worker) {
   opState.markProcessed(histId);
 
   // State 更新
-  state.workers[worker] = {
+  // ※ markProcessed や recordClipboardDelivery が途中で saveState しているため、
+  //    関数先頭でロードした state を使うと reliability 等が消える。
+  //    最新状態を再ロードして workers のみ更新する。
+  const latestState = opState.loadState();
+  latestState.workers        = latestState.workers || {};
+  latestState.workers[worker] = {
     ...workerState,
     lastHash:     currentHash,
     lastSeenAt:   now,
     lastHistId:   histId,
   };
-  opState.saveState(state);
+  opState.saveState(latestState);
 
   return histEntry;
 }

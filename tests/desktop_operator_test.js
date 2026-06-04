@@ -525,24 +525,25 @@ const tmpOpState  = {
   saveState(s) { this._data = JSON.parse(JSON.stringify(s)); },
 };
 
-test('12a. recordClipboardDelivery が clipboardCount を増やす', () => {
+test('12a. recordClipboardDelivery が clipboardCount と consecutiveSuccess を増やす', () => {
   tmpOpState._data = {};
   reliability.recordClipboardDelivery(tmpOpState, 'miyagi');
   reliability.recordClipboardDelivery(tmpOpState, 'miyagi');
   const rel = reliability.getWorkerReliability(tmpOpState, 'miyagi');
-  assert.strictEqual(rel.clipboardCount, 2);
-  assert.strictEqual(rel.autoSendCount,  0);
-  assert.strictEqual(rel.consecutiveSuccess, 0, 'clipboard は consecutiveSuccess を増やさない');
+  assert.strictEqual(rel.clipboardCount,     2, 'clipboardCount が 2 でない');
+  assert.strictEqual(rel.autoSendCount,      0, 'auto-send は clipboardCount を増やさない');
+  assert.strictEqual(rel.consecutiveSuccess, 2, 'clipboard は consecutiveSuccess を増やす');
 });
 
 test('12b. recordSuccess が autoSendCount と consecutiveSuccess を増やす', () => {
   tmpOpState._data = {};
   reliability.recordSuccess(tmpOpState, 'miyagi');
   const rel = reliability.getWorkerReliability(tmpOpState, 'miyagi');
-  assert.strictEqual(rel.autoSendCount,       1);
-  assert.strictEqual(rel.successCount,        1);
-  assert.strictEqual(rel.consecutiveSuccess,  1);
+  assert.strictEqual(rel.autoSendCount,       1, 'autoSendCount が 1 でない');
+  assert.strictEqual(rel.consecutiveSuccess,  1, 'consecutiveSuccess が 1 でない');
   assert.strictEqual(rel.clipboardCount,      0, 'auto-send は clipboardCount を増やさない');
+  // successCount は _defaultRel() から削除済み — autoSendCount を使う
+  assert.strictEqual(rel.successCount, undefined, 'successCount が残っている（削除済みのはず）');
 });
 
 test('12c. recordReplyCapture が replyCapturedCount を増やす', () => {
@@ -585,5 +586,125 @@ test('12g. histEntry mode がハードコードされていない', () => {
   );
   assert.ok(!src.includes("mode:          'clipboard',"), "mode が 'clipboard' にハードコードされている");
   assert.ok(src.includes('clipResult?.mode'), 'sendResult.mode を参照していない');
+});
+
+
+// ─────────────────────────────────────────────────────
+// 13. autosend-limited 解禁条件 / L-20 Runtime Reachability
+// ─────────────────────────────────────────────────────
+console.log('\n[13. autosend-limited 解禁条件 / L-20 Runtime Reachability]');
+
+const WORKFLOW_STATE_FILE = path.join(__dirname, '..', 'data', 'workflow-state.json');
+
+// テスト用 handoff record を workflow-state.json に書き込む
+function writeHandoffRecord(worker, event, taskId) {
+  const existing = (() => {
+    try { return JSON.parse(fs.readFileSync(WORKFLOW_STATE_FILE, 'utf8')); }
+    catch { return { handoffs: [], dailyLog: [], updatedAt: null }; }
+  })();
+  const hoff = {
+    id: `test_hoff_${Date.now()}`,
+    event,
+    from:             'ceo',
+    to:               worker,
+    taskId:           taskId || `test_task_${Date.now()}`,
+    createdAt:        new Date().toISOString(),
+    resolvedAt:       null,
+    autoExecuted:     true,
+    reason:           'fixed_route',
+    fixedRouteReason: 'test_e2e',
+  };
+  existing.handoffs.push(hoff);
+  const tmp = WORKFLOW_STATE_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(existing, null, 2), 'utf8');
+  fs.renameSync(tmp, WORKFLOW_STATE_FILE);
+  return hoff;
+}
+
+// 後片付け: テスト用 handoff を削除
+function removeTestHandoffs() {
+  try {
+    const data = JSON.parse(fs.readFileSync(WORKFLOW_STATE_FILE, 'utf8'));
+    data.handoffs = data.handoffs.filter(h => !h.id.startsWith('test_hoff_'));
+    fs.writeFileSync(WORKFLOW_STATE_FILE, JSON.stringify(data, null, 2), 'utf8');
+  } catch { /* ignore */ }
+}
+
+test('13a. processWorker → clipboardCount OR failureCount が更新される (L-20 Runtime Reachability)', () => {
+  resetState(); cleanOutbox();
+  writeHandoffRecord('kanzaki', 'VP_BRIEF_REQUEST', 'rel_e2e_001');
+  writeOutbox('kanzaki', '神崎 VP へ: E2E テスト配送です。\n## 結論\nE2Eテスト実行中。');
+
+  const before = opState.loadState().reliability?.kanzaki || {};
+  operator.processWorker('kanzaki');
+  const after = opState.loadState().reliability?.kanzaki || {};
+
+  // clipboard成功 or 送信失敗のどちらかで reliability が更新されている
+  const cbDiff   = (after.clipboardCount || 0) - (before.clipboardCount || 0);
+  const failDiff = (after.failureCount   || 0) - (before.failureCount   || 0);
+  assert.ok(cbDiff > 0 || failDiff > 0,
+    `processWorker後にreliabilityが更新されていない (cb:${cbDiff} fail:${failDiff})`);
+  removeTestHandoffs();
+});
+
+test('13b. clipboard 3回連続成功 → autoSendEnabled=true (tmpOpState)', () => {
+  const tmp = { _d: {}, loadState() { return this._d; }, saveState(s) { this._d = JSON.parse(JSON.stringify(s)); } };
+  reliability.recordClipboardDelivery(tmp, 'kanzaki'); // 1
+  reliability.recordClipboardDelivery(tmp, 'kanzaki'); // 2
+  const r = reliability.recordClipboardDelivery(tmp, 'kanzaki'); // 3
+  assert.ok(r.justUnlocked, '3回目で justUnlocked が true でない');
+  assert.strictEqual(r.rel.autoSendEnabled, true, 'autoSendEnabled が true でない');
+  assert.strictEqual(r.rel.unlockReason, 'clipboard_delivery', 'unlockReason が clipboard_delivery でない');
+});
+
+test('13c. 失敗 → consecutiveSuccess がリセットされる', () => {
+  const tmp = { _d: {}, loadState() { return this._d; }, saveState(s) { this._d = JSON.parse(JSON.stringify(s)); } };
+  reliability.recordClipboardDelivery(tmp, 'kanzaki'); // 1
+  reliability.recordClipboardDelivery(tmp, 'kanzaki'); // 2
+  reliability.recordFailure(tmp, 'kanzaki', 'send_failed: test');
+  const rel = reliability.getWorkerReliability(tmp, 'kanzaki');
+  assert.strictEqual(rel.consecutiveSuccess, 0, '失敗後も consecutiveSuccess が残っている');
+  assert.strictEqual(rel.autoSendEnabled, false, '失敗後も autoSendEnabled が true のまま');
+});
+
+test('13d. clipboard 2回→失敗→1回 → 解禁されない (連続3回が必要)', () => {
+  const tmp = { _d: {}, loadState() { return this._d; }, saveState(s) { this._d = JSON.parse(JSON.stringify(s)); } };
+  reliability.recordClipboardDelivery(tmp, 'kanzaki'); // 1
+  reliability.recordClipboardDelivery(tmp, 'kanzaki'); // 2
+  reliability.recordFailure(tmp, 'kanzaki', 'send_failed: test');
+  const r = reliability.recordClipboardDelivery(tmp, 'kanzaki'); // 1 (リセット後)
+  assert.strictEqual(r.rel.autoSendEnabled, false, '連続が途切れたのに解禁されている');
+  assert.strictEqual(r.rel.consecutiveSuccess, 1, 'リセット後の consecutiveSuccess が1でない');
+});
+
+test('13e. shouldAutoSend は autosend-limited + autoSendEnabled が条件', () => {
+  const tmp = { _d: {}, loadState() { return this._d; }, saveState(s) { this._d = JSON.parse(JSON.stringify(s)); } };
+  // 3回成功で解禁
+  reliability.recordClipboardDelivery(tmp, 'kanzaki');
+  reliability.recordClipboardDelivery(tmp, 'kanzaki');
+  reliability.recordClipboardDelivery(tmp, 'kanzaki');
+  // mode が clipboard のままでは shouldAutoSend = false
+  tmp._d.operatorMode = 'clipboard';
+  assert.strictEqual(reliability.shouldAutoSend(tmp, 'kanzaki'), false, 'clipboard mode で shouldAutoSend が true');
+  // mode を autosend-limited にすると true
+  tmp._d.operatorMode = 'autosend-limited';
+  assert.strictEqual(reliability.shouldAutoSend(tmp, 'kanzaki'), true, 'autosend-limited + 解禁済みで shouldAutoSend が false');
+});
+
+test('13f. formatReliabilityReport に解禁条件の説明がある', () => {
+  const tmp = { _d: {}, loadState() { return this._d; }, saveState(s) { this._d = JSON.parse(JSON.stringify(s)); } };
+  const { text } = reliability.formatReliabilityReport(tmp);
+  assert.ok(text.includes('連続'), '連続成功の説明がない');
+  assert.ok(text.includes('autosend-limited'), 'autosend-limited 有効化の案内がない');
+});
+
+test('13g. 旧 successCount → autoSendCount マイグレーション動作', () => {
+  const tmp = {
+    _d: { reliability: { miyagi: { successCount: 5, clipboardCount: 0, autoSendCount: 0 } } },
+    loadState() { return this._d; },
+    saveState(s) { this._d = JSON.parse(JSON.stringify(s)); },
+  };
+  const rel = reliability.getWorkerReliability(tmp, 'miyagi');
+  assert.strictEqual(rel.autoSendCount, 5, '旧 successCount が autoSendCount にマイグレーションされていない');
 });
 
