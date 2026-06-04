@@ -42,6 +42,15 @@ const DRY_RUN = process.argv.includes('--dry-run') || process.argv[2] === 'dry-r
 const OPERATOR_LOCK = path.join(opState.OP_DIR, 'operator.lock');
 const STARTED_AT    = new Date().toISOString();
 
+function _isPidAlive(pid) {
+  if (!pid) return false;
+  try {
+    // process.kill(pid, 0) はプロセス存在確認（シグナル送信なし）
+    process.kill(Number(pid), 0);
+    return true;
+  } catch { return false; }
+}
+
 function acquireOperatorLock() {
   // data/desktop-operator/ ディレクトリ確保
   if (!fs.existsSync(opState.OP_DIR)) fs.mkdirSync(opState.OP_DIR, { recursive: true });
@@ -49,10 +58,13 @@ function acquireOperatorLock() {
     try {
       const lock = JSON.parse(fs.readFileSync(OPERATOR_LOCK, 'utf8'));
       const age  = Date.now() - new Date(lock.startedAt).getTime();
-      if (age < 90_000) return false; // 90秒以内は有効
-      // 古いロックは解除
+      // PID が生きているか確認（stale lock 検出）
+      const alive = _isPidAlive(lock.pid);
+      if (alive && age < 300_000) return false; // 5分以内かつ PID 生存 → 有効
+      // stale: ロック解除して続行
+      console.log(`[LOCK] stale lock 検出 (pid=${lock.pid}, age=${Math.floor(age/1000)}s, alive=${alive}) — 解除します`);
       fs.unlinkSync(OPERATOR_LOCK);
-    } catch { fs.unlinkSync(OPERATOR_LOCK); }
+    } catch { try { fs.unlinkSync(OPERATOR_LOCK); } catch { /* ignore */ } }
   }
   fs.writeFileSync(OPERATOR_LOCK, JSON.stringify({
     pid:       process.pid,

@@ -324,6 +324,34 @@ test('9c. readOperatorLock がロック情報を返す', () => {
   operator.releaseOperatorLock();
 });
 
+test('9d. stale lock を検出して自動解除する', () => {
+  operator.releaseOperatorLock();
+  // 存在しない PID + 古いタイムスタンプで stale lock を作成
+  const fakeLock = {
+    pid:       99999999,
+    startedAt: new Date(Date.now() - 400_000).toISOString(),
+    mode:      'live',
+  };
+  fs.writeFileSync(operator.OPERATOR_LOCK, JSON.stringify(fakeLock), 'utf8');
+
+  const result = operator.acquireOperatorLock();
+  assert.strictEqual(result, true, 'stale lock が解除されず取得できない');
+  operator.releaseOperatorLock();
+});
+
+test('9e. bat ファイルに stale lock 解除コードがある', () => {
+  const bat = fs.readFileSync(path.join(__dirname, '..', 'start-ai-worker.bat'), 'utf8');
+  assert.ok(bat.includes('stale') || bat.includes('process.kill'),
+    'stale lock 解除コードがない');
+  assert.ok(bat.includes('operator.lock'), 'operator.lock の参照がない');
+});
+
+test('9f. start-operator.bat にも stale lock 解除がある', () => {
+  const bat = fs.readFileSync(path.join(__dirname, '..', 'start-operator.bat'), 'utf8');
+  assert.ok(bat.includes('operator.lock'), 'operator.lock の参照がない');
+  assert.ok(bat.includes('process.kill') || bat.includes('stale'), 'stale lock 解除がない');
+});
+
 // ─────────────────────────────────────────────────────
 // 10. Phase1+3: npm scripts / bat / install-startup
 // ─────────────────────────────────────────────────────
@@ -338,9 +366,11 @@ test('10a. package.json に npm run operator が追加されている', () => {
   assert.ok(pkg.scripts['install-startup'],    'npm run install-startup がない');
 });
 
-test('10b. start-ai-worker.bat が存在する', () => {
+test('10b. start-ai-worker.bat と start-operator.bat が存在する', () => {
   assert.ok(fs.existsSync(path.join(__dirname, '..', 'start-ai-worker.bat')),
     'start-ai-worker.bat が存在しない');
+  assert.ok(fs.existsSync(path.join(__dirname, '..', 'start-operator.bat')),
+    'start-operator.bat が存在しない');
 });
 
 test('10c. scripts/install-startup.js が存在する', () => {
