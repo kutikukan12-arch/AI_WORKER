@@ -8,7 +8,12 @@
     "dev": "node --watch bot/index.js",
     "test": "node --test tests/*.test.js",
     "patrol": "node scripts/lessons-patrol.js",
-    "security-check": "node scripts/security-check.js"
+    "security-check": "node scripts/security-check.js",
+    "operator": "node scripts/desktop-operator.js watch",
+    "operator:status": "node scripts/desktop-operator.js status",
+    "operator:once": "node scripts/desktop-operator.js once",
+    "operator:dry-run": "node scripts/desktop-operator.js dry-run",
+    "install-startup": "node scripts/install-startup.js"
   },
   "keywords": ["discord", "claude-code", "ai", "automation"],
   "dependencies": {

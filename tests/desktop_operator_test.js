@@ -292,8 +292,80 @@ test('8c. docs/desktop-operator-guide.md が存在する', () => {
 });
 
 // ─────────────────────────────────────────────────────
+// 9. Phase4: Operator グローバルロック（二重起動防止）
+// ─────────────────────────────────────────────────────
+console.log('\n[9. Phase4 — Operator グローバルロック]');
+
+test('9a. acquireOperatorLock / releaseOperatorLock が動作する', () => {
+  // テスト前にロックを解放
+  operator.releaseOperatorLock();
+  const ok1 = operator.acquireOperatorLock();
+  assert.strictEqual(ok1, true, '初回ロック取得失敗');
+  const ok2 = operator.acquireOperatorLock();
+  assert.strictEqual(ok2, false, '二重ロックが通った');
+  operator.releaseOperatorLock();
+  const ok3 = operator.acquireOperatorLock();
+  assert.strictEqual(ok3, true, 'リリース後のロック取得失敗');
+  operator.releaseOperatorLock();
+});
+
+test('9b. OPERATOR_LOCK パスが data/desktop-operator/ 内', () => {
+  assert.ok(operator.OPERATOR_LOCK.includes('desktop-operator'), 'OPERATOR_LOCK のパスが違う');
+  assert.ok(operator.OPERATOR_LOCK.includes('operator.lock'),    'ファイル名が違う');
+});
+
+test('9c. readOperatorLock がロック情報を返す', () => {
+  operator.releaseOperatorLock();
+  operator.acquireOperatorLock();
+  const lock = operator.readOperatorLock();
+  assert.ok(lock,               'ロック情報が null');
+  assert.ok(lock.pid,           'pid がない');
+  assert.ok(lock.startedAt,     'startedAt がない');
+  operator.releaseOperatorLock();
+});
+
+// ─────────────────────────────────────────────────────
+// 10. Phase1+3: npm scripts / bat / install-startup
+// ─────────────────────────────────────────────────────
+console.log('\n[10. Phase1+3 — npm scripts / bat / install-startup]');
+
+test('10a. package.json に npm run operator が追加されている', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+  assert.ok(pkg.scripts.operator,              'npm run operator がない');
+  assert.ok(pkg.scripts['operator:status'],    'npm run operator:status がない');
+  assert.ok(pkg.scripts['operator:once'],      'npm run operator:once がない');
+  assert.ok(pkg.scripts['operator:dry-run'],   'npm run operator:dry-run がない');
+  assert.ok(pkg.scripts['install-startup'],    'npm run install-startup がない');
+});
+
+test('10b. start-ai-worker.bat が存在する', () => {
+  assert.ok(fs.existsSync(path.join(__dirname, '..', 'start-ai-worker.bat')),
+    'start-ai-worker.bat が存在しない');
+});
+
+test('10c. scripts/install-startup.js が存在する', () => {
+  assert.ok(fs.existsSync(path.join(__dirname, '..', 'scripts', 'install-startup.js')),
+    'install-startup.js が存在しない');
+});
+
+test('10d. install-startup.js に eval がない', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'install-startup.js'), 'utf8'
+  );
+  const code = src.split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n');
+  assert.ok(!code.includes('eval('), 'eval が含まれている');
+});
+
+test('10e. start-ai-worker.bat に二重起動チェックがある', () => {
+  const bat = fs.readFileSync(path.join(__dirname, '..', 'start-ai-worker.bat'), 'utf8');
+  assert.ok(bat.includes('operator.lock'), 'ロックチェックがない');
+  assert.ok(bat.includes('勤務中'), '「勤務中」の表示がない');
+});
+
+// ─────────────────────────────────────────────────────
 // 後処理
 // ─────────────────────────────────────────────────────
+operator.releaseOperatorLock();
 resetState();
 cleanOutbox();
 

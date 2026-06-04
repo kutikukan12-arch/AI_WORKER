@@ -38,6 +38,41 @@ const inboxBridge = require(path.join(ROOT, 'bot', 'utils', 'inbox-bridge'));
 const WATCH_INTERVAL_MS = 30_000;
 const DRY_RUN = process.argv.includes('--dry-run') || process.argv[2] === 'dry-run';
 
+// ─── Phase4: Operator 本体プロセス用グローバルロック ──
+const OPERATOR_LOCK = path.join(opState.OP_DIR, 'operator.lock');
+const STARTED_AT    = new Date().toISOString();
+
+function acquireOperatorLock() {
+  // data/desktop-operator/ ディレクトリ確保
+  if (!fs.existsSync(opState.OP_DIR)) fs.mkdirSync(opState.OP_DIR, { recursive: true });
+  if (fs.existsSync(OPERATOR_LOCK)) {
+    try {
+      const lock = JSON.parse(fs.readFileSync(OPERATOR_LOCK, 'utf8'));
+      const age  = Date.now() - new Date(lock.startedAt).getTime();
+      if (age < 90_000) return false; // 90秒以内は有効
+      // 古いロックは解除
+      fs.unlinkSync(OPERATOR_LOCK);
+    } catch { fs.unlinkSync(OPERATOR_LOCK); }
+  }
+  fs.writeFileSync(OPERATOR_LOCK, JSON.stringify({
+    pid:       process.pid,
+    startedAt: STARTED_AT,
+    mode:      DRY_RUN ? 'dry-run' : 'live',
+  }), 'utf8');
+  return true;
+}
+
+function releaseOperatorLock() {
+  try { if (fs.existsSync(OPERATOR_LOCK)) fs.unlinkSync(OPERATOR_LOCK); } catch { /* ignore */ }
+}
+
+function readOperatorLock() {
+  try {
+    if (!fs.existsSync(OPERATOR_LOCK)) return null;
+    return JSON.parse(fs.readFileSync(OPERATOR_LOCK, 'utf8'));
+  } catch { return null; }
+}
+
 // ─── Auto Send Allowlist (Phase3) ───────────────────
 // 固定ルート由来かつ autoExecuted:true のもののみ自動送信
 const ALLOWED_EVENTS = new Set([
@@ -274,11 +309,27 @@ function showStatus() {
   const state   = opState.loadState();
   const history = opState.loadHistory();
   const now     = new Date().toLocaleString('ja-JP');
+  const lock    = readOperatorLock();
 
-  console.log(`\n📊 Desktop Operator Status — ${now}`);
-  console.log(`State: ${opState.STATE_FILE}`);
-  console.log(`History: ${history.length}件`);
-  console.log(`Mode: ${DRY_RUN ? 'DRY-RUN' : 'LIVE (clipboard)'}`);
+  // Phase5: 状態判定
+  const isRunning  = !!lock && (Date.now() - new Date(lock.startedAt).getTime() < 90_000);
+  const statusLabel= isRunning ? '🟢 勤務中' : '🔴 停止中';
+  const startedStr = lock ? new Date(lock.startedAt).toLocaleString('ja-JP') : '—';
+  const sentCount  = history.filter(h => h.autoSent).length;
+  const blockedCnt = history.filter(h => h.blockedReason).length;
+
+  // 最終配送
+  const lastSent   = history.filter(h => h.autoSent).slice(-1)[0];
+  const lastLabel  = lastSent
+    ? `${inboxBridge.WORKER_DISPLAY[lastSent.worker] || lastSent.worker} (${lastSent.event || '?'})`
+    : '（なし）';
+
+  console.log(`\n🅶 **黒川 Desktop Operator**`);
+  console.log(`状態: ${statusLabel}`);
+  console.log(`起動: ${startedStr}`);
+  console.log(`処理数: ${history.length}件 (送信 ${sentCount} / ブロック ${blockedCnt})`);
+  console.log(`最終配送: ${lastLabel}`);
+  console.log(`モード: ${DRY_RUN ? 'DRY-RUN' : 'LIVE (clipboard)'}`);
   console.log('');
 
   const workers = inboxBridge.VALID_WORKERS;
@@ -288,9 +339,7 @@ function showStatus() {
     const disp = inboxBridge.WORKER_DISPLAY[worker] || worker;
     if (!ws?.lastHash) continue;
     any = true;
-    console.log(`  ${disp}`);
-    console.log(`    最終確認: ${ws.lastSeenAt ? new Date(ws.lastSeenAt).toLocaleString('ja-JP') : '—'}`);
-    console.log(`    最終処理: ${ws.lastHistId || '—'}`);
+    console.log(`  ${disp}: 最終確認 ${ws.lastSeenAt ? new Date(ws.lastSeenAt).toLocaleString('ja-JP') : '—'}`);
   }
   if (!any) console.log('  （処理履歴なし）');
 
@@ -306,16 +355,36 @@ function showStatus() {
 // watch() — 常駐監視
 // ─────────────────────────────────────────────────────
 function watch() {
-  console.log('🤖 Desktop Operator 起動 (watch モード)');
+  // Phase4: 二重起動防止
+  if (!acquireOperatorLock()) {
+    const lock = readOperatorLock();
+    console.log(`\n🅶 黒川は勤務中です。`);
+    if (lock) {
+      console.log(`   起動時刻: ${new Date(lock.startedAt).toLocaleString('ja-JP')}`);
+      console.log(`   PID: ${lock.pid}`);
+    }
+    console.log(`   既存プロセスを停止してから再起動してください。`);
+    process.exit(0);
+  }
+
+  console.log('🤖 黒川 Desktop Operator 出勤 (watch モード)');
+  console.log(`   起動時刻: ${new Date(STARTED_AT).toLocaleString('ja-JP')}`);
   console.log(`   モード: ${DRY_RUN ? 'DRY-RUN' : 'LIVE (clipboard)'}`);
   console.log(`   間隔: ${WATCH_INTERVAL_MS / 1000}秒`);
-  console.log('   Ctrl+C で停止\n');
+  console.log('   Ctrl+C で退勤\n');
 
   checkOnce();
   const timer = setInterval(checkOnce, WATCH_INTERVAL_MS);
 
-  process.on('SIGINT',  () => { clearInterval(timer); console.log('\n🛑 停止'); process.exit(0); });
-  process.on('SIGTERM', () => { clearInterval(timer); process.exit(0); });
+  const shutdown = () => {
+    clearInterval(timer);
+    releaseOperatorLock();
+    console.log('\n🅶 黒川 退勤');
+    process.exit(0);
+  };
+  process.on('SIGINT',  shutdown);
+  process.on('SIGTERM', shutdown);
+  process.on('exit',    releaseOperatorLock);
 }
 
 // ─────────────────────────────────────────────────────
@@ -348,4 +417,14 @@ if (require.main === module) {
   }
 }
 
-module.exports = { checkOnce, showStatus, processWorker, checkAllowedToSend, ALLOWED_EVENTS };
+module.exports = {
+  checkOnce,
+  showStatus,
+  processWorker,
+  checkAllowedToSend,
+  ALLOWED_EVENTS,
+  acquireOperatorLock,
+  releaseOperatorLock,
+  readOperatorLock,
+  OPERATOR_LOCK,
+};

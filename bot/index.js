@@ -7743,20 +7743,46 @@ client.on('messageCreate', async (message) => {
 
     if (opSub === 'status') {
       const opState = require('./utils/desktop-operator-state');
+      const fs      = require('fs');
+      const path    = require('path');
       const hist    = opState.loadHistory();
-      const state   = opState.loadState();
-      const recent  = hist.slice(-5).reverse();
-      const lines   = [
-        `📊 **Desktop Operator Status**`,
-        `History: ${hist.length}件`,
+      const LOCK    = path.join(opState.OP_DIR, 'operator.lock');
+
+      // ロックファイルで勤務状態を確認
+      let isRunning = false;
+      let startedAt = null;
+      try {
+        if (fs.existsSync(LOCK)) {
+          const lock = JSON.parse(fs.readFileSync(LOCK, 'utf8'));
+          const age  = Date.now() - new Date(lock.startedAt).getTime();
+          if (age < 90_000) { isRunning = true; startedAt = lock.startedAt; }
+        }
+      } catch { /* ignore */ }
+
+      const sentCount  = hist.filter(h => h.autoSent).length;
+      const blockedCnt = hist.filter(h => h.blockedReason).length;
+      const lastSent   = hist.filter(h => h.autoSent).slice(-1)[0];
+      const ib         = require('./utils/inbox-bridge');
+      const lastLabel  = lastSent
+        ? `${ib.WORKER_DISPLAY[lastSent.worker] || lastSent.worker} → ${lastSent.event || '?'}`
+        : '（なし）';
+
+      const lines = [
+        `🅶 **黒川 Desktop Operator**`,
         ``,
-        recent.length ? '**直近の処理:**' : '（処理履歴なし）',
-        ...recent.map(h =>
-          `${h.autoSent ? '📋' : (h.blockedReason ? '🚫' : '⏩')} [${h.worker}] ${h.event || '?'} | ${h.blockedReason || '送信済み'}`
-        ),
+        `状態: ${isRunning ? '🟢 勤務中' : '🔴 停止中'}`,
+        startedAt ? `起動: ${new Date(startedAt).toLocaleString('ja-JP')}` : '',
+        `処理数: ${hist.length}件 (送信 ${sentCount} / ブロック ${blockedCnt})`,
+        `最終配送: ${lastLabel}`,
         ``,
-        `> 本番 auto-send は \`node scripts/desktop-operator.js watch\` で起動`,
-      ];
+        hist.filter(h => h.blockedReason).slice(-2).map(h =>
+          `🚫 [${h.worker}] ${h.blockedReason}`
+        ).join('\n'),
+        ``,
+        isRunning
+          ? '> 稼働中: `npm run operator:once` で即時チェック可'
+          : '> 起動: `npm run operator` または `start-ai-worker.bat`',
+      ].filter(l => l !== '');
       await message.reply(lines.join('\n').slice(0, 1900)).catch(() => {});
       return;
     }
