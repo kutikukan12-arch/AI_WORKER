@@ -83,6 +83,8 @@ data/worker-status.json
 data/workflow-state.json
 data/vp-reviews.json
 data/workflow-learning.json
+data/version-state.json
+data/recovery-log.json
 data/daily-brief.json
 data/sync-history.json
 data/desktop-operator/

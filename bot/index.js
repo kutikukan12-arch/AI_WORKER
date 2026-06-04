@@ -7907,6 +7907,87 @@ client.on('messageCreate', async (message) => {
   }
 
   // ─────────────────────────────────────────────────────
+  // !system — Self Update / Restart Manager (Phase12)
+  //
+  // !system status              — Bot/Operator のバージョン差異確認
+  // !system restart bot         — Bot を安全に再起動（宮城担当）
+  // !system restart operator    — Operator を安全に再起動
+  // !system restart all         — 両方再起動
+  // !system health              — システムヘルスチェック（既存 system-health.js）
+  // ─────────────────────────────────────────────────────
+  if (content.startsWith('!system')) {
+    const sysArgs = content.split(/\s+/).slice(1);
+    const sysSub  = sysArgs[0] || 'help';
+
+    if (sysSub === 'status') {
+      const vt = require('./utils/version-tracker');
+      const r  = vt.formatSystemStatus();
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    if (sysSub === 'restart') {
+      // Owner のみ実行可能
+      if (DISCORD_OWNER_ID && message.author.id !== DISCORD_OWNER_ID) {
+        await message.reply('🚫 `!system restart` は Owner のみ実行できます。').catch(() => {});
+        return;
+      }
+      const target    = sysArgs[1] || '';
+      const safeR     = require('./utils/safe-restart');
+      const vt        = require('./utils/version-tracker');
+      const safeCheck = safeR.checkSafeToRestart(target);
+      const results   = {};
+
+      if (safeCheck.safe) {
+        if (target === 'bot' || target === 'all') {
+          results.bot = safeR.requestBotRestart('!system restart');
+          vt.recordBotStartup(); // commit バージョン更新
+        }
+        if (target === 'operator' || target === 'all') {
+          results.operator = safeR.requestOperatorRestart('!system restart');
+          const opState = require('./utils/desktop-operator-state');
+          vt.recordOperatorStartup(null);
+        }
+        if (!results.bot && !results.operator) {
+          await message.reply(
+            '**使い方**\n```\n' +
+            '!system restart bot       → Bot 再起動\n' +
+            '!system restart operator  → Operator 再起動\n' +
+            '!system restart all       → 両方再起動\n' +
+            '```'
+          ).catch(() => {});
+          return;
+        }
+      }
+
+      const report = safeR.buildRestartReport(target, safeCheck, results);
+      await message.reply(report.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    if (sysSub === 'health') {
+      // 既存 system-health.js を呼ぶ
+      const sh = require('./utils/system-health');
+      const r  = sh.checkHealth();
+      await message.reply(r.text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    await message.reply(
+      '**!system — Self Update / Restart Manager**\n\n' +
+      '```\n' +
+      '!system status               → Bot/Operator バージョン差異確認\n' +
+      '!system restart bot          → Bot 安全再起動（Owner）\n' +
+      '!system restart operator     → Operator 安全再起動（Owner）\n' +
+      '!system restart all          → 両方再起動（Owner）\n' +
+      '!system health               → システムヘルスチェック\n' +
+      '```\n\n' +
+      '担当: 宮城 (更新) / 黒川 (監視) / CEO はプロセス管理しない'
+    ).catch(() => {});
+    return;
+  }
+
+  // ─────────────────────────────────────────────────────
   // !kurokawa — 黒川 Workflow Intelligence (Phase1)
   // ─────────────────────────────────────────────────────
   if (content.startsWith('!kurokawa')) {
@@ -8818,6 +8899,12 @@ process.on('SIGINT',  () => { restartManager.releaseStartupLock(); process.exit(
     process.exit(1);
   }
 }
+
+// Version 記録（Bot 起動時）
+try {
+  const vt = require('./utils/version-tracker');
+  vt.recordBotStartup();
+} catch { /* ignore — Bot 起動を妨げない */ }
 
 // Discord ログイン
 client.login(DISCORD_TOKEN).catch(err => {

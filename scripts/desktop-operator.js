@@ -475,6 +475,12 @@ function watch() {
   // state.json に running 状態を保存（起動直後）
   saveOperatorRunningState({ status: 'running' });
 
+  // Version 記録
+  try {
+    const vt = require(path.join(ROOT, 'bot', 'utils', 'version-tracker'));
+    vt.recordOperatorStartup(process.pid);
+  } catch { /* ignore */ }
+
   checkOnce();
   const mainTimer      = setInterval(checkOnce, WATCH_INTERVAL_MS);
   // heartbeat: 15秒ごとに state.json を更新（Discord からの確認用）
