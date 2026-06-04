@@ -393,41 +393,24 @@ function checkOnce() {
 // showStatus() — 状態表示
 // ─────────────────────────────────────────────────────
 function showStatus() {
-  const state   = opState.loadState();
-  const history = opState.loadHistory();
-  const now     = new Date().toLocaleString('ja-JP');
-  const lock    = readOperatorLock();
-  const opSt    = readOperatorStatus();
+  // 共通ロジックを使用（Discord の !operator status と同じ判定）
+  const opCheck  = require(path.join(ROOT, 'bot', 'utils', 'operator-status-check'));
+  const history  = opState.loadHistory();
+  const state    = opState.loadState();
+  const result   = opCheck.formatStatus(opState, history);
+  const check    = result.check;
 
-  // heartbeat ベースで 30秒以内なら「勤務中」（lock + heartbeat の二重確認）
-  const hbAge     = opSt?.lastHeartbeat
-    ? Date.now() - new Date(opSt.lastHeartbeat).getTime()
-    : Infinity;
-  const lockAlive = lock && _isPidAlive(lock.pid);
-  const isRunning = lockAlive && hbAge < 30_000;
-
-  const statusLabel= isRunning ? '🟢 勤務中' : '🔴 停止中';
-  const sentCount  = history.filter(h => h.autoSent).length;
-  const blockedCnt = history.filter(h => h.blockedReason).length;
-  const lastSent   = history.filter(h => h.autoSent).slice(-1)[0];
-  const lastLabel  = lastSent
-    ? `${inboxBridge.WORKER_DISPLAY[lastSent.worker] || lastSent.worker} → ${lastSent.event || '?'}`
-    : '（なし）';
-
-  console.log(`\n🅶 **黒川 Desktop Operator**`);
-  console.log(`状態: ${statusLabel}`);
-  console.log(`PID: ${opSt?.pid || lock?.pid || '—'}`);
-  console.log(`起動: ${opSt?.startedAt ? new Date(opSt.startedAt).toLocaleString('ja-JP') : '—'}`);
-  console.log(`最終 Heartbeat: ${opSt?.lastHeartbeat ? new Date(opSt.lastHeartbeat).toLocaleString('ja-JP') + ` (${Math.floor(hbAge/1000)}秒前)` : '—'}`);
-  console.log(`モード: ${opSt?.mode || '—'}`);
-  console.log(`処理数: ${history.length}件 (送信 ${sentCount} / ブロック ${blockedCnt})`);
-  console.log(`最終配送: ${lastLabel}`);
-  if (opSt?.lastError) console.log(`最終エラー: ${opSt.lastError}`);
-  console.log(`Lock: ${OPERATOR_LOCK}`);
-  console.log(`State: ${opState.STATE_FILE}`);
-  console.log(`CWD: ${opSt?.cwd || process.cwd()}`);
+  // CLI 用: フォーマットされたテキストを console に出力
+  console.log('\n' + result.text.replace(/`/g, ''));  // Markdown バックティックを除去
   console.log('');
 
+  // CLI 追加情報
+  const opSt = state.operatorStatus;
+  if (opSt?.cwd) console.log(`CWD: ${opSt.cwd}`);
+  console.log(`Lock: ${OPERATOR_LOCK}`);
+  console.log(`State: ${opState.STATE_FILE}`);
+
+  // worker 別最終確認
   const workers = inboxBridge.VALID_WORKERS;
   let   any     = false;
   for (const worker of workers) {
@@ -438,12 +421,6 @@ function showStatus() {
     console.log(`  ${disp}: ${ws.lastSeenAt ? new Date(ws.lastSeenAt).toLocaleString('ja-JP') : '—'}`);
   }
   if (!any) console.log('  （処理履歴なし）');
-
-  const recentBlocked = history.filter(h => h.blockedReason).slice(-3);
-  if (recentBlocked.length) {
-    console.log(`\n🚫 直近ブロック:`);
-    recentBlocked.forEach(h => console.log(`  [${h.worker}] ${h.blockedReason}`));
-  }
   console.log('');
 }
 

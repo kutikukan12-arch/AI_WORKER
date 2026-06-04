@@ -7742,73 +7742,15 @@ client.on('messageCreate', async (message) => {
     const opSub  = opArgs[0] || 'help';
 
     if (opSub === 'status') {
-      const opState = require('./utils/desktop-operator-state');
-      const fs      = require('fs');
-      const path    = require('path');
-      const hist    = opState.loadHistory();
-
-      // state.json から operatorStatus を取得（heartbeat ベース）
-      const state = opState.loadState();
-      const opSt  = state.operatorStatus || null;
-
-      // lock ファイルで PID 確認
-      const LOCK  = path.join(opState.OP_DIR, 'operator.lock');
-      let lockPid = null;
-      let lockAlive = false;
-      try {
-        if (fs.existsSync(LOCK)) {
-          const l = JSON.parse(fs.readFileSync(LOCK, 'utf8'));
-          lockPid = l.pid;
-          try { process.kill(Number(l.pid), 0); lockAlive = true; } catch { lockAlive = false; }
-        }
-      } catch { /* ignore */ }
-
-      // heartbeat が 30秒以内かつ PID 生存なら「勤務中」
-      const hbAge     = opSt?.lastHeartbeat
-        ? Date.now() - new Date(opSt.lastHeartbeat).getTime()
-        : Infinity;
-      const isRunning = lockAlive && hbAge < 30_000;
-
-      const sentCount  = hist.filter(h => h.autoSent).length;
-      const blockedCnt = hist.filter(h => h.blockedReason).length;
-      const lastSent   = hist.filter(h => h.autoSent).slice(-1)[0];
-      const ib         = require('./utils/inbox-bridge');
-      const lastLabel  = lastSent
-        ? `${ib.WORKER_DISPLAY[lastSent.worker] || lastSent.worker} → ${lastSent.event || '?'}`
-        : '（なし）';
-
-      const hbStr = opSt?.lastHeartbeat
-        ? `${new Date(opSt.lastHeartbeat).toLocaleString('ja-JP')} (${Math.floor(hbAge/1000)}秒前)`
-        : '—';
-
-      const lines = [
-        `🅶 **黒川 Desktop Operator**`,
-        ``,
-        `状態: ${isRunning ? '🟢 勤務中' : '🔴 停止中'}`,
-        `PID: ${opSt?.pid || lockPid || '—'}`,
-        opSt?.startedAt ? `起動: ${new Date(opSt.startedAt).toLocaleString('ja-JP')}` : '',
-        `最終 Heartbeat: ${hbStr}`,
-        `モード: ${opSt?.mode || '—'}`,
-        `処理数: ${hist.length}件 (送信 ${sentCount} / ブロック ${blockedCnt})`,
-        `最終配送: ${lastLabel}`,
-        opSt?.lastError ? `⚠️ 最終エラー: ${opSt.lastError}` : '',
-        ``,
-        `Lock: \`data/desktop-operator/operator.lock\``,
-        `State: \`data/desktop-operator/state.json\``,
-        ``,
-        ...hist.filter(h => h.blockedReason).slice(-2).map(h =>
-          `🚫 [${h.worker}] ${h.blockedReason}`
-        ),
-        ``,
-        isRunning
-          ? '> 稼働中: `npm run operator:once` で即時チェック可'
-          : '> 起動: `npm run operator` または `start-operator.bat`',
-      ].filter(l => l !== '');
-      await message.reply(lines.join('\n').slice(0, 1900)).catch(() => {});
+      const opState  = require('./utils/desktop-operator-state');
+      const opCheck  = require('./utils/operator-status-check');
+      const hist     = opState.loadHistory();
+      const result   = opCheck.formatStatus(opState, hist);
+      await message.reply(result.text).catch(() => {});
       return;
     }
 
-    // ── 緊急停止 — 最優先（他の処理より先に実行）─────────
+        // ── 緊急停止 — 最優先（他の処理より先に実行）─────────
     if (opSub === 'pause') {
       const opState  = require('./utils/desktop-operator-state');
       const opBridge = require('./utils/operator-bridge');
