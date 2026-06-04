@@ -299,6 +299,35 @@ function processWorker(worker) {
       if (relResult?.justUnlocked) {
         console.log(`   🎉 ${worker} が auto-send 解禁されました！`);
       }
+
+      // Reply Collector: 送信後に返信待ち状態を記録してポーリング開始
+      if (!DRY_RUN) {
+        try {
+          const replyCollector = require(path.join(ROOT, 'bot', 'utils', 'reply-collector'));
+          const promptHash     = opState.hashContent(wrappedPrompt);
+          replyCollector.markWaitingReply(worker, promptHash, histId);
+          // 送信前クリップボードハッシュを記録（少し待ってから）
+          setTimeout(() => replyCollector.setPreSendClipHash(worker), 2000);
+
+          // ポーリング開始
+          replyCollector.startPolling(worker, (result) => {
+            if (result.reason === 'reply_collected') {
+              const disp = inboxBridge.WORKER_DISPLAY[worker] || worker;
+              console.log(`\n📥 [${worker}] 回答を inbox に保存しました`);
+              console.log(`   !inbox check ${worker} で確認できます`);
+            } else if (result.reason === 'timeout') {
+              console.log(`\n⏰ [${worker}] 返信タイムアウト (${Math.floor(result.ageMs/60000)}分)`);
+              // 黒川の inbox に通知を配送（自動実行しない）
+              try {
+                const msg = replyCollector.buildTimeoutNotification(worker, result);
+                inboxBridge.sendToWorker('kurokawa', msg);
+              } catch { /* ignore */ }
+            }
+          });
+        } catch (e) {
+          console.log(`   [WARN] Reply Collector 開始失敗: ${e.message}`);
+        }
+      }
     } else {
       blockedReason = `send_failed: ${sendResult.error || '不明'}`;
       // 失敗 → clipboard 降格

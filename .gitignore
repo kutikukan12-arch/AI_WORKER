@@ -88,6 +88,7 @@ data/recovery-log.json
 data/daily-brief.json
 data/sync-history.json
 data/desktop-operator/
+data/desktop-operator/pending-replies.json
 
 # ─── Desktop Inbox Bridge / Agent（社内情報・外部公開禁止）─────
 data/inbox/
