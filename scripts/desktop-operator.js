@@ -300,32 +300,52 @@ function processWorker(worker) {
         console.log(`   🎉 ${worker} が auto-send 解禁されました！`);
       }
 
-      // Reply Collector: 送信後に返信待ち状態を記録してポーリング開始
+      // Phase13: Reply Auto Capture — 送信後に自動取得ポーリング開始
       if (!DRY_RUN) {
         try {
           const replyCollector = require(path.join(ROOT, 'bot', 'utils', 'reply-collector'));
+          const autoCapture    = require(path.join(ROOT, 'bot', 'utils', 'reply-auto-capture'));
           const promptHash     = opState.hashContent(wrappedPrompt);
+
+          // 送信前のウィンドウテキストを記録（差分取得のベース）
+          const preText = autoCapture.getPreText();
+
+          // 返信待ち状態を記録
           replyCollector.markWaitingReply(worker, promptHash, histId);
-          // 送信前クリップボードハッシュを記録（少し待ってから）
+          // clipboard fallback 用の pre-send hash も記録
           setTimeout(() => replyCollector.setPreSendClipHash(worker), 2000);
 
-          // ポーリング開始
-          replyCollector.startPolling(worker, (result) => {
-            if (result.reason === 'reply_collected') {
-              const disp = inboxBridge.WORKER_DISPLAY[worker] || worker;
-              console.log(`\n📥 [${worker}] 回答を inbox に保存しました`);
+          // 共通コールバック
+          const onReplyResult = (result) => {
+            const disp = inboxBridge.WORKER_DISPLAY[worker] || worker;
+            if (result.result === 'captured' || result.reason === 'reply_collected') {
+              console.log(`\n📥 [${worker}] 回答を自動取得し inbox に保存しました`);
               console.log(`   !inbox check ${worker} で確認できます`);
-            } else if (result.reason === 'timeout') {
-              console.log(`\n⏰ [${worker}] 返信タイムアウト (${Math.floor(result.ageMs/60000)}分)`);
-              // 黒川の inbox に通知を配送（自動実行しない）
+            } else if (result.result === 'fallback_clipboard') {
+              console.log(`\n⬇️ [${worker}] auto-capture → clipboard fallback (${result.reason})`);
+            } else if (result.result === 'timeout' || result.reason === 'timeout') {
+              console.log(`\n⏰ [${worker}] 返信タイムアウト (${Math.floor((result.ageMs||0)/60000)}分)`);
               try {
                 const msg = replyCollector.buildTimeoutNotification(worker, result);
                 inboxBridge.sendToWorker('kurokawa', msg);
               } catch { /* ignore */ }
             }
-          });
+          };
+
+          // auto-safe モードでポーリング開始（失敗時は自動で clipboard fallback）
+          autoCapture.startAutoCapture(worker, preText, onReplyResult);
+
         } catch (e) {
-          console.log(`   [WARN] Reply Collector 開始失敗: ${e.message}`);
+          console.log(`   [WARN] Reply Auto Capture 開始失敗: ${e.message}`);
+          // Phase12 clipboard モードへフォールバック
+          try {
+            const replyCollector = require(path.join(ROOT, 'bot', 'utils', 'reply-collector'));
+            replyCollector.startPolling(worker, (result) => {
+              if (result.reason === 'reply_collected') {
+                console.log(`\n📥 [${worker}] 回答を clipboard から保存しました`);
+              }
+            });
+          } catch { /* ignore */ }
         }
       }
     } else {
