@@ -14,15 +14,24 @@ function test(name, fn) {
 const router = require('../bot/utils/workflow-router');
 const wstate = require('../bot/utils/workflow-state');
 const ib     = require('../bot/utils/inbox-bridge');
+const budget = require('../bot/utils/workflow-budget');
+const audit  = require('../bot/utils/workflow-audit');
 const src    = fs.readFileSync(path.join(__dirname, '..', 'bot', 'index.js'), 'utf8');
 
 function resetWState() { wstate._save({ handoffs: [], dailyLog: [], updatedAt: null }); }
+// Safety Gate (commit 88ec924) は autoHandoff 内で budget.recordTurn を呼ぶ。
+// budget を毎回リセットしないと過去の会話蓄積で loop_detected/limit_reached が
+// 誤発火し、本来 dispatched:true のテストが false failure する（テスト隔離）。
+function resetBudget() { budget._save({}); }
+function resetAudit()  { try { fs.writeFileSync(audit.AUDIT_FILE, '[]'); } catch {} }
 function clearOutbox(worker) {
   const p = ib._workerOutboxPath(worker);
   try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch {}
 }
 function cleanup() {
   resetWState();
+  resetBudget();
+  resetAudit();
   ['miyagi','moriya','ichikawa','ikuno'].forEach(clearOutbox);
 }
 
