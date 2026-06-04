@@ -81,32 +81,77 @@ function requestBotRestart(reason = 'system restart') {
 
 // ─────────────────────────────────────────────────────
 // Phase3: Operator 再起動
-// operator.lock を削除して新規起動を促す
+//
+// M-2 対応: operator.lock を即削除しない。
+// state.json に restart_requested フラグを立て、
+// Desktop Operator 自身が次のハートビートサイクルで
+// graceful shutdown → lock 解放する方式に変更。
+//
+// フロー:
+//   1. state.json に operatorStatus.restartRequested = true を設定
+//   2. Desktop Operator の watch ループが検出
+//   3. Operator が graceful shutdown（lock は自分で解放）
+//   4. npm run operator / start-operator.bat で再起動
 // ─────────────────────────────────────────────────────
-function requestOperatorRestart(reason = 'system restart') {
-  const opLock = path.join(DATA_DIR, 'desktop-operator', 'operator.lock');
-  const removed = fs.existsSync(opLock);
-  if (removed) {
-    try { fs.unlinkSync(opLock); } catch { /* ignore */ }
-  }
+const OPERATOR_RESTART_FLAG = path.join(DATA_DIR, 'desktop-operator', 'restart-requested.flag');
 
-  // Operator 停止状態を state.json に記録
+function requestOperatorRestart(reason = 'system restart') {
+  // state.json に restart_requested フラグを設定
+  // （operator.lock は Desktop Operator 自身が graceful shutdown 時に解放する）
   try {
     const opState = require('./desktop-operator-state');
     const state   = opState.loadState();
-    if (state.operatorStatus) {
-      state.operatorStatus.status        = 'restart_requested';
-      state.operatorStatus.restartReason = reason;
-      state.operatorStatus.restartAt     = new Date().toISOString();
-      opState.saveState(state);
-    }
+    state.operatorStatus = {
+      ...(state.operatorStatus || {}),
+      status:            'restart_requested',
+      restartReason:     reason,
+      restartRequestedAt: new Date().toISOString(),
+      restartRequestedBy: 'safe-restart-manager',
+    };
+    opState.saveState(state);
+  } catch { /* ignore */ }
+
+  // restart-requested.flag ファイルも併用（Operator が watch で検出しやすくする）
+  try {
+    const dir = path.dirname(OPERATOR_RESTART_FLAG);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(OPERATOR_RESTART_FLAG, JSON.stringify({
+      requestedAt: new Date().toISOString(),
+      reason,
+    }), 'utf8');
   } catch { /* ignore */ }
 
   return {
-    ok: true,
-    lockRemoved: removed,
-    message: `Operator 再起動フラグを設定しました。\`npm run operator\` または \`start-operator.bat\` で再起動してください。`,
+    ok:          true,
+    flagSet:     true,
+    message:     `Operator 再起動フラグを設定しました。\n` +
+                 `Desktop Operator が次のサイクルで graceful shutdown します。\n` +
+                 `その後 \`npm run operator\` または \`start-operator.bat\` で再起動してください。`,
   };
+}
+
+// restart-requested フラグを確認（Operator の watch ループから呼ばれる）
+function checkOperatorRestartRequested() {
+  if (fs.existsSync(OPERATOR_RESTART_FLAG)) return true;
+  try {
+    const opState = require('./desktop-operator-state');
+    const state   = opState.loadState();
+    return state.operatorStatus?.status === 'restart_requested';
+  } catch { return false; }
+}
+
+// restart-requested フラグを解除（Operator が shutdown 後に呼ぶ）
+function clearOperatorRestartFlag() {
+  try { if (fs.existsSync(OPERATOR_RESTART_FLAG)) fs.unlinkSync(OPERATOR_RESTART_FLAG); } catch {}
+  try {
+    const opState = require('./desktop-operator-state');
+    const state   = opState.loadState();
+    if (state.operatorStatus?.status === 'restart_requested') {
+      state.operatorStatus.status = 'stopped';
+      state.operatorStatus.stoppedReason = 'graceful_restart';
+      opState.saveState(state);
+    }
+  } catch {}
 }
 
 // ─────────────────────────────────────────────────────
@@ -204,8 +249,11 @@ module.exports = {
   checkSafeToRestart,
   requestBotRestart,
   requestOperatorRestart,
+  checkOperatorRestartRequested,
+  clearOperatorRestartFlag,
   buildRestartReport,
   logRecovery,
   checkComponentHealth,
   RECOVERY_FILE,
+  OPERATOR_RESTART_FLAG,
 };

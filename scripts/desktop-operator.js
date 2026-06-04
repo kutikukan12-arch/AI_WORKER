@@ -484,11 +484,24 @@ function watch() {
   checkOnce();
   const mainTimer      = setInterval(checkOnce, WATCH_INTERVAL_MS);
   // heartbeat: 15秒ごとに state.json を更新（Discord からの確認用）
-  const heartbeatTimer = setInterval(() => saveOperatorRunningState(), HEARTBEAT_INTERVAL_MS);
+  const heartbeatTimer = setInterval(() => {
+    saveOperatorRunningState();
+    // M-2: restart_requested フラグを heartbeat サイクルで確認
+    const safeRestart = require(path.join(ROOT, 'bot', 'utils', 'safe-restart'));
+    if (safeRestart.checkOperatorRestartRequested()) {
+      console.log('\n🔄 restart_requested フラグ検出 — Graceful Shutdown を開始します...');
+      shutdown('restart_requested');
+    }
+  }, HEARTBEAT_INTERVAL_MS);
 
   const shutdown = (reason = 'SIGINT') => {
     clearInterval(mainTimer);
     clearInterval(heartbeatTimer);
+    // M-2: lock は自分で解放し、フラグもクリア
+    try {
+      const safeRestart = require(path.join(ROOT, 'bot', 'utils', 'safe-restart'));
+      safeRestart.clearOperatorRestartFlag();
+    } catch { /* ignore */ }
     saveOperatorStoppedState(reason);
     releaseOperatorLock();
     console.log(`\n🅶 黒川 退勤 (${reason})`);

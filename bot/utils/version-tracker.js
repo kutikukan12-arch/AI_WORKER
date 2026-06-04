@@ -24,34 +24,61 @@ const VERSION_FILE  = path.join(DATA_DIR, 'version-state.json');
 
 // ─────────────────────────────────────────────────────
 // Git ユーティリティ
+//
+// M-1 対応: execSync のシェル補間を廃止し execFileSync を使用。
+// commit hash は /^[0-9a-f]{7,40}$/ で検証して
+// シェルインジェクションを防止する。
 // ─────────────────────────────────────────────────────
+
+// commit hash 検証（M-1: インジェクション防止）
+const COMMIT_HASH_RE = /^[0-9a-f]{7,40}$/;
+
+function _validateCommit(hash) {
+  if (!hash || !COMMIT_HASH_RE.test(hash)) return null;
+  return hash;
+}
+
 function getHeadCommit() {
   try {
-    const { execSync } = require('child_process');
-    return execSync('git rev-parse --short HEAD', {
+    const { execFileSync } = require('child_process');
+    const raw = execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
       cwd: ROOT_DIR, encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
+    return _validateCommit(raw);
   } catch { return null; }
 }
 
 function getLatestCommit() {
   // リモートブランチの最新（git fetch 済みが前提）
+  // M-1: shell: true を廃止し execFileSync を使用
   try {
-    const { execSync } = require('child_process');
-    return execSync('git rev-parse --short origin/main 2>/dev/null || git rev-parse --short HEAD', {
-      cwd: ROOT_DIR, encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      shell: true,
-    }).trim();
+    const { execFileSync } = require('child_process');
+    // origin/main を先に試み、失敗したら HEAD を使う
+    let raw = null;
+    try {
+      raw = execFileSync('git', ['rev-parse', '--short', 'origin/main'], {
+        cwd: ROOT_DIR, encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim();
+    } catch {
+      raw = execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
+        cwd: ROOT_DIR, encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim();
+    }
+    return _validateCommit(raw);
   } catch { return getHeadCommit(); }
 }
 
 function getChangedFilesSince(commit) {
   if (!commit) return [];
+  // M-1: commit hash を検証してから execFileSync で渡す（シェル補間なし）
+  const safeCommit = _validateCommit(commit);
+  if (!safeCommit) return []; // 不正な hash は拒否
   try {
-    const { execSync } = require('child_process');
-    const out = execSync(`git diff --name-only ${commit}..HEAD`, {
+    const { execFileSync } = require('child_process');
+    const out = execFileSync('git', ['diff', '--name-only', `${safeCommit}..HEAD`], {
       cwd: ROOT_DIR, encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
@@ -245,5 +272,6 @@ module.exports = {
   formatSystemStatus,
   buildUpdateNotification,
   getHeadCommit,
+  getChangedFilesSince,  // M-1 テスト用にエクスポート
   VERSION_FILE,
 };
