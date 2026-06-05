@@ -7930,6 +7930,30 @@ client.on('messageCreate', async (message) => {
   }
 
   // ─────────────────────────────────────────────────────
+  // !bridge — CEO中継ポイント一覧 (読み取り専用)
+  // ─────────────────────────────────────────────────────
+  if (content.startsWith('!bridge')) {
+    const brArgs = content.split(/\s+/).slice(1);
+    const brSub  = brArgs[0] || 'status';
+
+    if (brSub === 'status') {
+      const bs = require('./utils/bridge-status');
+      const r  = bs.getBridgeStatus();
+      await message.reply(r.text.slice(0, 1950)).catch(() => {});
+      return;
+    }
+
+    await message.reply(
+      '**!bridge — CEO中継ポイント一覧**\n\n' +
+      '```\n' +
+      '!bridge status  → CEO判断待ち/停止中/進行中/完了 を一覧表示\n' +
+      '```\n' +
+      '> 読み取り専用。変更・承認は社長が行います。'
+    ).catch(() => {});
+    return;
+  }
+
+  // ─────────────────────────────────────────────────────
   // !kurokawa — 黒川 Workflow Intelligence (Phase1)
   // ─────────────────────────────────────────────────────
   if (content.startsWith('!kurokawa')) {
