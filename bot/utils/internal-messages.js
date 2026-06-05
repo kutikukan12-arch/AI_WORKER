@@ -6,11 +6,18 @@
 //   AI社員間の確認依頼をCEOが毎回手動中継しなくて済むようにする。
 //   黒川がメッセージの配送・進行管理を担う。
 //
-// 権限ルール:
+// Phase1.5: 次担当候補コマンド提示 (_suggestNextRoute)
+//   !msg reply 完了時に、返信内容から次配送先を推定して
+//   コピペ用コマンドを表示する。
+//   ルールベース（FIXED_ROUTES + 明示宛先）のみ。AI判断なし。
+//   不明な場合は CEO_CONFIRM_REQUIRED を返す。
+//
+// 権限ルール（変更なし）:
 //   ✅ 黒川は配送・待ち状況の管理を担う
 //   ❌ 黒川が READY/NEED_FIX を勝手に出す禁止
 //   ❌ 黒川が COO/CTO/PM の代わりに判断する禁止
 //   ❌ 社内メッセージの外部公開禁止
+//   ❌ 自動承認・自動タスク作成・優先順位変更禁止
 //
 // 共通エンベロープ仕様準拠 (docs/envelope-spec.md 参照)
 //   type: INTERNAL_MESSAGE
@@ -21,7 +28,7 @@
 //   !msg list               — 未返信一覧
 //   !msg list all           — 全件一覧
 //   !msg show <id>          — 詳細表示
-//   !msg reply <id> <返信>  — 返信 (→ REPLIED)
+//   !msg reply <id> <返信>  — 返信 (→ REPLIED) + 次担当候補コマンド表示
 //   !msg close <id>         — クローズ (→ CLOSED)
 //   !msg pending            — 誰が誰の返信待ちか（黒川レポート）
 // =====================================================
@@ -73,6 +80,127 @@ const MEMBER_DISPLAY = {
   kanzaki:   '神崎 VP',
   ceo:       'CEO',
 };
+
+// ─────────────────────────────────────────────────────
+// Phase1.5: 次ルート推定テーブル
+//
+// replier (msg.to) × キーワード → FIXED_ROUTES イベント
+// allowedFrom: null = 誰からでも / 配列 = 特定社員のみ
+//
+// ルールは workflow-router.js の FIXED_ROUTES と 1:1 対応。
+// 黒川はルールを読むだけ。判断しない。
+// ─────────────────────────────────────────────────────
+const REPLY_KEYWORD_ROUTES = [
+  {
+    event:       'IMPLEMENT_DONE',
+    keywords:    ['implement_done', '実装完了', 'コミット済み', 'プッシュ完了', 'commit済み', 'push済み'],
+    allowedFrom: ['miyagi'],
+    to:          'moriya',
+    reason:      '固定ルート: 宮城 実装完了 → 守谷 CTO レビュー',
+  },
+  {
+    event:       'NEED_FIX',
+    keywords:    ['need_fix', '修正が必要', '修正してください', '要修正', '修正依頼', 'need fix'],
+    allowedFrom: ['moriya'],
+    to:          'miyagi',
+    reason:      '固定ルート: 守谷 NEED_FIX → 宮城 修正',
+  },
+  {
+    event:       'REVIEW_READY',
+    keywords:    ['review_ready', 'ready', 'レビュー完了', '承認', '問題なし', 'lgtm', 'ok', 'オーケー'],
+    allowedFrom: ['moriya'],
+    to:          'ichikawa',
+    reason:      '固定ルート: 守谷 READY → 市川 PM 商品確認',
+  },
+  {
+    event:       'SPEC_READY',
+    keywords:    ['spec_ready', '仕様確定', '仕様ok', '実装開始ok', '仕様承認', '実装goサイン'],
+    allowedFrom: ['ichikawa'],
+    to:          'miyagi',
+    reason:      '固定ルート: 市川 PM 仕様確定 → 宮城 実装開始',
+  },
+  {
+    event:       'LESSON_CANDIDATE',
+    keywords:    ['lesson_candidate', 'lesson候補', '教訓', '学んだ', 'ハマった', '再発防止'],
+    allowedFrom: null,
+    to:          'ikuno',
+    reason:      '固定ルート: Lesson候補 → 育野',
+  },
+  {
+    event:       'INCIDENT_CANDIDATE',
+    keywords:    ['incident_candidate', 'incident候補', '障害発生', 'インシデント', '事故'],
+    allowedFrom: null,
+    to:          'ikuno',
+    reason:      '固定ルート: Incident候補 → 育野',
+  },
+  {
+    event:       'VP_BRIEF_REQUEST',
+    keywords:    ['vp_brief_request', '神崎へ', '判断材料整理', '戦略整理依頼'],
+    allowedFrom: ['ceo'],
+    to:          'kanzaki',
+    reason:      '固定ルート: CEO → 神崎 VP 判断材料整理',
+  },
+];
+
+// ─────────────────────────────────────────────────────
+// _suggestNextRoute(msg, replyContent) — 次担当候補を推定
+//
+// 返す情報はコピペ用コマンドのみ。自動実行しない。
+// 優先順位:
+//   1. キーワード × replier ← FIXED_ROUTES に沿う場合 (confidence: 'high')
+//   2. 返信内容中の明示的な宛先メンバー名 (confidence: 'medium')
+//   3. 不明 → CEO確認 (confidence: 'unknown')
+// ─────────────────────────────────────────────────────
+function _suggestNextRoute(msg, replyContent) {
+  const replier = msg.to;  // 返信した人 = 元メッセージの宛先
+  const lower   = String(replyContent).toLowerCase();
+  const preview = redact(String(replyContent).trim()).slice(0, 40);
+
+  // ── Step1: FIXED_ROUTES キーワードマッチ ──────────────
+  for (const rule of REPLY_KEYWORD_ROUTES) {
+    // allowedFrom チェック
+    if (rule.allowedFrom !== null && !rule.allowedFrom.includes(replier)) continue;
+    // キーワードチェック
+    const hit = rule.keywords.some(kw => lower.includes(kw.toLowerCase()));
+    if (!hit) continue;
+
+    const toDisplay = MEMBER_DISPLAY[rule.to] || rule.to;
+    return {
+      confidence: 'high',
+      event:      rule.event,
+      to:         rule.to,
+      toDisplay,
+      reason:     rule.reason,
+      cmd:        `!workflow handoff ${rule.event} ${replier} <taskId> ${preview}`,
+    };
+  }
+
+  // ── Step2: 明示的な宛先メンバー名の検出 ───────────────
+  for (const [canonical, aliases] of Object.entries(MEMBER_ALIASES)) {
+    if (canonical === replier) continue;    // 自分自身は除外
+    if (canonical === 'ceo')   continue;    // CEO宛ては除外（CEO→配送が黒川の役割）
+    for (const alias of aliases) {
+      if (alias.length < 2) continue;       // 1文字エイリアス (a/A等) は誤検知防止でスキップ
+      if (lower.includes(alias.toLowerCase())) {
+        const toDisplay = MEMBER_DISPLAY[canonical] || canonical;
+        return {
+          confidence: 'medium',
+          to:         canonical,
+          toDisplay,
+          reason:     `返信内に "${alias}" を検出`,
+          cmd:        `!msg send ${canonical} ${preview}`,
+        };
+      }
+    }
+  }
+
+  // ── Step3: 不明 → CEO確認 ────────────────────────────
+  return {
+    confidence: 'unknown',
+    reason:     '次担当を自動判断できません',
+    cmd:        null,
+  };
+}
 
 // エイリアス → canonical 変換
 function resolveAlias(input) {
@@ -335,14 +463,33 @@ function replyMessage(id, replyContent) {
   const from = MEMBER_DISPLAY[rec.from] || rec.from;
   const to   = MEMBER_DISPLAY[rec.to]   || rec.to;
 
+  // Phase1.5: 次担当候補を推定してコピペコマンドを提示
+  const suggestion = _suggestNextRoute(rec, safeReply);
+  let nextLine = '';
+  if (suggestion.confidence === 'high') {
+    nextLine = `\n📬 **次担当候補 (固定ルート):** ${suggestion.toDisplay}\n` +
+               `理由: ${suggestion.reason}\n` +
+               `→ コピペして実行: \`${suggestion.cmd}\``;
+  } else if (suggestion.confidence === 'medium') {
+    nextLine = `\n📬 **次担当候補 (明示宛先):** ${suggestion.toDisplay}\n` +
+               `理由: ${suggestion.reason}\n` +
+               `→ コピペして実行: \`${suggestion.cmd}\``;
+  } else {
+    nextLine = `\n⚠️ **次担当: CEO確認が必要です**\n` +
+               `黒川はルールから次担当を判断できません。\n` +
+               `配送先を決めたら: \`!msg send <宛先> <内容>\``;
+  }
+
   return {
     ok:   true,
     text: `✅ **返信を記録しました**\n\n` +
           `ID: \`${rec.id}\`\n` +
           `${from} → ${to}\n` +
           `件名: ${rec.title}\n` +
-          `状態: ⏳ WAITING_REPLY → ✅ REPLIED\n\n` +
+          `状態: ⏳ WAITING_REPLY → ✅ REPLIED\n` +
+          nextLine + `\n\n` +
           `> \`!msg close ${rec.id}\` でクローズできます。`,
+    suggestion,  // テスト・呼び出し元向けに構造体も返す
   };
 }
 
@@ -448,4 +595,6 @@ module.exports = {
   _load,
   _save,
   _generateId,
+  _suggestNextRoute,       // Phase1.5 テスト用
+  REPLY_KEYWORD_ROUTES,    // Phase1.5 テスト用
 };
