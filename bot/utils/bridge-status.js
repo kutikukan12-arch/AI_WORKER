@@ -1,24 +1,29 @@
 'use strict';
 // =====================================================
-// bridge-status.js — !bridge status 表示生成
+// bridge-status.js — !bridge status 表示生成 (Phase1.5)
 //
 // 目的:
-//   CEO の手動中継ポイントを4分類で一覧表示する。
-//   task-manager / workflow-state / workflow-audit /
-//   desktop-operator-state / worker-status を直接読み取る。
-//   新規状態管理は持たない。
+//   CEO の手動中継ポイントを一覧表示し、
+//   各項目に次アクションコマンドを付与する。
+//   CEOはコピペするだけで中継を完了できる。
 //
-// 4分類（順序固定・AI判断による並べ替えなし）:
-//   ① CEO判断待ち  — 人間確認待ちタスク / CEO_CONFIRM_REQUIRED
+// 4分類 + 承認待ち + メッセージ待ち（順序固定）:
+//   ① CEO判断待ち  — 人間確認待ちタスク / CEO_CONFIRM_REQUIRED / approvals pending
 //   ② 停止中       — 保留タスク / operator blocked
 //   ③ 進行中       — 作業中タスク / working workers
 //   ④ 完了         — 直近24h の完了タスク / audit成功
+//   ⑤ 返信待ち     — !msg WAITING_REPLY 一覧
 //
-// 安全設計:
+// Phase1.5 追加:
+//   ✅ approvals.json pending を ① に統合
+//   ✅ internal-messages.js WAITING_REPLY を ⑤ として追加
+//   ✅ 各項目に → コマンド: `!xxx` を付与（CEOがコピペするだけ）
+//
+// 安全設計（変更なし）:
 //   ✅ 読み取り専用 — 状態変更なし
 //   ✅ 出典表示     — 各項目に !コマンド 出典を付与
 //   ✅ redact 適用  — 全表示テキストに適用
-//   ✅ 表示順固定   — 重みスコアによる並べ替えなし（固定バケツ順）
+//   ✅ 表示順固定   — 重みスコアによる並べ替えなし
 //   ❌ 判断代理なし  — READY / NEED_FIX 生成禁止
 //   ❌ 自動承認なし
 //   ❌ タスク作成なし
@@ -26,7 +31,12 @@
 //   ❌ 新規状態ファイルなし
 // =====================================================
 
+const fs   = require('fs');
+const path = require('path');
 const { redact } = require('./redact');
+
+const DATA_DIR       = path.join(__dirname, '..', '..', 'data');
+const APPROVALS_FILE = path.join(DATA_DIR, 'approvals.json');
 
 // 24時間
 const RECENT_DONE_MS = 24 * 60 * 60 * 1000;
@@ -35,7 +45,8 @@ const RECENT_DONE_MS = 24 * 60 * 60 * 1000;
 // _collectCeoPending() — ① CEO判断待ち
 //
 // 出典: task-manager (人間確認待ち), workflow-audit (CEO_CONFIRM_REQUIRED),
-//       workflow-state (ceo 宛ての未解決 handoff)
+//       workflow-state (ceo 宛ての未解決 handoff),
+//       approvals.json (pending承認) ← Phase1.5追加
 // ─────────────────────────────────────────────────────
 function _collectCeoPending() {
   const items = [];
@@ -48,6 +59,7 @@ function _collectCeoPending() {
         label: `[${t.id}] ${redact(t.title || '').slice(0, 60)}`,
         src:   '!task list',
         type:  'task_awaiting',
+        cmd:   `!approve ${t.id}`,
       });
     });
   } catch { /* ignore */ }
@@ -66,6 +78,7 @@ function _collectCeoPending() {
           label: `CEO_CONFIRM_REQUIRED: ${from} → ${to} [${ev}]`,
           src:   '!workflow status',
           type:  'ceo_confirm',
+          cmd:   `!workflow handoff ${ev} ${from} <taskId> <概要>`,
         });
       }
     }
@@ -82,8 +95,32 @@ function _collectCeoPending() {
           label: `handoff待ち: ${h.from || '?'} → CEO [${h.event}] ${_ageLabel(h.createdAt)}`,
           src:   '!workflow status',
           type:  'handoff_ceo',
+          cmd:   `!approve ${h.taskId || '<taskId>'}`,
         });
       });
+  } catch { /* ignore */ }
+
+  // Phase1.5: approvals.json pending 承認待ち
+  try {
+    if (fs.existsSync(APPROVALS_FILE)) {
+      const raw   = JSON.parse(fs.readFileSync(APPROVALS_FILE, 'utf8'));
+      const list  = Array.isArray(raw) ? raw : (raw.approvals || []);
+      list
+        .filter(a => a.state === 'pending' && !a.resolvedAt)
+        .slice(0, 10) // 最大10件（長すぎ防止）
+        .forEach(a => {
+          const danger   = a.danger || '?';
+          const reason   = redact(a.reason || '').slice(0, 50);
+          const dangerMk = danger === '高' ? '🔴' : (danger === '中' ? '🟡' : '🟢');
+          items.push({
+            label: `${dangerMk} [${a.taskId}] ${reason}`,
+            src:   '!approve list',
+            type:  'approval_pending',
+            cmd:   `!approve ${a.taskId}`,
+            cmdAlt:`!deny ${a.taskId}`,
+          });
+        });
+    }
   } catch { /* ignore */ }
 
   return items;
@@ -106,6 +143,7 @@ function _collectStopped() {
         label: `[${t.id}] ${redact(t.title || '').slice(0, 60)}`,
         src:   '!task list',
         type:  'task_on_hold',
+        cmd:   `!task resume ${t.id}`,
       });
     });
   } catch { /* ignore */ }
@@ -117,10 +155,12 @@ function _collectStopped() {
     const recentBlocked = hist.filter(h => h.blockedReason).slice(-10);
     for (const h of recentBlocked) {
       const reason = redact(h.blockedReason || '').slice(0, 80);
+      const disp   = h.worker || '?';
       items.push({
-        label: `operator停止 [${h.worker}]: ${reason}`,
+        label: `operator停止 [${disp}]: ${reason}`,
         src:   '!operator reliability',
         type:  'operator_blocked',
+        cmd:   `!msg send ${disp} operator停止を確認してください: ${reason.slice(0, 40)}`,
       });
     }
   } catch { /* ignore */ }
@@ -137,6 +177,7 @@ function _collectStopped() {
           label: `workflow停止: ${from} [${ev}] — ${redact(entry.stopReason || '').slice(0, 60)}`,
           src:   '!workflow status',
           type:  'workflow_blocked',
+          cmd:   `!msg send ${from} workflow停止の確認をお願いします [${ev}]`,
         });
       }
     }
@@ -148,7 +189,7 @@ function _collectStopped() {
 // ─────────────────────────────────────────────────────
 // _collectInProgress() — ③ 進行中
 //
-// 出典: task-manager (作業中), worker-status (working)
+// 出典: task-manager (作業中), worker-status (working / waiting_review)
 // ─────────────────────────────────────────────────────
 function _collectInProgress() {
   const items = [];
@@ -161,23 +202,34 @@ function _collectInProgress() {
         label: `[${t.id}] ${redact(t.title || '').slice(0, 60)}`,
         src:   '!task list',
         type:  'task_in_progress',
+        cmd:   `!task ${t.id}`,
       });
     });
   } catch { /* ignore */ }
 
-  // working 状態の worker
+  // working / waiting_review 状態の worker
   try {
     const wsm  = require('./worker-status');
     const data = wsm._load();
     for (const w of wsm.VALID_WORKERS) {
       const ws = data[w];
-      if (ws && ws.status === 'working') {
-        const disp = wsm.WORKER_DISPLAY[w] || w;
-        const task = ws.taskId ? ` [${ws.taskId}]` : '';
+      if (!ws) continue;
+      const disp = wsm.WORKER_DISPLAY[w] || w;
+      const task = ws.taskId ? ` [${ws.taskId}]` : '';
+      if (ws.status === 'working') {
         items.push({
           label: `${disp}: 作業中${task}`,
           src:   '!worker status',
           type:  'worker_working',
+          cmd:   `!msg send ${w} 進捗確認をお願いします${task}`,
+        });
+      } else if (ws.status === 'waiting_review') {
+        // レビュー待ち → 次の担当者へ送るコマンドを提示
+        items.push({
+          label: `${disp}: レビュー待ち${task}`,
+          src:   '!worker status',
+          type:  'worker_waiting_review',
+          cmd:   `!workflow handoff IMPLEMENT_DONE ${w}${ws.taskId ? ' ' + ws.taskId : ' <taskId>'} <概要>`,
         });
       }
     }
@@ -232,6 +284,32 @@ function _collectRecentDone() {
 }
 
 // ─────────────────────────────────────────────────────
+// _collectMsgPending() — ⑤ 返信待ちメッセージ (Phase1.5)
+//
+// 出典: internal-messages.js (WAITING_REPLY)
+// ─────────────────────────────────────────────────────
+function _collectMsgPending() {
+  const items = [];
+  try {
+    const im      = require('./internal-messages');
+    const msgs    = im._load();
+    const waiting = msgs.filter(m => m.status === im.STATUS.WAITING_REPLY);
+    waiting.slice(0, 10).forEach(m => {
+      const from = im.MEMBER_DISPLAY[m.from] || m.from;
+      const to   = im.MEMBER_DISPLAY[m.to]   || m.to;
+      const age  = _ageLabel(m.createdAt);
+      items.push({
+        label: `\`${m.id}\` ${from} → ${to}  (${age})  📌 ${redact(m.title || '').slice(0, 50)}`,
+        src:   '!msg pending',
+        type:  'msg_waiting',
+        cmd:   `!msg reply ${m.id} <返信内容>`,
+      });
+    });
+  } catch { /* ignore */ }
+  return items;
+}
+
+// ─────────────────────────────────────────────────────
 // _ageLabel(isoString) — 経過時間ラベル
 // ─────────────────────────────────────────────────────
 function _ageLabel(isoString) {
@@ -246,6 +324,7 @@ function _ageLabel(isoString) {
 
 // ─────────────────────────────────────────────────────
 // _renderSection(emoji, title, items, emptyMsg) — セクション整形
+// Phase1.5: cmd フィールドがあれば次アクションコマンドを表示
 // ─────────────────────────────────────────────────────
 function _renderSection(emoji, title, items, emptyMsg) {
   const lines = [`${emoji} **${title}** (${items.length}件)`];
@@ -253,16 +332,22 @@ function _renderSection(emoji, title, items, emptyMsg) {
     lines.push(`  ${emptyMsg}`);
   } else {
     for (const item of items) {
-      // 出典を付与
       const srcNote = item.src ? `  ← \`${item.src}\`` : '';
       lines.push(`  ${item.label}${srcNote}`);
+      // 次アクションコマンドを付与（判断はしない・コピペ用）
+      if (item.cmd) {
+        lines.push(`    → \`${item.cmd}\``);
+        if (item.cmdAlt) {
+          lines.push(`    → \`${item.cmdAlt}\`  (否認の場合)`);
+        }
+      }
     }
   }
   return lines;
 }
 
 // ─────────────────────────────────────────────────────
-// getBridgeStatus() — !bridge status のメイン関数
+// getBridgeStatus() — !bridge status のメイン関数 (Phase1.5)
 //
 // 戻り値: { ok: true, text: string, summary: {...} }
 // ─────────────────────────────────────────────────────
@@ -272,10 +357,12 @@ function getBridgeStatus() {
   const stopped  = _collectStopped();
   const inProg   = _collectInProgress();
   const done     = _collectRecentDone();
+  const msgs     = _collectMsgPending();  // Phase1.5
 
   const lines = [
-    `🌉 **Bridge Status** — CEO中継ポイント一覧`,
+    `🌉 **Bridge Status** — CEO中継ポイント一覧 (Phase1.5)`,
     `確認時刻: ${now}`,
+    `> → が付いた行はコピペで次へ配送できます`,
     ``,
   ];
 
@@ -287,8 +374,10 @@ function getBridgeStatus() {
   lines.push('');
   lines.push(..._renderSection('✅④', '完了 (直近24h)', done, '直近24hの完了なし'));
   lines.push('');
-  lines.push(`> ⚠️ 読み取り専用。変更・承認は社長が行います。`);
-  lines.push(`> 詳細: \`!msg pending\` / \`!task list\` / \`!workflow status\` / \`!operator reliability\``);
+  lines.push(..._renderSection('📨⑤', '返信待ちメッセージ', msgs, '返信待ちなし'));
+  lines.push('');
+  lines.push(`> ⚠️ 読み取り専用。承認・実行は社長が行います。`);
+  lines.push(`> 詳細: \`!msg pending\` / \`!task list\` / \`!workflow status\``);
 
   const text = lines.join('\n');
 
@@ -300,6 +389,7 @@ function getBridgeStatus() {
       stopped:    stopped.length,
       inProgress: inProg.length,
       recentDone: done.length,
+      msgPending: msgs.length,  // Phase1.5
     },
   };
 }
@@ -311,5 +401,6 @@ module.exports = {
   _collectStopped,
   _collectInProgress,
   _collectRecentDone,
+  _collectMsgPending,  // Phase1.5
   _ageLabel,
 };
