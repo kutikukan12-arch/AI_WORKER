@@ -16,18 +16,17 @@
 
 ---
 
-## 黒川 Desktop Bridge
+## 黒川 Desktop Bridge  〔CLOSED〕
 
-**回収トリガ: Bridge の次回拡張・修正時にまとめて回収**
+**状態: Bridge最小版 READY / Bridge追加改善は停止（2026-06）。次フェーズは YouTube診断β。**
+回収トリガ（旧: Bridge次回拡張時）は、下記Idea解消により消化済み。
 
-### Idea-1 bridge-status.js の文言と実装の不一致整理
-- 現状: コメント/commit文言に「kurokawa-report再利用」とあるが、実装は直接読み取り。
-- 影響: **安全影響なし**（動作は正しい）。文言と実装の乖離のみ。
-- 検討: 次回Bridge修正時に ①文言修正 または ②共有ヘルパー整理（実際に再利用構造へ）を検討。
+### Idea-1 bridge-status.js の文言と実装の不一致整理 ⟶ `ADOPTED`（commit 6ca8db7）
+- 現状（当時）: コメント/commit文言に「kurokawa-report再利用」とあるが、実装は直接読み取り。安全影響なし。
+- 解消: 6ca8db7 で虚偽コメント削除＋正確な記述（task-manager/workflow-state 等を直接読み取り）に修正。
 - 参照: `bot/utils/bridge-status.js`
 
-### Idea-2 !bridge status の固定表示順テスト追加
-- 現状: 表示順は固定だが、順序を保証するテストが無い。
-- 目的: 将来の並べ替え混入（リグレッション）を防ぐ。
-- 検討: `tests/bridge_status_test.js` に表示順固定のテストを追加。
+### Idea-2 !bridge status の固定表示順テスト追加 ⟶ `ADOPTED`（commit 6ca8db7）
+- 現状（当時）: 表示順は固定だが、順序を保証するテストが無い。
+- 解消: 6ca8db7 で固定順テスト（3h: 表示位置検証 / 3i: .sort()不在検証）を追加。23/23 pass。
 - 参照: `bot/utils/bridge-status.js` / `tests/bridge_status_test.js`
