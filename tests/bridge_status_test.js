@@ -181,6 +181,34 @@ test('3g. 「Bridge Status」見出しが含まれる', () => {
   assert.ok(r.text.includes('Bridge Status'), '見出しがない');
 });
 
+test('3h. 4セクションが固定順に出力される (CEO判断待ち→停止中→進行中→完了)', () => {
+  const r    = bs.getBridgeStatus();
+  const text = r.text;
+  const p1   = text.indexOf('CEO判断待ち');
+  const p2   = text.indexOf('停止中');
+  const p3   = text.indexOf('進行中');
+  const p4   = text.indexOf('完了');
+  assert.ok(p1 >= 0, 'CEO判断待ち セクションがない');
+  assert.ok(p2 >= 0, '停止中 セクションがない');
+  assert.ok(p3 >= 0, '進行中 セクションがない');
+  assert.ok(p4 >= 0, '完了 セクションがない');
+  assert.ok(p1 < p2, `CEO判断待ち(${p1}) が 停止中(${p2}) より後にある`);
+  assert.ok(p2 < p3, `停止中(${p2}) が 進行中(${p3}) より後にある`);
+  assert.ok(p3 < p4, `進行中(${p3}) が 完了(${p4}) より後にある`);
+});
+
+test('3i. 並べ替えロジックがない (固定バケツ順のみ)', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'bot', 'utils', 'bridge-status.js'), 'utf8'
+  );
+  // lines 配列の組み立てに .sort() がないこと（コレクター内部の .slice は除外）
+  // ※ コレクター内の Array#filter/slice は許可、getBridgeStatus() 本体の sort は禁止
+  const bodyLines = src.split('\n')
+    .filter(l => !l.trimStart().startsWith('//'));  // コメント行除外
+  const hasSort = bodyLines.some(l => l.includes('.sort('));
+  assert.ok(!hasSort, 'コード中に .sort() による並べ替えがある');
+});
+
 // ─────────────────────────────────────────────────────
 // 4. L-20 Runtime Reachability
 // ─────────────────────────────────────────────────────

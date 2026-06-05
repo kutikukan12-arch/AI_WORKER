@@ -4,10 +4,11 @@
 //
 // 目的:
 //   CEO の手動中継ポイントを4分類で一覧表示する。
-//   既存 kurokawa-report.js のコレクターを再利用し、
+//   task-manager / workflow-state / workflow-audit /
+//   desktop-operator-state / worker-status を直接読み取る。
 //   新規状態管理は持たない。
 //
-// 4分類:
+// 4分類（順序固定・AI判断による並べ替えなし）:
 //   ① CEO判断待ち  — 人間確認待ちタスク / CEO_CONFIRM_REQUIRED
 //   ② 停止中       — 保留タスク / operator blocked
 //   ③ 進行中       — 作業中タスク / working workers
@@ -17,6 +18,7 @@
 //   ✅ 読み取り専用 — 状態変更なし
 //   ✅ 出典表示     — 各項目に !コマンド 出典を付与
 //   ✅ redact 適用  — 全表示テキストに適用
+//   ✅ 表示順固定   — 重みスコアによる並べ替えなし（固定バケツ順）
 //   ❌ 判断代理なし  — READY / NEED_FIX 生成禁止
 //   ❌ 自動承認なし
 //   ❌ タスク作成なし
