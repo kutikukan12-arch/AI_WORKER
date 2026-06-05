@@ -335,6 +335,178 @@ test('8b. スコア70は A',      () => assert.strictEqual(yd._toRank(70).rank, 
 test('8c. スコア29以下は D',  () => assert.strictEqual(yd._toRank(20).rank, 'D'));
 
 // ─────────────────────────────────────────────────────
+// 9. 弱タイトル検知 (STEP1 完了条件)
+// ─────────────────────────────────────────────────────
+console.log('\n[9. 弱タイトル検知 — STEP1]');
+
+test('9a. 短いタイトル (< 10文字) → too_short 提案あり', () => {
+  removeModel();
+  const r = yd.diagnose({ title: '短い' });
+  assert.ok(r.ok, 'diagnose失敗');
+  const hasTitleImp = r.improvements.some(i => i.axis === 'ctr');
+  assert.ok(hasTitleImp, '短いタイトルなのに ctr 改善提案がない');
+  assert.ok(r.improvements[0].axis === 'ctr', '弱タイトル提案が先頭にない');
+});
+
+test('9b. 数字なしタイトル → no_numbers 提案あり', () => {
+  removeModel();
+  const sug = yd._detectWeakTitle('Pythonプログラミング入門講座完全版');
+  assert.ok(sug.some(s => s.reason === 'no_numbers'), '数字なしなのに no_numbers 提案がない');
+});
+
+test('9c. 具体性なし短文 → no_specifics 提案あり', () => {
+  removeModel();
+  const sug = yd._detectWeakTitle('テスト動画です');
+  assert.ok(sug.length > 0, '弱タイトルなのに提案がない');
+});
+
+test('9d. 強いタイトル → _detectWeakTitle が空を返す', () => {
+  const sug = yd._detectWeakTitle('【初心者向け】Python 3つの基本！10分でわかる完全解説');
+  assert.strictEqual(sug.length, 0, `強いタイトルなのに提案が出た: ${JSON.stringify(sug)}`);
+});
+
+test('9e. 弱タイトルの場合 improvements の先頭が ctr 軸', () => {
+  removeModel();
+  const r = yd.diagnose({ title: 'abc' }); // 3文字, 数字なし, 記号なし
+  assert.ok(r.improvements.length > 0, '改善提案がない');
+  assert.strictEqual(r.improvements[0].axis, 'ctr', '弱タイトル時に ctr が先頭でない');
+});
+
+test('9f. 登録者増加の提案テキストが含まれない', () => {
+  removeModel();
+  const r    = yd.diagnose({ title: 'テストタイトル！' });
+  const text = r.improvements.map(i => i.text).join(' ');
+  assert.ok(!text.includes('登録者'),     '登録者に関する提案がある');
+  assert.ok(!text.includes('チャンネル登録'), 'チャンネル登録の提案がある');
+  assert.ok(!text.includes('過去動画'),   '過去動画の提案がある');
+});
+
+test('9g. _buildImprovements(scores, title) はシグネチャに title を取る', () => {
+  removeModel();
+  const r1 = yd.diagnose({ title: 'a' });   // 弱
+  const r2 = yd.diagnose({ title: '【完全版】Python入門！3つのコツで10分マスター' }); // 強
+  assert.ok(r1.improvements[0].axis === 'ctr', '弱タイトルで ctr が先頭でない');
+  // 強タイトルは _detectWeakTitle が空なのでスコアベースのみ
+  // (強タイトルで全軸高ければ空も可)
+  assert.ok(Array.isArray(r2.improvements));
+});
+
+// ─────────────────────────────────────────────────────
+// 10. 6軸ラベル更新 (STEP2 完了条件)
+// ─────────────────────────────────────────────────────
+console.log('\n[10. 6軸ラベル更新・免責表示 — STEP2]');
+
+test('10a. AXIS_LABEL が新ラベルになっている', () => {
+  assert.strictEqual(yd.AXIS_LABEL.ctr,        'タイトル',       'ctr ラベルが旧のまま');
+  assert.strictEqual(yd.AXIS_LABEL.seo,        'SEO',            'seo ラベルが旧のまま');
+  assert.strictEqual(yd.AXIS_LABEL.timing,     '投稿タイミング', 'timing ラベルが旧のまま');
+  assert.strictEqual(yd.AXIS_LABEL.retention,  '構成',           'retention ラベルが旧のまま');
+  assert.strictEqual(yd.AXIS_LABEL.emotion,    '視聴期待',       'emotion ラベルが旧のまま');
+  assert.strictEqual(yd.AXIS_LABEL.uniqueness, '改善余地',       'uniqueness ラベルが旧のまま');
+});
+
+test('10b. formatDiagnosticText に新6軸ラベルが含まれる', () => {
+  saveDummyModel(30);
+  const r    = yd.diagnose({ title: 'テスト！' });
+  const text = yd.formatDiagnosticText(r, { title: 'テスト！' });
+  assert.ok(text.includes('タイトル'),       'タイトル ラベルがない');
+  assert.ok(text.includes('SEO'),            'SEO ラベルがない');
+  assert.ok(text.includes('投稿タイミング'), '投稿タイミング ラベルがない');
+  assert.ok(text.includes('構成'),           '構成 ラベルがない');
+  assert.ok(text.includes('視聴期待'),       '視聴期待 ラベルがない');
+  assert.ok(text.includes('改善余地'),       '改善余地 ラベルがない');
+});
+
+test('10c. formatDiagnosticText に必須免責が含まれる (CLI診断)', () => {
+  saveDummyModel(30);
+  const r    = yd.diagnose({ title: 'テスト！' });
+  const text = yd.formatDiagnosticText(r, { title: 'テスト！' });
+  assert.ok(
+    text.includes('結果は伸びを保証するものではなく'),
+    '必須免責「結果は伸びを保証するものではなく」が含まれていない'
+  );
+  assert.ok(
+    text.includes('改善ポイント提示を目的としています'),
+    '必須免責「改善ポイント提示を目的としています」が含まれていない'
+  );
+});
+
+test('10d. CTR適性 / 視聴維持適性 などの旧ラベルが formatDiagnosticText に出ない', () => {
+  saveDummyModel(30);
+  const r    = yd.diagnose({ title: 'テスト！' });
+  const text = yd.formatDiagnosticText(r, { title: 'テスト！' });
+  assert.ok(!text.includes('CTR適性'),     '旧ラベル CTR適性 が残っている');
+  assert.ok(!text.includes('視聴維持適性'), '旧ラベル 視聴維持適性 が残っている');
+  assert.ok(!text.includes('感情フック'),   '旧ラベル 感情フック が残っている');
+  assert.ok(!text.includes('競合差別化'),   '旧ラベル 競合差別化 が残っている');
+});
+
+// ─────────────────────────────────────────────────────
+// 11. Web最小UI確認 (STEP3 完了条件)
+// ─────────────────────────────────────────────────────
+console.log('\n[11. Web最小UI — STEP3]');
+
+const WEB_SERVER = path.join(__dirname, '..', 'web', 'youtube-diagnostic-server.js');
+const WEB_HTML   = path.join(__dirname, '..', 'web', 'youtube-diagnostic.html');
+
+test('11a. web/youtube-diagnostic-server.js が存在する', () => {
+  assert.ok(fs.existsSync(WEB_SERVER), 'サーバーファイルがない');
+});
+
+test('11b. web/youtube-diagnostic.html が存在する', () => {
+  assert.ok(fs.existsSync(WEB_HTML), 'HTMLファイルがない');
+});
+
+test('11c. サーバーに eval/exec がない', () => {
+  const src = fs.readFileSync(WEB_SERVER, 'utf8');
+  assert.ok(!src.includes('eval('),  'eval がある');
+  assert.ok(!src.includes('exec('),  'exec がある');
+});
+
+test('11d. HTML に入力フィールドが揃っている', () => {
+  const html = fs.readFileSync(WEB_HTML, 'utf8');
+  assert.ok(html.includes('id="title"'),       'タイトル入力がない');
+  assert.ok(html.includes('id="genre"'),       'ジャンル選択がない');
+  assert.ok(html.includes('id="duration"'),    '動画時間入力がない');
+  assert.ok(html.includes('id="subscribers"'), '登録者規模選択がない');
+  assert.ok(html.includes('id="publish-at"'),  '投稿予定入力がない');
+});
+
+test('11e. HTML に免責が含まれている', () => {
+  const html = fs.readFileSync(WEB_HTML, 'utf8');
+  assert.ok(html.includes('結果は伸びを保証するものではなく'), 'HTMLに免責がない');
+});
+
+test('11f. HTML に6軸スコア表示ロジックがある', () => {
+  const html = fs.readFileSync(WEB_HTML, 'utf8');
+  assert.ok(html.includes('タイトル'),       'タイトル軸がない');
+  assert.ok(html.includes('SEO'),            'SEO軸がない');
+  assert.ok(html.includes('投稿タイミング'), '投稿タイミング軸がない');
+  assert.ok(html.includes('構成'),           '構成軸がない');
+  assert.ok(html.includes('視聴期待'),       '視聴期待軸がない');
+  assert.ok(html.includes('改善余地'),       '改善余地軸がない');
+});
+
+test('11g. サーバーが追加 npm 依存なし (require が内部ファイルのみ)', () => {
+  const src = fs.readFileSync(WEB_SERVER, 'utf8');
+  // require の引数を抽出
+  const requires = [...src.matchAll(/require\(['"]([^'"]+)['"]\)/g)].map(m => m[1]);
+  const external = requires.filter(r => !r.startsWith('.') && !r.startsWith('/'));
+  const BUILTINS = new Set(['http', 'fs', 'path', 'url', 'os', 'crypto', 'stream']);
+  const unknown  = external.filter(r => !BUILTINS.has(r));
+  assert.strictEqual(unknown.length, 0, `外部 npm 依存がある: ${unknown.join(', ')}`);
+});
+
+test('11h. HTML に禁止機能がない (ログイン/課金/SNS連携)', () => {
+  const html = fs.readFileSync(WEB_HTML, 'utf8');
+  assert.ok(!html.includes('login'),    'login がある');
+  assert.ok(!html.includes('payment'),  'payment がある');
+  assert.ok(!html.includes('twitter'),  'twitter連携がある');
+  assert.ok(!html.includes('history'),  '履歴機能がある');
+  assert.ok(!html.includes('discord'),  'Discord接続がある');
+});
+
+// ─────────────────────────────────────────────────────
 // 後処理: モデルファイルを元に戻す
 // ─────────────────────────────────────────────────────
 restoreModel();

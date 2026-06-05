@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YouTube 投稿前診断</title>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Segoe UI',system-ui,sans-serif;background:#0f1117;color:#e2e8f0;min-height:100vh}
+
+    header{
+      background:#1a1d27;border-bottom:1px solid #2d3148;
+      padding:16px 24px;display:flex;align-items:center;gap:12px
+    }
+    header h1{font-size:1.1rem;font-weight:700;color:#a78bfa}
+    header span{font-size:.8rem;color:#64748b}
+
+    main{max-width:760px;margin:32px auto;padding:0 16px 64px}
+
+    /* ── Form ───────────────────────────────────── */
+    .card{background:#1a1d27;border:1px solid #2d3148;border-radius:12px;padding:24px;margin-bottom:20px}
+    .card h2{font-size:.9rem;font-weight:600;color:#a78bfa;margin-bottom:16px;text-transform:uppercase;letter-spacing:.04em}
+
+    label{display:block;font-size:.8rem;color:#94a3b8;margin-bottom:4px;margin-top:14px}
+    label:first-of-type{margin-top:0}
+
+    input[type=text],input[type=number],input[type=datetime-local],select{
+      width:100%;padding:9px 12px;background:#0f1117;border:1px solid #2d3148;
+      border-radius:8px;color:#e2e8f0;font-size:.9rem;outline:none
+    }
+    input:focus,select:focus{border-color:#7c3aed;box-shadow:0 0 0 2px rgba(124,58,237,.25)}
+    select option{background:#1a1d27}
+
+    .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+
+    button#diagnose-btn{
+      width:100%;margin-top:20px;padding:12px;
+      background:linear-gradient(135deg,#7c3aed,#6d28d9);border:none;
+      border-radius:8px;color:#fff;font-size:1rem;font-weight:600;cursor:pointer;
+      transition:opacity .15s
+    }
+    button#diagnose-btn:hover{opacity:.9}
+    button#diagnose-btn:disabled{opacity:.5;cursor:not-allowed}
+
+    /* ── Result ─────────────────────────────────── */
+    #result{display:none}
+
+    .score-banner{
+      text-align:center;padding:28px 16px;
+      background:linear-gradient(135deg,#1e1b4b,#1a1d27);
+      border:1px solid #4c1d95;border-radius:12px;margin-bottom:20px
+    }
+    .score-banner .total{font-size:3.5rem;font-weight:800;color:#a78bfa;line-height:1}
+    .score-banner .rank{font-size:1.1rem;color:#c4b5fd;margin-top:8px}
+    .score-banner .title-preview{font-size:.8rem;color:#64748b;margin-top:8px}
+
+    /* 6軸 */
+    .axes{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    @media(max-width:500px){.axes{grid-template-columns:1fr}}
+    .axis-item{background:#0f1117;border:1px solid #2d3148;border-radius:8px;padding:12px 14px}
+    .axis-item .axis-name{font-size:.75rem;color:#94a3b8;margin-bottom:6px}
+    .axis-item .axis-score{font-size:1.3rem;font-weight:700;color:#e2e8f0;margin-bottom:6px}
+    .bar-track{background:#2d3148;border-radius:4px;height:6px;overflow:hidden}
+    .bar-fill{height:100%;border-radius:4px;transition:width .6s ease}
+
+    /* 改善提案 */
+    .improvement{
+      display:flex;gap:12px;padding:14px;
+      background:#0f1117;border:1px solid #2d3148;border-radius:8px;margin-bottom:10px
+    }
+    .improvement .priority{font-size:1.1rem;flex-shrink:0;margin-top:1px}
+    .improvement .imp-body{}
+    .improvement .imp-axis{font-size:.72rem;color:#7c3aed;font-weight:600;margin-bottom:3px}
+    .improvement .imp-text{font-size:.85rem;color:#cbd5e1;line-height:1.5}
+
+    /* 免責 */
+    .disclaimer{
+      margin-top:20px;padding:12px 16px;
+      background:#1a1024;border:1px solid #4c1d95;border-radius:8px;
+      font-size:.78rem;color:#a78bfa;line-height:1.6
+    }
+    .disclaimer strong{display:block;margin-bottom:2px}
+
+    /* 状態 */
+    #error-msg{color:#f87171;font-size:.85rem;text-align:center;padding:8px 0;display:none}
+    .spinner{display:inline-block;width:18px;height:18px;border:2px solid #4c1d95;
+             border-top-color:#a78bfa;border-radius:50%;animation:spin .7s linear infinite;margin-left:8px;vertical-align:middle}
+    @keyframes spin{to{transform:rotate(360deg)}}
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🎬 YouTube 投稿前診断</h1>
+  <span>投稿前に変更できる要素だけを診断します</span>
+</header>
+
+<main>
+
+  <!-- 入力フォーム -->
+  <div class="card">
+    <h2>動画情報を入力</h2>
+
+    <label for="title">タイトル <span style="color:#f87171">*</span></label>
+    <input type="text" id="title" placeholder="例: 【初心者向け】Python 3つの基本がわかる！10分解説" maxlength="200">
+
+    <div class="row2">
+      <div>
+        <label for="genre">ジャンル</label>
+        <select id="genre">
+          <option value="">未選択</option>
+          <option value="game">ゲーム実況</option>
+          <option value="vtuber">VTuber</option>
+          <option value="cooking">料理・グルメ</option>
+          <option value="education">教育・解説</option>
+          <option value="lifestyle">ライフスタイル</option>
+          <option value="music">音楽・歌ってみた</option>
+          <option value="travel">旅行・アウトドア</option>
+          <option value="tech">テクノロジー</option>
+          <option value="beauty">美容・ファッション</option>
+          <option value="sports">スポーツ</option>
+          <option value="other">その他</option>
+        </select>
+      </div>
+      <div>
+        <label for="duration">動画時間（分）</label>
+        <input type="number" id="duration" placeholder="例: 10" min="0" max="1440" step="0.5">
+      </div>
+    </div>
+
+    <div class="row2">
+      <div>
+        <label for="subscribers">登録者規模</label>
+        <select id="subscribers">
+          <option value="0">〜100人（開始直後）</option>
+          <option value="500">〜1,000人</option>
+          <option value="5000">〜1万人</option>
+          <option value="50000">〜10万人</option>
+          <option value="200000">10万人〜</option>
+        </select>
+      </div>
+      <div>
+        <label for="publish-at">投稿予定日時</label>
+        <input type="datetime-local" id="publish-at">
+      </div>
+    </div>
+
+    <p id="error-msg">タイトルを入力してください</p>
+    <button id="diagnose-btn">診断する</button>
+  </div>
+
+  <!-- 診断結果 -->
+  <div id="result">
+
+    <div class="score-banner">
+      <div class="total" id="total-score">—</div>
+      <div class="rank"  id="rank-label">—</div>
+      <div class="title-preview" id="title-preview"></div>
+    </div>
+
+    <div class="card">
+      <h2>6軸診断</h2>
+      <div class="axes" id="axes-grid"></div>
+    </div>
+
+    <div class="card">
+      <h2>改善提案</h2>
+      <div id="improvements-list"></div>
+    </div>
+
+    <div class="disclaimer">
+      <strong>⚠️ 免責事項</strong>
+      結果は伸びを保証するものではなく、改善ポイント提示を目的としています。<br>
+      スコアは投稿前に変更可能な要素（タイトル・タグ・説明文・投稿時間・動画尺）を対象とした参考値です。
+    </div>
+
+  </div>
+
+</main>
+
+<script>
+(function () {
+  'use strict';
+
+  const AXES = [
+    { key: 'ctr',        label: 'タイトル' },
+    { key: 'seo',        label: 'SEO' },
+    { key: 'timing',     label: '投稿タイミング' },
+    { key: 'retention',  label: '構成' },
+    { key: 'emotion',    label: '視聴期待' },
+    { key: 'uniqueness', label: '改善余地' },
+  ];
+
+  const PRIORITY_EMOJI = { high: '🔴', medium: '🟡', low: '🟢' };
+
+  function barColor(score) {
+    if (score >= 75) return '#34d399';
+    if (score >= 50) return '#fbbf24';
+    return '#f87171';
+  }
+
+  function renderAxes(scores) {
+    const grid = document.getElementById('axes-grid');
+    grid.innerHTML = '';
+    AXES.forEach(({ key, label }) => {
+      const score = scores[key] ?? 0;
+      const div = document.createElement('div');
+      div.className = 'axis-item';
+      div.innerHTML =
+        `<div class="axis-name">${label}</div>` +
+        `<div class="axis-score">${score} <span style="font-size:.7rem;color:#64748b">/ 100</span></div>` +
+        `<div class="bar-track"><div class="bar-fill" style="width:${score}%;background:${barColor(score)}"></div></div>`;
+      grid.appendChild(div);
+    });
+  }
+
+  function renderImprovements(improvements) {
+    const list = document.getElementById('improvements-list');
+    list.innerHTML = '';
+    if (!improvements || !improvements.length) {
+      list.innerHTML = '<p style="color:#34d399;font-size:.85rem">✅ 全軸スコアが高水準です。このまま投稿を進めましょう！</p>';
+      return;
+    }
+    improvements.forEach(imp => {
+      const emoji = PRIORITY_EMOJI[imp.priority] || '⚪';
+      const div = document.createElement('div');
+      div.className = 'improvement';
+      div.innerHTML =
+        `<div class="priority">${emoji}</div>` +
+        `<div class="imp-body">` +
+          `<div class="imp-axis">${imp.axisLabel || imp.axis}</div>` +
+          `<div class="imp-text">${imp.text}</div>` +
+        `</div>`;
+      list.appendChild(div);
+    });
+  }
+
+  function showResult(data) {
+    document.getElementById('total-score').textContent = data.totalScore;
+    document.getElementById('rank-label').textContent  = data.rank + ' ' + data.rankLabel;
+
+    const titleEl = document.getElementById('title-preview');
+    const t = document.getElementById('title').value.trim();
+    titleEl.textContent = t ? `「${t.slice(0, 40)}${t.length > 40 ? '…' : ''}」` : '';
+
+    renderAxes(data.scores);
+    renderImprovements(data.improvements);
+
+    const resultEl = document.getElementById('result');
+    resultEl.style.display = 'block';
+    resultEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  document.getElementById('diagnose-btn').addEventListener('click', async () => {
+    const title = document.getElementById('title').value.trim();
+    const errEl = document.getElementById('error-msg');
+    errEl.style.display = 'none';
+
+    if (!title) {
+      errEl.style.display = 'block';
+      document.getElementById('title').focus();
+      return;
+    }
+
+    const btn = document.getElementById('diagnose-btn');
+    btn.disabled = true;
+    btn.innerHTML = '診断中 <span class="spinner"></span>';
+
+    const durationMin = parseFloat(document.getElementById('duration').value) || 0;
+    const publishVal  = document.getElementById('publish-at').value;
+
+    const payload = {
+      title,
+      genre:           document.getElementById('genre').value || undefined,
+      duration:        Math.round(durationMin * 60),
+      subscriberCount: parseInt(document.getElementById('subscribers').value, 10) || 0,
+      publishedAt:     publishVal ? new Date(publishVal).toISOString() : undefined,
+    };
+
+    try {
+      const res  = await fetch('/diagnose', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        showResult(data);
+      } else {
+        alert('診断に失敗しました: ' + (data.error || '不明なエラー'));
+      }
+    } catch (e) {
+      alert('通信エラー: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '診断する';
+    }
+  });
+
+  // Enter キー送信
+  document.getElementById('title').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('diagnose-btn').click();
+  });
+})();
+</script>
+</body>
+</html>

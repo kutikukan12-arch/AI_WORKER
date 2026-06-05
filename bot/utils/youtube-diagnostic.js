@@ -59,9 +59,9 @@ const RANK_TABLE = [
   { min: 90, rank: 'S',  label: '🏆 最高水準' },
   { min: 80, rank: 'A+', label: '⭐ 投稿準備 優秀' },
   { min: 70, rank: 'A',  label: '✅ 投稿準備 良好' },
-  { min: 60, rank: 'B+', label: '📈 あと少しで伸びる' },
-  { min: 50, rank: 'B',  label: '🔧 改善で大きく変わる' },
-  { min: 40, rank: 'C+', label: '⚠️ 要改善（CTR/SEO）' },
+  { min: 60, rank: 'B+', label: '📈 改善すると強くなる' },
+  { min: 50, rank: 'B',  label: '🔧 改善で変わる' },
+  { min: 40, rank: 'C+', label: '⚠️ 要改善（タイトル/SEO）' },
   { min: 30, rank: 'C',  label: '⚠️ 要改善（複数軸）' },
   { min: 0,  rank: 'D',  label: '🔴 大幅な見直しを推奨' },
 ];
@@ -194,7 +194,69 @@ function _computeFallbackAxisScores(features, title, description, tags, duration
 }
 
 // ─────────────────────────────────────────────────────
+// _detectWeakTitle(title) — 弱タイトル検知
+//
+// 投稿前に変更可能な「タイトルの弱さ」を検出する。
+// スコアに関係なく、以下の条件が該当する場合は必ずタイトル改善を提案する。
+//
+// 検知条件:
+//   1. 短い: 実質10文字未満
+//   2. 数字なし: 具体的な数値・順序がない
+//   3. 具体性なし: 括弧・区切り記号・アクション語がない短文
+//   4. 検索されにくい: 汎用語のみ
+// ─────────────────────────────────────────────────────
+function _detectWeakTitle(title) {
+  const suggestions = [];
+  const t   = String(title || '').trim();
+  const len = t.replace(/\s/g, '').length;
+
+  // 1. 短い
+  if (len < 10) {
+    suggestions.push({
+      reason: 'too_short',
+      text: `タイトルが短すぎます（${len}文字）。20〜60文字で内容が伝わるタイトルに変更しましょう`,
+    });
+  }
+
+  // 2. 数字なし（具体性の欠如）
+  if (!/[\d０-９]/.test(t)) {
+    suggestions.push({
+      reason: 'no_numbers',
+      text: 'タイトルに数字（「3つ」「10分で」「第1回」など）を加えると具体性が増しクリックされやすくなります',
+    });
+  }
+
+  // 3. 具体性なし（記号・括弧・アクション語がない2語以内の短文）
+  const hasSpecific = /[【】〔〕「」:：|｜！!？?★♪♡…#＃]/.test(t);
+  const wordCount   = t.split(/[\s　]+/).filter(Boolean).length;
+  if (!hasSpecific && wordCount <= 2 && len >= 10) {
+    suggestions.push({
+      reason: 'no_specifics',
+      text: '「【カテゴリ】タイトル」や「〇〇してみた！」など、内容・状況を具体的に伝えるタイトルにしましょう',
+    });
+  }
+
+  // 4. 検索されにくい（汎用語のみで構成）
+  const GENERIC = new Set(['テスト', '動画', '投稿', '配信', 'チャンネル', 'コンテンツ', 'やってみた', '挑戦']);
+  const stripped = t.replace(/[【】〔〕「」！!？?：:｜|#＃★♪♡…]/g, ' ').trim();
+  const words    = stripped.split(/[\s　]+/).filter(Boolean);
+  if (words.length > 0 && words.every(w => GENERIC.has(w))) {
+    suggestions.push({
+      reason: 'low_searchability',
+      text: 'ジャンル名・ゲーム名・固有名詞などを含めると検索から見つかりやすくなります',
+    });
+  }
+
+  return suggestions;
+}
+
+// ─────────────────────────────────────────────────────
 // 改善提案生成（固定ルール / ML 共通）
+//
+// 禁止提案（投稿前に変更不可なものは提案しない）:
+//   ❌ 登録者を増やす
+//   ❌ 視聴維持率を上げる（過去動画の実績）
+//   ❌ 過去実績の改善
 // ─────────────────────────────────────────────────────
 const IMPROVEMENT_MAP = {
   ctr: [
@@ -228,26 +290,53 @@ const IMPROVEMENT_MAP = {
   ],
 };
 
+// ─── 6軸表示ラベル（Step2: 投稿前改善支援ツールとしての表記）───
+// 内部キーは変えない（ML モデルとの互換性を保つ）
+// 表示は「投稿前に変更可能な要素」に合わせたラベルへ更新
 const AXIS_LABEL = {
-  ctr:       'CTR適性',
-  retention: '視聴維持適性',
-  seo:       'SEO強度',
-  emotion:   '感情フック',
-  timing:    '投稿タイミング',
-  uniqueness:'競合差別化',
+  ctr:       'タイトル',       // タイトル強度（変更可能）
+  retention: '構成',           // 動画尺・説明文・構成（変更可能）
+  seo:       'SEO',            // タグ・説明文・タイトルキーワード（変更可能）
+  emotion:   '視聴期待',       // タイトル・サムネ訴求（変更可能）
+  timing:    '投稿タイミング', // 投稿日時（変更可能）
+  uniqueness:'改善余地',       // 差別化余地（変更可能）
 };
 
-function _buildImprovements(scores) {
-  const suggestions = [];
+// _buildImprovements(scores, title)
+//
+// 1. 弱タイトル検知を先行評価 → タイトル提案を最優先で追加
+// 2. スコアベースの提案（投稿前に変更可能なものだけ）
+// 3. 最大3件に絞って返す
+function _buildImprovements(scores, title) {
+  // ── 弱タイトル検知（最優先）─────────────────────────
+  const weakSugs  = _detectWeakTitle(title || '');
+  const titleWeak = weakSugs.length > 0;
+
+  // ── スコアベース提案（ctr軸は弱タイトル検知と重複させない）──
+  const scoreBased = [];
   for (const [axis, rules] of Object.entries(IMPROVEMENT_MAP)) {
     const score   = scores[axis];
     const matched = rules.filter(r => score < r.threshold);
-    if (matched.length === 0) continue;
+    if (!matched.length) continue;
+    if (axis === 'ctr' && titleWeak) continue; // 重複回避
     const priority = score < 50 ? 'high' : score < 65 ? 'medium' : 'low';
-    suggestions.push({ axis, axisLabel: AXIS_LABEL[axis], score, priority, text: matched[0].text });
+    scoreBased.push({ axis, axisLabel: AXIS_LABEL[axis], score, priority, text: matched[0].text });
   }
-  suggestions.sort((a, b) => a.score - b.score);
-  return suggestions.slice(0, 3);
+  scoreBased.sort((a, b) => a.score - b.score);
+
+  // ── 結合: 弱タイトル提案を先頭に置く ─────────────────
+  const result = [];
+  if (titleWeak) {
+    result.push({
+      axis:      'ctr',
+      axisLabel: AXIS_LABEL.ctr,
+      score:     scores.ctr,
+      priority:  'high',
+      text:      weakSugs[0].text,
+    });
+  }
+  result.push(...scoreBased);
+  return result.slice(0, 3);
 }
 
 // ─────────────────────────────────────────────────────
@@ -331,7 +420,7 @@ function diagnose(input) {
   // ── [4] 総合スコア・ランク・改善提案 ──────────────────
   const totalScore   = Math.round(Object.values(scores).reduce((a, b) => a + b, 0) / 6);
   const { rank, label: rankLabel } = _toRank(totalScore);
-  const improvements = _buildImprovements(scores);
+  const improvements = _buildImprovements(scores, title);
 
   return {
     ok: true,
@@ -360,12 +449,12 @@ function formatDiagnosticText(result, input = {}) {
     `**総合スコア: ${totalScore} / 100 — ${rank} ${rankLabel}**`,
     ``,
     `**── 6軸診断 ──**`,
-    `📊 CTR適性:        ${_scoreBar(scores.ctr)}`,
-    `📊 視聴維持適性:   ${_scoreBar(scores.retention)}`,
-    `📊 SEO強度:        ${_scoreBar(scores.seo)}`,
-    `📊 感情フック:     ${_scoreBar(scores.emotion)}`,
-    `📊 投稿タイミング: ${_scoreBar(scores.timing)}`,
-    `📊 競合差別化:     ${_scoreBar(scores.uniqueness)}`,
+    `📊 タイトル:        ${_scoreBar(scores.ctr)}`,
+    `📊 SEO:             ${_scoreBar(scores.seo)}`,
+    `📊 投稿タイミング:  ${_scoreBar(scores.timing)}`,
+    `📊 構成:            ${_scoreBar(scores.retention)}`,
+    `📊 視聴期待:        ${_scoreBar(scores.emotion)}`,
+    `📊 改善余地:        ${_scoreBar(scores.uniqueness)}`,
     ``,
   ].filter(l => l !== '');
 
@@ -385,7 +474,7 @@ function formatDiagnosticText(result, input = {}) {
     ? `🤖 学習済みMLモデル使用（${modelInfo.mlSamples}件, 推定ヒット率 ${modelInfo.mlProb}%）`
     : `🔧 Cold-start: ルールベース診断（訓練データ ${modelInfo.mlSamples} 件 / 必要 ${MIN_ML_SAMPLES} 件）`;
   lines.push(`*${mlNote}*`);
-  lines.push('*このスコアは投稿前の最適度を示します。実際の再生回数を予測するものではありません。*');
+  lines.push(`> ⚠️ 結果は伸びを保証するものではなく、改善ポイント提示を目的としています`);
 
   return lines.join('\n');
 }
@@ -394,11 +483,13 @@ module.exports = {
   diagnose,
   formatDiagnosticText,
   // テスト用内部 API
+  _detectWeakTitle,
   _computeMLAxisScores,
   _computeFallbackAxisScores,
   _buildImprovements,
   _toRank,
   _loadPreModel,
+  AXIS_LABEL,
   AXIS_FEATURE_IDX,
   MIN_ML_SAMPLES,
 };
