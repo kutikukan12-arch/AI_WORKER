@@ -7094,10 +7094,10 @@ client.on('interactionCreate', async (interaction) => {
 
   if (!['approve', 'deny', 'detail'].includes(action) || !taskId) return;
 
-  // CEO_USER_IDS チェック（設定されている場合のみ制限）
+  // CEO_USER_IDS チェック（fail-closed: 空=無効、未設定=全拒否）
   const cir = require('./utils/ceo-intent-router');
   const ceoids = cir.getCEOUserIds();
-  if (ceoids.length > 0 && !ceoids.includes(user.id)) {
+  if (ceoids.length === 0 || !ceoids.includes(user.id)) {
     await interaction.reply({
       content: '⚠️ この操作はCEOのみ実行できます。',
       ephemeral: true,
@@ -7129,17 +7129,24 @@ client.on('interactionCreate', async (interaction) => {
         }).catch(() => {});
       }
     } else if (action === 'deny') {
-      // !deny 相当（待機状態にして停止）
-      approvalManager.deny(taskId, user.tag);
-      await interaction.update({
-        content: `⏸ **保留にしました**: \`${taskId}\`\n操作者: ${user.tag}\n\`!resume ${taskId}\` で再開できます。`,
-        components: [],
+      // 「待機」= PENDING 維持（DENIED には変更しない）
+      await interaction.reply({
+        content: `⏸ **承認待ちを継続します**: \`${taskId}\`\nあとで \`!approval list\` で確認できます。`,
+        ephemeral: true,
       }).catch(() => {});
-      logger.info(`[ApprovalCard] 保留: ${taskId} by ${user.tag}`);
+      logger.info(`[ApprovalCard] 待機（PENDING維持）: ${taskId} by ${user.tag}`);
     } else if (action === 'detail') {
-      // タスク詳細を ephemeral で表示
+      // タスク詳細を ephemeral で表示（prompt に redact 適用）
       const task = taskManager.getTask ? taskManager.getTask(taskId) : null;
-      const prompt = (task?.prompt || '詳細なし').slice(0, 300);
+      const rawPrompt = task?.prompt || '詳細なし';
+      let safePrompt = rawPrompt;
+      try {
+        const { guardDiscordContent } = require('./utils/secret-guardian');
+        const guard = guardDiscordContent(rawPrompt, { type: 'taskDetail' });
+        if (guard.redactedContent) safePrompt = guard.redactedContent;
+        else if (!guard.allowed) safePrompt = '[詳細は機密のため表示できません]';
+      } catch (_) { /* guardエラー時は rawPrompt をそのまま使用 */ }
+      const prompt = safePrompt.slice(0, 300);
       await interaction.reply({
         content: `🔍 **タスク詳細**: \`${taskId}\`\n\n${prompt}\n\n\`!task show ${taskId}\` で全詳細を確認できます。`,
         ephemeral: true,

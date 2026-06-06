@@ -651,11 +651,11 @@ function formatIntentResponse(intentResult, deps = {}) {
 // CEO_USER_IDs — CEOのDiscord User IDリスト
 //
 // 環境変数 CEO_USER_IDS (カンマ区切り) から取得。
-// 空の場合は全ユーザーを対象とする（開発用）。
+// 空の場合はボタン操作を全拒否（fail-closed）。
 // ─────────────────────────────────────────────────────
 function getCEOUserIds() {
   const raw = process.env.CEO_USER_IDS || '';
-  if (!raw.trim()) return []; // 空 = 制限なし
+  if (!raw.trim()) return []; // 空 = 無効（ボタン操作不可）
   return raw.split(',').map(s => s.trim()).filter(Boolean);
 }
 
