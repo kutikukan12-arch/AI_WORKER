@@ -8119,6 +8119,57 @@ client.on('messageCreate', async (message) => {
       return;
     }
 
+    // resolve — 指定 handoff を解決済みにマーク
+    // !workflow resolve <handoffId>
+    if (wfSub === 'resolve') {
+      const resolveId = wfArgs[1] || '';
+      if (!resolveId) {
+        await message.reply(
+          '**!workflow resolve — ハンドオフ解決済みマーク**\n\n' +
+          '```\n' +
+          '!workflow resolve <handoffId>\n' +
+          '```\n\n' +
+          '`!workflow status` でハンドオフ ID を確認してください。\n' +
+          '⚠️ 指定 ID のみ変更。他のハンドオフは変更しません。'
+        ).catch(() => {});
+        return;
+      }
+
+      const wfState = require('./utils/workflow-state');
+      const before  = wfState._load();
+      const found   = (before.handoffs || []).find(h =>
+        h.id === resolveId || h.taskId === resolveId
+      );
+
+      if (!found) {
+        await message.reply(
+          `❌ ハンドオフ ID \`${resolveId}\` が見つかりません。\n` +
+          '`!workflow status` で有効な ID を確認してください。'
+        ).catch(() => {});
+        return;
+      }
+
+      if (found.resolvedAt) {
+        await message.reply(
+          `⚠️ \`${resolveId}\` は既に解決済みです。\n` +
+          `解決日時: ${new Date(found.resolvedAt).toLocaleString('ja-JP')}`
+        ).catch(() => {});
+        return;
+      }
+
+      wfState.resolveHandoff(resolveId);
+
+      await message.reply(
+        `✅ **ハンドオフ解決済み**\n\n` +
+        `ID: \`${found.id || resolveId}\`\n` +
+        `イベント: \`${found.event}\`\n` +
+        `from: ${found.from || '?'} → to: ${found.to}\n` +
+        `taskId: \`${found.taskId || '—'}\`\n` +
+        `解決日時: ${new Date().toLocaleString('ja-JP')}`
+      ).catch(() => {});
+      return;
+    }
+
     // route — 手動ルーティング提案（提案のみ・自動実行しない）
     if (wfSub === 'route') {
       const eventArg   = wfArgs[1] || '';
@@ -8152,9 +8203,11 @@ client.on('messageCreate', async (message) => {
     await message.reply(
       '**!workflow — Workflow Automation（黒川）**\n\n' +
       '```\n' +
-      '!workflow messages         → 返信待ちメッセージ一覧\n' +
-      '!workflow status           → ハンドオフ状態・長待ち検出\n' +
-      '!workflow route <event> <taskId> <概要> → ルーティング提案\n' +
+      '!workflow messages                         → 返信待ちメッセージ一覧\n' +
+      '!workflow status                           → ハンドオフ状態・長待ち検出\n' +
+      '!workflow resolve <handoffId>              → 指定ハンドオフを解決済みマーク\n' +
+      '!workflow route <event> <taskId> <概要>   → ルーティング提案\n' +
+      '!workflow handoff <EVENT> <from> <taskId> <概要>  → 固定ルート自動配送\n' +
       '```\n\n' +
       '⚠️ 黒川は配送・管理のみ。判断は CEO が行います。'
     ).catch(() => {});
@@ -8640,6 +8693,50 @@ client.on('messageCreate', async (message) => {
   if (content.startsWith('!restart')) {
     const args = content.split(/\s+/).slice(1);
     await handleRestart(message, args);
+    return;
+  }
+
+  // ─────────────────────────────────────────────────────
+  // !approval — Approval 管理拡張コマンド (Phase2)
+  // !approval close-stale [--exclude <id> ...]
+  //   → pending で対応タスクが存在しない孤児を stale 化
+  //   → 生存タスクは絶対変更しない
+  // ─────────────────────────────────────────────────────
+  if (content.startsWith('!approval')) {
+    const apArgs = content.split(/\s+/).slice(1);
+    const apSub  = apArgs[0] || '';
+
+    if (apSub === 'close-stale') {
+      // --exclude <id> [...] の解析
+      const excludeIds = [];
+      for (let i = 1; i < apArgs.length; i++) {
+        if (apArgs[i] === '--exclude' && apArgs[i + 1]) {
+          excludeIds.push(apArgs[i + 1]);
+          i++;
+        }
+      }
+
+      const am     = require('./utils/approval-manager');
+      const result = am.closeStaleApprovals({
+        excludeIds,
+        resolvedBy: `CEO (${message.author?.tag || 'manual'})`,
+      });
+      const text   = am.formatCloseStaleResult(result);
+      await message.reply(text.slice(0, 1900)).catch(() => {});
+      return;
+    }
+
+    // help
+    await message.reply(
+      '**!approval — Approval 管理拡張 (Phase2)**\n\n' +
+      '```\n' +
+      '!approval close-stale\n' +
+      '  → pending で対応タスクが存在しない孤児を stale 化\n' +
+      '  → オプション: --exclude <taskId>  (対象外にするID)\n' +
+      '  例: !approval close-stale --exclude task_1780486374168\n' +
+      '```\n\n' +
+      '⚠️ stale は deny と区別されます。生存タスクは変更しません。'
+    ).catch(() => {});
     return;
   }
 

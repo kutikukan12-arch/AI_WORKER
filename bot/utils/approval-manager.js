@@ -46,6 +46,7 @@ const STATES = {
   APPROVED: 'approved',
   DENIED:   'denied',
   PAUSED:   'paused',
+  STALE:    'stale',   // Phase2: 孤児タスク（対応タスク不在の pending）deny とは区別
 };
 
 // ─── 状態絵文字 ───
@@ -54,6 +55,7 @@ const STATE_EMOJI = {
   approved: '✅',
   denied:   '❌',
   paused:   '⏸️',
+  stale:    '🗑️',  // Phase2: 孤児タスク
 };
 
 // ─────────────────────────────────────────────────────
@@ -331,6 +333,121 @@ function formatPendingList() {
   return lines.join('\n');
 }
 
+// ─────────────────────────────────────────────────────
+// closeStaleApprovals(options) — 孤児 pending を stale 化 (Phase2)
+//
+// pending 承認のうち、対応タスクが存在しない「孤児」のみ stale 化する。
+// - deny とは区別（stale は「タスク消滅による自動失効」）
+// - 生存タスクは絶対変更しない
+// - 監査フィールド staleAt / staleReason / resolvedBy を記録
+// - excludeIds に含まれる taskId はスキップ（手動除外）
+//
+// options: { excludeIds?: string[], resolvedBy?: string }
+// 戻り値: { ok: true, staled: [{taskId, danger, reason}], skipped: [{taskId, reason}] }
+//
+// 禁止:
+//   ❌ 自動実行（バッチ/夜間 cron）
+//   ❌ approve/deny 状態の変更
+//   ❌ 生存タスクへの変更
+// ─────────────────────────────────────────────────────
+function closeStaleApprovals(options = {}) {
+  const { excludeIds = [], resolvedBy = 'system' } = options;
+
+  // task-manager を動的 require（循環依存防止）
+  let tm;
+  try { tm = require('./task-manager'); } catch { tm = null; }
+
+  const data = load();
+  const pending = data.approvals.filter(a =>
+    a.state === STATES.PENDING &&
+    !excludeIds.includes(a.taskId)
+  );
+
+  const staled  = [];
+  const skipped = [];
+  const now     = new Date().toISOString();
+
+  for (const a of pending) {
+    // タスク生存チェック
+    let taskExists = false;
+    try {
+      if (tm) {
+        const task = tm.getTask(a.taskId);
+        taskExists = !!(task && task.id);
+      }
+    } catch { taskExists = false; }
+
+    if (taskExists) {
+      // 生存タスクはスキップ（絶対変更禁止）
+      skipped.push({ taskId: a.taskId, reason: 'task_exists', danger: a.danger });
+    } else {
+      // 孤児 → stale 化
+      const idx = data.approvals.findIndex(x => x.taskId === a.taskId);
+      if (idx !== -1) {
+        data.approvals[idx].state       = STATES.STALE;
+        data.approvals[idx].updatedAt   = now;
+        data.approvals[idx].staleAt     = now;
+        data.approvals[idx].staleReason = 'task_not_found';
+        data.approvals[idx].resolvedBy  = resolvedBy;
+        staled.push({ taskId: a.taskId, danger: a.danger, reason: a.reason });
+      }
+    }
+  }
+
+  // excludeIds もスキップ記録
+  for (const id of excludeIds) {
+    skipped.push({ taskId: id, reason: 'excluded_by_operator' });
+  }
+
+  if (staled.length > 0) {
+    save(data);
+    logger.info(`Approval close-stale: ${staled.length}件 stale化 (by: ${resolvedBy})`);
+  }
+
+  return { ok: true, staled, skipped };
+}
+
+// ─────────────────────────────────────────────────────
+// formatCloseStaleResult(result) — close-stale 結果の Discord テキスト
+// ─────────────────────────────────────────────────────
+function formatCloseStaleResult(result) {
+  if (!result.ok) return `❌ close-stale 失敗: ${result.error}`;
+
+  const { staled, skipped } = result;
+  const lines = [
+    `🗑️ **!approval close-stale — 孤児 approval stale 化**`,
+    ``,
+  ];
+
+  if (staled.length === 0) {
+    lines.push('孤児の pending approval はありませんでした。');
+  } else {
+    lines.push(`**stale 化: ${staled.length}件** (タスク不在 → 自動失効)`);
+    for (const s of staled) {
+      const d = { '高': '🔴', '中': '🟡', '低': '🟢' }[s.danger] || '⬜';
+      lines.push(`  ${d} \`${s.taskId}\` — ${(s.reason || '').slice(0, 50)}`);
+    }
+  }
+
+  if (skipped.length > 0) {
+    lines.push('');
+    lines.push(`**スキップ: ${skipped.length}件**`);
+    for (const s of skipped) {
+      const reasonLabel = s.reason === 'task_exists'
+        ? '生存タスクあり（変更禁止）'
+        : s.reason === 'excluded_by_operator'
+        ? '手動除外'
+        : s.reason;
+      lines.push(`  ⬜ \`${s.taskId}\` — ${reasonLabel}`);
+    }
+  }
+
+  lines.push('');
+  lines.push('> stale は deny と区別されます。再オープンは \`!approve list\` で確認。');
+
+  return lines.join('\n');
+}
+
 module.exports = {
   STATES,
   STATE_EMOJI,
@@ -345,4 +462,6 @@ module.exports = {
   listPaused,
   formatApproval,
   formatPendingList,
+  closeStaleApprovals,      // Phase2
+  formatCloseStaleResult,   // Phase2
 };
