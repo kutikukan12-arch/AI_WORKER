@@ -21,8 +21,14 @@ const path = require('path');
 
 const yd   = require('../bot/utils/youtube-diagnostic');
 
-const PORT     = Number(process.env.PORT) || 3000;
+const PORT      = Number(process.env.PORT) || 3000;
 const HTML_FILE = path.join(__dirname, 'youtube-diagnostic.html');
+const LOG_FILE  = path.join(__dirname, '..', 'logs', 'yt-diagnostic-usage.jsonl');
+
+function appendLog(obj) {
+  const line = JSON.stringify({ ts: new Date().toISOString(), ...obj }) + '\n';
+  try { fs.appendFileSync(LOG_FILE, line); } catch { /* non-fatal: log dir may not exist */ }
+}
 
 // ─────────────────────────────────────────────────────
 // リクエストハンドラー
@@ -67,11 +73,52 @@ function handler(req, res) {
 
         const result = yd.diagnose(input);
 
+        if (result.ok) {
+          appendLog({
+            event: 'diagnose',
+            genre: input.genre || '',
+            score: result.totalScore,
+            usedML: result.modelInfo?.usedML ?? false,
+          });
+        }
+
         res.writeHead(200, {
           'Content-Type':                'application/json; charset=utf-8',
           'Access-Control-Allow-Origin': '*',
         });
         res.end(JSON.stringify(result));
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ ok: false, error: 'Invalid request' }));
+      }
+    });
+    return;
+  }
+
+  // POST /feedback → フィードバック記録（1-5評価）
+  if (req.method === 'POST' && req.url === '/feedback') {
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk;
+      if (body.length > 10_000) { req.destroy(); return; }
+    });
+    req.on('end', () => {
+      try {
+        const raw    = JSON.parse(body);
+        const rating = Math.max(1, Math.min(5, Math.round(Number(raw.rating) || 0)));
+        const genre  = String(raw.genre  || '').slice(0, 50);
+        const score  = Math.max(0, Math.min(100, Number(raw.score) || 0));
+        if (!rating) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ ok: false, error: 'rating required' }));
+          return;
+        }
+        appendLog({ event: 'feedback', rating, genre, score });
+        res.writeHead(200, {
+          'Content-Type':                'application/json; charset=utf-8',
+          'Access-Control-Allow-Origin': '*',
+        });
+        res.end(JSON.stringify({ ok: true }));
       } catch {
         res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify({ ok: false, error: 'Invalid request' }));

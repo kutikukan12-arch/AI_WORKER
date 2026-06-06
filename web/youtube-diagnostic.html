@@ -94,6 +94,21 @@
     }
     .disclaimer strong{display:block;margin-bottom:2px}
 
+    /* フィードバック */
+    .feedback-box{
+      margin-top:16px;padding:16px;
+      background:#1a1d27;border:1px solid #2d3148;border-radius:12px;
+      text-align:center
+    }
+    .feedback-box p{font-size:.85rem;color:#94a3b8;margin-bottom:10px}
+    .stars{display:flex;justify-content:center;gap:8px}
+    .star-btn{
+      font-size:1.6rem;background:none;border:none;cursor:pointer;
+      opacity:.4;transition:opacity .15s,transform .1s;padding:4px
+    }
+    .star-btn:hover,.star-btn.active{opacity:1;transform:scale(1.15)}
+    .feedback-sent{font-size:.85rem;color:#34d399;margin-top:8px;display:none}
+
     /* 状態 */
     #error-msg{color:#f87171;font-size:.85rem;text-align:center;padding:8px 0;display:none}
     .spinner{display:inline-block;width:18px;height:18px;border:2px solid #4c1d95;
@@ -198,6 +213,19 @@
       スコアは投稿前に変更可能な要素（タイトル・タグ・説明文・投稿時間・動画尺）を対象とした参考値です。
     </div>
 
+    <!-- フィードバック -->
+    <div class="feedback-box" id="feedback-box">
+      <p>この診断は参考になりましたか？</p>
+      <div class="stars" id="star-row">
+        <button class="star-btn" data-v="1" aria-label="1">⭐</button>
+        <button class="star-btn" data-v="2" aria-label="2">⭐</button>
+        <button class="star-btn" data-v="3" aria-label="3">⭐</button>
+        <button class="star-btn" data-v="4" aria-label="4">⭐</button>
+        <button class="star-btn" data-v="5" aria-label="5">⭐</button>
+      </div>
+      <div class="feedback-sent" id="feedback-sent">ありがとうございます！フィードバックを送信しました。</div>
+    </div>
+
   </div>
 
 </main>
@@ -285,6 +313,11 @@
     const lowNote = document.getElementById('low-score-note');
     if (lowNote) lowNote.style.display = data.totalScore < 50 ? 'block' : 'none';
 
+    // フィードバックを初期状態にリセット
+    document.querySelectorAll('.star-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('feedback-sent').style.display = 'none';
+    document.getElementById('star-row').style.display      = 'flex';
+
     const resultEl = document.getElementById('result');
     resultEl.style.display = 'block';
     resultEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -339,6 +372,29 @@
   // Enter キー送信
   document.getElementById('title').addEventListener('keydown', e => {
     if (e.key === 'Enter') document.getElementById('diagnose-btn').click();
+  });
+
+  // ── フィードバック ───────────────────────────────────
+  document.getElementById('star-row').addEventListener('click', async e => {
+    const btn = e.target.closest('.star-btn');
+    if (!btn) return;
+    const rating = Number(btn.dataset.v);
+    document.querySelectorAll('.star-btn').forEach((b, i) => {
+      b.classList.toggle('active', i < rating);
+    });
+    document.getElementById('star-row').style.display = 'none';
+    document.getElementById('feedback-sent').style.display = 'block';
+    try {
+      await fetch('/feedback', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rating,
+          genre: document.getElementById('genre').value || '',
+          score: Number(document.getElementById('total-score').textContent) || 0,
+        }),
+      });
+    } catch { /* non-fatal */ }
   });
 })();
 </script>
