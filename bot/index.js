@@ -7268,6 +7268,79 @@ client.on('messageCreate', async (message) => {
           return;
         }
 
+        // ── 運用系インテント（BOT/Operator操作）──
+
+        // BOT_STATUS_CHECK → Botプロセス・lock・Discord接続状態確認
+        if (intentResult.intent === cir.INTENTS.BOT_STATUS_CHECK) {
+          const statusReply = cir.buildBotStatusReply({ client, dataDir: path.join(__dirname, '..', 'data') });
+          await message.reply(statusReply.slice(0, 1900)).catch(() => {});
+          return;
+        }
+
+        // BOT_RESTART → 既存handleRestart安全経路へ委譲（DISCORD_OWNER_IDチェック維持）
+        // rm -f data/bot.lock は絶対禁止。handleRestartの安全チェックを全通過させる。
+        if (intentResult.intent === cir.INTENTS.BOT_RESTART) {
+          logger.info(`[CIR] BOT_RESTART → handleRestart 委譲 | user=${message.author.id}`);
+          await handleRestart(message, ['confirm']);
+          return;
+        }
+
+        // OPERATOR_STATUS → !operator status と同じロジック
+        if (intentResult.intent === cir.INTENTS.OPERATOR_STATUS) {
+          try {
+            const opState  = require('./utils/desktop-operator-state');
+            const opCheck  = require('./utils/operator-status-check');
+            const hist     = opState.loadHistory();
+            const result   = opCheck.formatStatus(opState, hist);
+            await message.reply(result.text).catch(() => {});
+          } catch (e) {
+            logger.warn(`[CIR] OPERATOR_STATUS エラー: ${e.message}`);
+            await message.reply(`🟡 黒川Operator状態確認エラー: ${e.message.slice(0, 100)}`).catch(() => {});
+          }
+          return;
+        }
+
+        // OPERATOR_RESUME → !operator resume と同じロジック
+        if (intentResult.intent === cir.INTENTS.OPERATOR_RESUME) {
+          try {
+            const opState  = require('./utils/desktop-operator-state');
+            const opBridge = require('./utils/operator-bridge');
+            const opRel    = require('./utils/operator-reliability');
+            opBridge.setPaused(opState, false);
+            opRel.setMode(opState, opRel.MODES.CLIPBOARD);
+            await message.reply(
+              `▶️ **黒川 Desktop Operator を再開しました**\n\n` +
+              `モード: clipboard\n` +
+              `（「${content}」を検知 → !operator resume 相当）`
+            ).catch(() => {});
+          } catch (e) {
+            logger.warn(`[CIR] OPERATOR_RESUME エラー: ${e.message}`);
+            await message.reply(`🟡 黒川Operator起動エラー: ${e.message.slice(0, 100)}\n\`!operator resume\` で手動操作してください。`).catch(() => {});
+          }
+          return;
+        }
+
+        // OPERATOR_PAUSE → !operator pause と同じロジック
+        if (intentResult.intent === cir.INTENTS.OPERATOR_PAUSE) {
+          try {
+            const opState  = require('./utils/desktop-operator-state');
+            const opBridge = require('./utils/operator-bridge');
+            const opRel    = require('./utils/operator-reliability');
+            const reason   = `CEO自然文コマンド: 「${content}」`;
+            opBridge.setPaused(opState, true, reason);
+            opRel.setMode(opState, opRel.MODES.PAUSED);
+            await message.reply(
+              `⏸️ **黒川 Desktop Operator を停止しました**\n\n` +
+              `理由: ${reason}\n\n` +
+              `再開: \`!operator resume\` または「黒川起動して」`
+            ).catch(() => {});
+          } catch (e) {
+            logger.warn(`[CIR] OPERATOR_PAUSE エラー: ${e.message}`);
+            await message.reply(`🟡 黒川Operator停止エラー: ${e.message.slice(0, 100)}\n\`!operator pause\` で手動操作してください。`).catch(() => {});
+          }
+          return;
+        }
+
         // その他インテント → 情報取得（副作用なし）
         const reply = cir.formatIntentResponse(intentResult, {
           taskManager,
