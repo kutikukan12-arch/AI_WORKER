@@ -26,6 +26,16 @@ Incident / Lesson の処理手順は **[INCIDENT_LESSON_MODEL.md](INCIDENT_LESSO
 - **Security Check 標準手順を常設化:** `npm run security-check`（= `scripts/security-check.js`）で、機密パターンに該当する**追跡済みファイル**を自動検出する。.gitignore 変更時・機密非公開化時・定期的に実行すること。
   - この手順は実チェックで `.env.bak` の追跡残りを発見した実績に基づく（理論ではなく実害検出に効く）。
 
+### L-17 GitHub Push Protection(GH013)対応とsecret封じ込め
+- **事案:** YouTube診断β 外部配布準備のpushで GH013 発生（秘密情報検出→push拒否）。対応 commit `d139f91`、Incident `inc_1780775468842`。
+- **ルール（5点）:**
+  1. **`.env.example` は secret pattern に似た値も避け、`<your-xxx>` 形式にする**（ダミーでも実トークン形式だと GH013 で弾かれる）。
+  2. **自動生成ログ・バックアップは早期に `.gitignore` へ入れる**（`data/*.bak*` / `logs/*.json` / `logs/*.jsonl` 等）。後から `git rm --cached` になる前に。
+  3. **Push Protection は bypass しない。** 検出は正しい。封じ込めで対応する。
+  4. **secret 検出時は機能開発より先に封じ込める**（INCIDENT_LESSON_MODEL：問題発見を後回しにしない）。
+  5. **history 残存リスクは必ず Rotate 済みか確認する**（→ L-16 のローテーション原則。repo非公開かつRotate済みなら履歴rewriteは見送り可、と判断できる）。
+- **関連:** L-16（公開境界・ローテーション）/ `npm run security-check` / `docs/INCIDENT_LESSON_MODEL.md`。
+
 ---
 
 ## 🔴 最優先（高頻度・高コスト）
