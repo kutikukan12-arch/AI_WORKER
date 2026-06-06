@@ -330,7 +330,7 @@ const AXIS_LABEL = {
   seo:       'SEO',            // タグ・説明文・タイトルキーワード（変更可能）
   emotion:   '視聴期待',       // タイトル・サムネ訴求（変更可能）
   timing:    '投稿タイミング', // 投稿日時（変更可能）
-  uniqueness:'改善余地',       // 差別化余地（変更可能）
+  uniqueness:'差別化',         // 他チャンネルとの差別化度（高いほど独自性が高い）
 };
 
 // _buildImprovements(scores, title)
@@ -505,7 +505,7 @@ function formatDiagnosticText(result, input = {}) {
     `📊 投稿タイミング:  ${_scoreBar(scores.timing)}`,
     `📊 構成:            ${_scoreBar(scores.retention)}`,
     `📊 視聴期待:        ${_scoreBar(scores.emotion)}`,
-    `📊 改善余地:        ${_scoreBar(scores.uniqueness)}`,
+    `📊 差別化:          ${_scoreBar(scores.uniqueness)}`,
     ``,
   ].filter(l => l !== '');
 
@@ -520,6 +520,15 @@ function formatDiagnosticText(result, input = {}) {
     lines.push('✅ 全軸スコアが高水準です。このまま投稿を進めましょう！');
     lines.push('');
   }
+
+  // 低スコアフォロー（50未満: 初心者が「才能なし」と受け取らないよう補足）
+  if (totalScore < 50) {
+    lines.push('');
+    lines.push('💡 **低い点数でも問題ありません。** この診断は失敗判定ではなく、投稿前に伸ばせるポイントを見つけるためのものです。');
+  }
+
+  // タグ・説明文の設定場所ヒント（操作の混乱防止）
+  lines.push('📌 タグや説明文は YouTube 投稿画面で設定できます。');
 
   const mlNote = modelInfo.usedML
     ? `🤖 学習済みMLモデル使用（${modelInfo.mlSamples}件, 推定ヒット率 ${modelInfo.mlProb}%）`

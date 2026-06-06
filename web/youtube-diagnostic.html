@@ -73,9 +73,21 @@
     .improvement .imp-axis{font-size:.72rem;color:#7c3aed;font-weight:600;margin-bottom:3px}
     .improvement .imp-text{font-size:.85rem;color:#cbd5e1;line-height:1.5}
 
+    /* 低スコアフォロー */
+    .low-note{
+      margin-bottom:12px;padding:12px 16px;
+      background:#0c1a0c;border:1px solid #166534;border-radius:8px;
+      font-size:.83rem;color:#86efac;line-height:1.6
+    }
+    /* タグ・説明文ヒント */
+    .tag-hint{
+      margin-bottom:12px;padding:10px 16px;
+      background:#0f1117;border:1px solid #2d3148;border-radius:8px;
+      font-size:.78rem;color:#94a3b8
+    }
     /* 免責 */
     .disclaimer{
-      margin-top:20px;padding:12px 16px;
+      margin-top:8px;padding:12px 16px;
       background:#1a1024;border:1px solid #4c1d95;border-radius:8px;
       font-size:.78rem;color:#a78bfa;line-height:1.6
     }
@@ -168,6 +180,17 @@
       <div id="improvements-list"></div>
     </div>
 
+    <!-- 低スコアフォロー（50未満のとき表示） -->
+    <div id="low-score-note" class="low-note" style="display:none">
+      💡 <strong>低い点数でも問題ありません。</strong>
+      この診断は失敗判定ではなく、投稿前に伸ばせるポイントを見つけるためのものです。
+    </div>
+
+    <!-- タグ・説明文の設定場所ヒント -->
+    <div class="tag-hint">
+      📌 タグや説明文は YouTube 投稿画面で設定できます。
+    </div>
+
     <div class="disclaimer">
       <strong>⚠️ 免責事項</strong>
       結果は伸びを保証するものではなく、改善ポイント提示を目的としています。<br>
@@ -188,7 +211,7 @@
     { key: 'timing',     label: '投稿タイミング' },
     { key: 'retention',  label: '構成' },
     { key: 'emotion',    label: '視聴期待' },
-    { key: 'uniqueness', label: '改善余地' },
+    { key: 'uniqueness', label: '差別化' },
   ];
 
   const PRIORITY_EMOJI = { high: '🔴', medium: '🟡', low: '🟢' };
@@ -245,6 +268,10 @@
 
     renderAxes(data.scores);
     renderImprovements(data.improvements);
+
+    // 低スコアフォロー表示制御（50未満のとき表示）
+    const lowNote = document.getElementById('low-score-note');
+    if (lowNote) lowNote.style.display = data.totalScore < 50 ? 'block' : 'none';
 
     const resultEl = document.getElementById('result');
     resultEl.style.display = 'block';
