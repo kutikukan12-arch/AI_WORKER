@@ -66,13 +66,12 @@ function handler(req, res) {
         };
 
         const result = yd.diagnose(input);
-        const text   = yd.formatDiagnosticText(result, input);
 
         res.writeHead(200, {
           'Content-Type':                'application/json; charset=utf-8',
           'Access-Control-Allow-Origin': '*',
         });
-        res.end(JSON.stringify({ ...result, formattedText: text }));
+        res.end(JSON.stringify(result));
       } catch {
         res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify({ ok: false, error: 'Invalid request' }));

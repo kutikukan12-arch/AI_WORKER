@@ -1,0 +1,22 @@
+# Fly.io デプロイ設定 — YouTube診断β
+# 無料枠: shared-cpu-1x + 256MB RAM (β 5-8人に十分)
+# リージョン: nrt (東京)
+
+app = "youtube-diagnostic-beta"
+primary_region = "nrt"
+
+[processes]
+  web = "node web/youtube-diagnostic-server.js"
+
+[http_service]
+  processes = ["web"]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+  processes = ["web"]

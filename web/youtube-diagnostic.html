@@ -62,6 +62,7 @@
     .axis-item .axis-score{font-size:1.3rem;font-weight:700;color:#e2e8f0;margin-bottom:6px}
     .bar-track{background:#2d3148;border-radius:4px;height:6px;overflow:hidden}
     .bar-fill{height:100%;border-radius:4px;transition:width .6s ease}
+    .axis-hint{font-size:.72rem;color:#7c3aed;margin-top:6px;line-height:1.4}
 
     /* 改善提案 */
     .improvement{
@@ -193,7 +194,7 @@
 
     <div class="disclaimer">
       <strong>⚠️ 免責事項</strong>
-      結果は伸びを保証するものではなく、改善ポイント提示を目的としています。<br>
+      本診断は投稿前の最適化度を示すもので、再生回数を予測・保証するものではありません。<br>
       スコアは投稿前に変更可能な要素（タイトル・タグ・説明文・投稿時間・動画尺）を対象とした参考値です。
     </div>
 
@@ -216,6 +217,15 @@
 
   const PRIORITY_EMOJI = { high: '🔴', medium: '🟡', low: '🟢' };
 
+  const AXIS_IMPROVE_HINT = {
+    ctr:        'タイトルの調整で改善可能',
+    seo:        'タグ・説明文の充実で改善可能',
+    retention:  '動画尺・構成の調整で改善可能',
+    emotion:    'タイトル表現の工夫で改善可能',
+    timing:     '投稿タイミングの変更で改善可能',
+    uniqueness: '差別化要素の追加で改善可能',
+  };
+
   function barColor(score) {
     if (score >= 75) return '#34d399';
     if (score >= 50) return '#fbbf24';
@@ -227,12 +237,14 @@
     grid.innerHTML = '';
     AXES.forEach(({ key, label }) => {
       const score = scores[key] ?? 0;
+      const hint  = score < 65 ? `<div class="axis-hint">→ ${AXIS_IMPROVE_HINT[key]}</div>` : '';
       const div = document.createElement('div');
       div.className = 'axis-item';
       div.innerHTML =
         `<div class="axis-name">${label}</div>` +
         `<div class="axis-score">${score} <span style="font-size:.7rem;color:#64748b">/ 100</span></div>` +
-        `<div class="bar-track"><div class="bar-fill" style="width:${score}%;background:${barColor(score)}"></div></div>`;
+        `<div class="bar-track"><div class="bar-fill" style="width:${score}%;background:${barColor(score)}"></div></div>` +
+        hint;
       grid.appendChild(div);
     });
   }

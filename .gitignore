@@ -112,4 +112,4 @@ data/youtube-seeds/
 # ─── YouTube診断AI: 推論専用 export（Web 側に渡す）────
 # export モデル（weights のみ・training metadata 除外済み）
 # このファイルは公開可能。ただし意図的に commit する場合のみ !で除外を解除する。
-# data/youtube-model-export.json
+!data/youtube-model-export.json
