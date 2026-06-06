@@ -17,6 +17,10 @@ npm-debug.log*
 # ─── 運用データ（実行時に生成・個人情報含む可能性あり）───
 data/tasks.json
 data/approvals.json
+# バックアップファイル（自動生成・秘密情報混入リスク — GH013対策）
+data/*.bak
+data/*.bak_*
+data/*.bak*
 data/archive_tasks.json
 data/bot.pid
 data/*.pid
@@ -45,6 +49,9 @@ workspace/
 # ─── ログ（大量になるため除外・.gitkeep は維持）───
 logs/*.log
 logs/*.txt
+# セキュリティ・コストログ（自動生成・秘密情報が含まれる可能性あり — GH013対策）
+logs/*.json
+logs/*.jsonl
 
 # ─── 自動生成ドキュメント（実行時に上書きされる）───
 docs/history/
