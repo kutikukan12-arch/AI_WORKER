@@ -29,7 +29,11 @@ const fs   = require('fs');
 const path = require('path');
 const { encodePre, FEATURE_DIM_PRE } = require('./youtube-feature-extractor');
 
-const MODEL_FILE_PRE = path.join(__dirname, '..', '..', 'data', 'youtube-model-pre.json');
+// モデルファイルのロード優先順:
+//   1. data/youtube-model-export.json  ← 推論専用 export（Web/CLI 公開経路）
+//   2. data/youtube-model-pre.json     ← 開発 fallback（公開経路に含めない）
+const MODEL_FILE_EXPORT = path.join(__dirname, '..', '..', 'data', 'youtube-model-export.json');
+const MODEL_FILE_PRE    = path.join(__dirname, '..', '..', 'data', 'youtube-model-pre.json');
 const MIN_ML_SAMPLES = 20;
 
 // ─────────────────────────────────────────────────────
@@ -84,13 +88,40 @@ function _scoreBar(score) {
 
 // ─────────────────────────────────────────────────────
 // モデル読み込み
+//
+// ロード優先順:
+//   1. data/youtube-model-export.json (推論専用 export — Web/CLI 公開経路)
+//   2. data/youtube-model-pre.json    (開発 fallback — 公開経路に含めない)
+//
+// export モデルはプライバシー保護のため sampleCount / genreHitRates を持たない。
+// ロード時にデフォルト値で補完し、ML モードを有効化する。
 // ─────────────────────────────────────────────────────
 function _loadPreModel() {
+  // [1] 公開推論モデル (export) を優先
+  try {
+    if (fs.existsSync(MODEL_FILE_EXPORT)) {
+      const m = JSON.parse(fs.readFileSync(MODEL_FILE_EXPORT, 'utf8'));
+      if (Array.isArray(m.weights) && m.weights.length === FEATURE_DIM_PRE) {
+        return {
+          weights:       m.weights,
+          // export は sampleCount 非公開のため ML 有効化の最小値を設定
+          sampleCount:   MIN_ML_SAMPLES,
+          // export は genreHitRates 非公開 → _lookupGenreHitRate が 0.5 デフォルトを使用
+          genreHitRates: {},
+          _source:       'export',
+        };
+      }
+    }
+  } catch { /* ignore - 次の fallback へ */ }
+
+  // [2] 開発用 pre モデル（dev fallback — 公開経路に含めない）
   try {
     if (fs.existsSync(MODEL_FILE_PRE)) {
-      return JSON.parse(fs.readFileSync(MODEL_FILE_PRE, 'utf8'));
+      const m = JSON.parse(fs.readFileSync(MODEL_FILE_PRE, 'utf8'));
+      return { ...m, _source: 'pre' };
     }
   } catch { /* ignore - cold start にフォールバック */ }
+
   return null;
 }
 
@@ -492,4 +523,6 @@ module.exports = {
   AXIS_LABEL,
   AXIS_FEATURE_IDX,
   MIN_ML_SAMPLES,
+  MODEL_FILE_EXPORT,
+  MODEL_FILE_PRE,
 };

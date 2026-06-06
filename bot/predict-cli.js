@@ -6,7 +6,11 @@
 // CLI では INFO/DEBUG をコンソールに出さない（ファイルログには残る）
 process.env.LOG_LEVEL = process.env.LOG_LEVEL || 'WARN';
 
-const { predict, buildSummary, diagnose, buildDiagnosisSummary } = require('./utils/youtube-predictor');
+// 予測モード: youtube-predictor.js (投稿後ヒット予測)
+const { predict, buildSummary } = require('./utils/youtube-predictor');
+// 診断モード: youtube-diagnostic.js (投稿前改善支援) ← --diagnose 経路
+//   旧 predictor.diagnose は商品診断経路から外れた。
+const yd = require('./utils/youtube-diagnostic');
 
 // ── ヘルプ ──────────────────────────────────────────────────
 
@@ -148,11 +152,21 @@ function main() {
 
   const isPrePub = !video.viewCount;
 
-  let result, summary, diagResult, diagSummary;
+  let result, summary, diagResult, diagText;
   try {
     if (a.diagnose) {
-      diagResult  = diagnose(video);
-      diagSummary = buildDiagnosisSummary(video, diagResult);
+      // ── 投稿前診断モード: youtube-diagnostic.js を使用 ──
+      const diagInput = {
+        title:           a.title,
+        genre:           a.genre       || null,
+        description:     a.description || '',
+        tags:            a.tags,
+        duration:        a.duration    || 0,
+        subscriberCount: a.subs        || 0,
+        publishedAt:     a.publishedAt || null,
+      };
+      diagResult = yd.diagnose(diagInput);
+      diagText   = yd.formatDiagnosticText(diagResult, diagInput);
     } else {
       result  = predict(video);
       summary = buildSummary(video, result);
@@ -180,7 +194,7 @@ function main() {
 
   // ─── 結果出力 ───
   if (a.diagnose) {
-    console.log(stripMarkdown(diagSummary));
+    console.log(stripMarkdown(diagText));
   } else {
     console.log(stripMarkdown(summary));
   }
@@ -189,7 +203,7 @@ function main() {
   if (a.json) {
     console.log('\n--- JSON ---');
     if (a.diagnose) {
-      console.log(JSON.stringify({ video, diagResult }, null, 2));
+      console.log(JSON.stringify({ diagResult }, null, 2));
     } else {
       console.log(JSON.stringify({ video, result }, null, 2));
     }

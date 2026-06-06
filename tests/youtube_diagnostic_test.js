@@ -18,23 +18,36 @@ const src     = fs.readFileSync(path.join(__dirname, '..', 'bot', 'index.js'), '
 const diagSrc = fs.readFileSync(path.join(__dirname, '..', 'bot', 'utils', 'youtube-diagnostic.js'), 'utf8');
 
 // テスト用モデルファイル管理
-const MODEL_FILE_PRE = path.join(__dirname, '..', 'data', 'youtube-model-pre.json');
-const MODEL_BACKUP   = MODEL_FILE_PRE + '.test-bak';
+// Fix2 後: export を優先するため、テスト操作は両ファイルを対象にする
+const MODEL_FILE_PRE    = path.join(__dirname, '..', 'data', 'youtube-model-pre.json');
+const MODEL_FILE_EXPORT_T = path.join(__dirname, '..', 'data', 'youtube-model-export.json');
+const MODEL_BACKUP      = MODEL_FILE_PRE    + '.test-bak';
+const EXPORT_BACKUP_T   = MODEL_FILE_EXPORT_T + '.test-bak';
 
 function backupModel() {
-  if (fs.existsSync(MODEL_FILE_PRE)) fs.copyFileSync(MODEL_FILE_PRE, MODEL_BACKUP);
+  if (fs.existsSync(MODEL_FILE_PRE))    fs.copyFileSync(MODEL_FILE_PRE,    MODEL_BACKUP);
+  if (fs.existsSync(MODEL_FILE_EXPORT_T)) fs.copyFileSync(MODEL_FILE_EXPORT_T, EXPORT_BACKUP_T);
 }
 function restoreModel() {
+  // pre モデルの復元
   if (fs.existsSync(MODEL_BACKUP)) {
     fs.copyFileSync(MODEL_BACKUP, MODEL_FILE_PRE);
     fs.unlinkSync(MODEL_BACKUP);
   } else if (fs.existsSync(MODEL_FILE_PRE)) {
-    // 元々なかった場合は削除
     fs.unlinkSync(MODEL_FILE_PRE);
   }
+  // export モデルの復元
+  if (fs.existsSync(EXPORT_BACKUP_T)) {
+    fs.copyFileSync(EXPORT_BACKUP_T, MODEL_FILE_EXPORT_T);
+    fs.unlinkSync(EXPORT_BACKUP_T);
+  } else if (fs.existsSync(MODEL_FILE_EXPORT_T)) {
+    fs.unlinkSync(MODEL_FILE_EXPORT_T);
+  }
 }
+// removeModel: pre/export 両方を削除（cold-start 状態にする）
 function removeModel() {
-  if (fs.existsSync(MODEL_FILE_PRE)) fs.unlinkSync(MODEL_FILE_PRE);
+  if (fs.existsSync(MODEL_FILE_PRE))    fs.unlinkSync(MODEL_FILE_PRE);
+  if (fs.existsSync(MODEL_FILE_EXPORT_T)) fs.unlinkSync(MODEL_FILE_EXPORT_T);
 }
 
 // テスト用ダミーモデル（FEATURE_DIM_PRE=15 次元）
@@ -113,7 +126,9 @@ test('2a. ダミーモデルあり → usedML=true', () => {
   assert.strictEqual(r.modelInfo.usedML, true, 'usedML が false');
 });
 
-test('2b. モデルあり → mlSamples が正しく反映される', () => {
+test('2b. preモデルのみ存在 → mlSamples が pre の sampleCount を反映する', () => {
+  // export なし、pre のみ: pre の sampleCount がそのまま返る
+  if (fs.existsSync(MODEL_FILE_EXPORT_T)) fs.unlinkSync(MODEL_FILE_EXPORT_T);
   saveDummyModel(42);
   const r = yd.diagnose({ title: 'テスト！' });
   assert.strictEqual(r.modelInfo.mlSamples, 42, `mlSamples が 42 でない: ${r.modelInfo.mlSamples}`);
@@ -504,6 +519,152 @@ test('11h. HTML に禁止機能がない (ログイン/課金/SNS連携)', () =>
   assert.ok(!html.includes('twitter'),  'twitter連携がある');
   assert.ok(!html.includes('history'),  '履歴機能がある');
   assert.ok(!html.includes('discord'),  'Discord接続がある');
+});
+
+// ─────────────────────────────────────────────────────
+// 12. exportモデル優先ロード (Fix2)
+// ─────────────────────────────────────────────────────
+console.log('\n[12. exportモデル優先ロード — Fix2]');
+
+const EXPORT_FILE_PATH = yd.MODEL_FILE_EXPORT;
+const PRE_FILE_PATH    = yd.MODEL_FILE_PRE;
+const EXPORT_BACKUP    = EXPORT_FILE_PATH + '.test-bak';
+const PRE_BACKUP_FIX2  = PRE_FILE_PATH    + '.fix2-bak';
+
+function backupFiles() {
+  if (fs.existsSync(EXPORT_FILE_PATH)) fs.copyFileSync(EXPORT_FILE_PATH, EXPORT_BACKUP);
+  if (fs.existsSync(PRE_FILE_PATH))    fs.copyFileSync(PRE_FILE_PATH,    PRE_BACKUP_FIX2);
+}
+function restoreFiles() {
+  if (fs.existsSync(EXPORT_BACKUP))   { fs.copyFileSync(EXPORT_BACKUP,  EXPORT_FILE_PATH); fs.unlinkSync(EXPORT_BACKUP); }
+  else if (fs.existsSync(EXPORT_FILE_PATH)) fs.unlinkSync(EXPORT_FILE_PATH);
+  if (fs.existsSync(PRE_BACKUP_FIX2)) { fs.copyFileSync(PRE_BACKUP_FIX2, PRE_FILE_PATH); fs.unlinkSync(PRE_BACKUP_FIX2); }
+  else if (fs.existsSync(PRE_FILE_PATH)) fs.unlinkSync(PRE_FILE_PATH);
+}
+function removeExport() {
+  if (fs.existsSync(EXPORT_FILE_PATH)) fs.unlinkSync(EXPORT_FILE_PATH);
+}
+function saveExportModel() {
+  // export モデルは sampleCount/genreHitRates を持たない（プライバシー設計）
+  const data = { version: '1.0', exportedAt: new Date().toISOString(),
+                 featureDim: FEATURE_DIM_PRE, weights: new Array(FEATURE_DIM_PRE).fill(0.2) };
+  const dir = path.dirname(EXPORT_FILE_PATH);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(EXPORT_FILE_PATH, JSON.stringify(data, null, 2));
+}
+
+backupFiles();
+
+test('12a. exportモデルが存在する場合は export を使う (_source=export)', () => {
+  saveExportModel();
+  saveDummyModel(30); // pre も存在
+  const model = yd._loadPreModel();
+  assert.strictEqual(model?._source, 'export', 'exportが存在するのに pre を使っている');
+});
+
+test('12b. exportモデルロード時は sampleCount = MIN_ML_SAMPLES に補完される', () => {
+  saveExportModel();
+  const model = yd._loadPreModel();
+  assert.ok(model !== null, 'export ロード失敗');
+  assert.ok(model.sampleCount >= yd.MIN_ML_SAMPLES,
+    `sampleCount=${model.sampleCount} が MIN_ML_SAMPLES を下回る → cold-start になる`);
+});
+
+test('12c. exportモデルロード時は genreHitRates が {} (プライバシー設計)', () => {
+  saveExportModel();
+  const model = yd._loadPreModel();
+  assert.deepStrictEqual(model.genreHitRates, {}, 'genreHitRates が {} でない');
+});
+
+test('12d. exportが存在しない場合は pre を dev fallback として使う', () => {
+  removeExport();
+  saveDummyModel(30);
+  const model = yd._loadPreModel();
+  assert.strictEqual(model?._source, 'pre', 'export なし時に pre が使われていない');
+});
+
+test('12e. export/pre ともに存在しない場合は null を返す', () => {
+  removeExport();
+  removeModel();
+  const model = yd._loadPreModel();
+  assert.strictEqual(model, null, 'モデルなしなのに null 以外が返った');
+});
+
+test('12f. export ロード時に diagnose() が ML モードで動作する', () => {
+  saveExportModel();
+  const r = yd.diagnose({ title: '【テスト】動画診断！' });
+  assert.strictEqual(r.ok, true, 'diagnose失敗');
+  assert.strictEqual(r.modelInfo.usedML, true, 'export ロード時に cold-start になっている');
+});
+
+test('12g. predict-cli.js が youtube-diagnostic を require している', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'bot', 'predict-cli.js'), 'utf8');
+  assert.ok(src.includes("require('./utils/youtube-diagnostic')"), 'youtube-diagnostic の require がない');
+  assert.ok(!src.includes('diagnose, buildDiagnosisSummary'), '旧 predictor.diagnose の import が残っている');
+});
+
+test('12h. predict-cli.js --diagnose 経路が youtube-diagnostic.diagnose を呼ぶ', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'bot', 'predict-cli.js'), 'utf8');
+  assert.ok(src.includes('yd.diagnose('),             'yd.diagnose() 呼び出しがない');
+  assert.ok(src.includes('yd.formatDiagnosticText('), 'yd.formatDiagnosticText() 呼び出しがない');
+});
+
+restoreFiles();
+
+// ─────────────────────────────────────────────────────
+// 13. CLI --diagnose 統合確認 (Fix1)
+// ─────────────────────────────────────────────────────
+console.log('\n[13. CLI --diagnose 統合確認 — Fix1]');
+
+const { spawnSync } = require('child_process');
+const CLI_PATH = path.join(__dirname, '..', 'bot', 'predict-cli.js');
+function runCli(args) {
+  return spawnSync(process.execPath, [CLI_PATH, ...args], {
+    encoding: 'utf8', timeout: 15000,
+    env: { ...process.env, LOG_LEVEL: 'WARN' },
+  });
+}
+
+test('13a. CLI --diagnose が正常終了する', () => {
+  const r = runCli(['--diagnose', '--title', 'テスト動画です！', '--subs', '1000']);
+  assert.strictEqual(r.status, 0, `exit code=${r.status}\nstderr=${r.stderr.slice(0, 300)}`);
+});
+
+test('13b. CLI --diagnose 出力に6軸ラベルが含まれる', () => {
+  const r = runCli(['--diagnose', '--title', '【初心者向け】Pythonを10分で学ぶ！3つのコツ', '--subs', '5000']);
+  assert.strictEqual(r.status, 0);
+  const out = r.stdout;
+  assert.ok(out.includes('タイトル'),       'タイトル軸がない');
+  assert.ok(out.includes('SEO'),            'SEO軸がない');
+  assert.ok(out.includes('投稿タイミング'), '投稿タイミング軸がない');
+  assert.ok(out.includes('構成'),           '構成軸がない');
+  assert.ok(out.includes('視聴期待'),       '視聴期待軸がない');
+  assert.ok(out.includes('改善余地'),       '改善余地軸がない');
+});
+
+test('13c. CLI --diagnose 出力に免責が含まれる', () => {
+  const r = runCli(['--diagnose', '--title', 'テスト！', '--subs', '1000']);
+  assert.strictEqual(r.status, 0);
+  assert.ok(
+    r.stdout.includes('結果は伸びを保証するものではなく'),
+    '必須免責が CLI 出力にない'
+  );
+});
+
+test('13d. CLI --diagnose で弱タイトルの場合にタイトル改善提案が出る', () => {
+  const r = runCli(['--diagnose', '--title', 'abc', '--subs', '0']);
+  assert.strictEqual(r.status, 0);
+  assert.ok(
+    r.stdout.includes('タイトル') && r.stdout.includes('文字'),
+    `弱タイトル提案が出ていない: ${r.stdout.slice(0, 300)}`
+  );
+});
+
+test('13e. CLI --diagnose 出力に「登録者」「チャンネル登録を増やす」提案がない', () => {
+  const r = runCli(['--diagnose', '--title', 'テスト動画！', '--subs', '100']);
+  assert.strictEqual(r.status, 0);
+  assert.ok(!r.stdout.includes('登録者を増やす'),     '登録者増加の提案がある');
+  assert.ok(!r.stdout.includes('チャンネル登録を増'), 'チャンネル登録増加の提案がある');
 });
 
 // ─────────────────────────────────────────────────────
