@@ -668,6 +668,120 @@ test('13e. CLI --diagnose 出力に「登録者」「チャンネル登録を増
 });
 
 // ─────────────────────────────────────────────────────
+// 14. スコア退化修正 — 白石COO対応
+//
+// ML weights が近ゼロの場合に全軸50固定になる問題の修正確認。
+// 既存の _computeFallbackAxisScores を接続して「入力で点が動く」状態を保証。
+// ─────────────────────────────────────────────────────
+console.log('\n[14. スコア退化修正 — 白石COO対応]');
+
+// 全重みゼロの退化 export モデルを作成（weights全0 → 全軸sigmoid(0)=50）
+function saveDegenerateExportModel() {
+  const data = {
+    version: '1.0', exportedAt: new Date().toISOString(),
+    featureDim: FEATURE_DIM_PRE,
+    weights: new Array(FEATURE_DIM_PRE).fill(0), // 全ゼロ → ML退化
+  };
+  const dir = path.dirname(EXPORT_FILE_PATH);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(EXPORT_FILE_PATH, JSON.stringify(data, null, 2));
+}
+
+backupFiles();
+
+test('14a. exportモデル退化（weights全0）→ fallbackに切り替わる (usedML=false)', () => {
+  saveDegenerateExportModel();
+  const r = yd.diagnose({ title: 'テストタイトル！', tags: ['AI', 'テスト'] });
+  assert.ok(r.ok, 'diagnose失敗');
+  assert.strictEqual(r.modelInfo.usedML, false,
+    `退化MLなのに usedML=true（range=0のはずが分岐していない）`);
+});
+
+test('14b. exportモデル退化 → totalScore が入力によって変わる（50固定でない）', () => {
+  saveDegenerateExportModel();
+  const weak = yd.diagnose({ title: 'a', tags: [], duration: 0 });
+  const strong = yd.diagnose({
+    title:    '【完全版】Python入門！3つのコツで10分マスター',
+    tags:     Array(15).fill('tag'),
+    duration: 600,
+  });
+  assert.ok(weak.ok && strong.ok, 'diagnose失敗');
+  assert.ok(
+    weak.totalScore !== strong.totalScore,
+    `弱入力(${weak.totalScore}) と強入力(${strong.totalScore}) が同じ → fallback接続できていない`
+  );
+});
+
+test('14c. モデルなし → 弱入力/強入力でtotalScoreが動く', () => {
+  removeModel();
+  removeExport();
+  const weak = yd.diagnose({ title: 'a', tags: [], duration: 0 });
+  const strong = yd.diagnose({
+    title:    '【完全版】Python入門！3つのコツで10分マスター',
+    tags:     Array(15).fill('tag'),
+    duration: 600,
+  });
+  assert.ok(
+    weak.totalScore !== strong.totalScore,
+    `弱(${weak.totalScore}) と強(${strong.totalScore}) が同じ → fallback採点が効いていない`
+  );
+});
+
+test('14d. タグ追加でSEOスコアが上がる（fallbackモード）', () => {
+  removeModel();
+  removeExport();
+  const noTags   = yd.diagnose({ title: 'タイトルテスト！', tags: [],                    duration: 300 });
+  const withTags = yd.diagnose({ title: 'タイトルテスト！', tags: Array(15).fill('tag'), duration: 300 });
+  assert.ok(
+    withTags.scores.seo >= noTags.scores.seo,
+    `タグ追加でSEO下がった: noTags=${noTags.scores.seo} → withTags=${withTags.scores.seo}`
+  );
+});
+
+test('14e. CLI経路: 弱タイトルと強タイトルでtotalScoreが異なる', () => {
+  removeModel();
+  removeExport();
+  const weak   = runCli(['--diagnose', '--title', 'a', '--json']);
+  const strong = runCli([
+    '--diagnose', '--title', '【初心者向け】Pythonで学ぶAI入門！3つのコツを10分で解説',
+    '--tags', 'Python,AI,解説,入門,初心者', '--duration', '600', '--json',
+  ]);
+  assert.strictEqual(weak.status,   0, `CLI(弱)エラー: ${weak.stderr.slice(0, 200)}`);
+  assert.strictEqual(strong.status, 0, `CLI(強)エラー: ${strong.stderr.slice(0, 200)}`);
+
+  // JSON ブロックを抽出して totalScore を比較
+  function extractTotal(out) {
+    const idx = out.indexOf('--- JSON ---');
+    if (idx < 0) return null;
+    try { return JSON.parse(out.slice(idx + 13).trim())?.diagResult?.totalScore; }
+    catch { return null; }
+  }
+  const weakTotal   = extractTotal(weak.stdout);
+  const strongTotal = extractTotal(strong.stdout);
+  assert.ok(weakTotal   !== null, `弱入力: JSON抽出失敗\n${weak.stdout.slice(0, 400)}`);
+  assert.ok(strongTotal !== null, `強入力: JSON抽出失敗\n${strong.stdout.slice(0, 400)}`);
+  assert.ok(
+    weakTotal !== strongTotal,
+    `CLI経路で点が動いていない: weak=${weakTotal} strong=${strongTotal}`
+  );
+});
+
+test('14f. 改善提案のaxisがscores内の軸と一致している（連動確認）', () => {
+  removeModel();
+  removeExport();
+  const r = yd.diagnose({ title: 'テスト', tags: [], duration: 0 });
+  assert.ok(r.ok, 'diagnose失敗');
+  assert.ok(r.improvements.length > 0, '改善提案がゼロ件（低スコア入力なのに提案なし）');
+  r.improvements.forEach(imp => {
+    assert.ok(imp.axis in r.scores,
+      `改善提案の axis="${imp.axis}" が scores に存在しない → 6軸と連動していない`);
+    assert.ok(imp.axisLabel, `axisLabel が空: axis=${imp.axis}`);
+  });
+});
+
+restoreFiles();
+
+// ─────────────────────────────────────────────────────
 // 後処理: モデルファイルを元に戻す
 // ─────────────────────────────────────────────────────
 restoreModel();

@@ -432,13 +432,33 @@ function diagnose(input) {
 
   if (hasModel) {
     // ML モード: 学習済み重みで軸別 partial dot product → sigmoid
-    const weights = new Float64Array(preModel.weights);
-    scores  = _computeMLAxisScores(features, weights);
-    usedML  = true;
-    // 全体 ML 確率（情報表示用）
-    let fullAct = 0;
-    for (let i = 0; i < FEATURE_DIM_PRE; i++) fullAct += features[i] * weights[i];
-    mlProb = Math.round(_sigmoid(fullAct) * 100);
+    const weights  = new Float64Array(preModel.weights);
+    const mlScores = _computeMLAxisScores(features, weights);
+
+    // ── ML退化チェック ────────────────────────────────────────
+    // weights が近ゼロ / 全ゼロの場合、全軸が sigmoid(0)≈50 に収束し
+    // 「入力を変えても点が動かない」状態になる。
+    // 全軸スコアの range が 5 以下なら退化とみなし fallback へ切り替える。
+    const mlVals  = Object.values(mlScores);
+    const mlRange = mlVals.length
+      ? Math.max(...mlVals) - Math.min(...mlVals)
+      : 0;
+
+    if (!mlVals.length || mlRange <= 5) {
+      // ML 退化 → fixed-rule fallback へ切り替え
+      scores = _computeFallbackAxisScores(
+        features, title, description, tags, duration, publishedAt
+      );
+      usedML = false;
+      mlProb = null;
+    } else {
+      scores = mlScores;
+      usedML = true;
+      // 全体 ML 確率（情報表示用）
+      let fullAct = 0;
+      for (let i = 0; i < FEATURE_DIM_PRE; i++) fullAct += features[i] * weights[i];
+      mlProb = Math.round(_sigmoid(fullAct) * 100);
+    }
   } else {
     // Cold-start フォールバック: 固定ルール（特徴量ベクトルを流用）
     scores = _computeFallbackAxisScores(
