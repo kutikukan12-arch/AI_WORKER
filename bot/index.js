@@ -7132,6 +7132,73 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  // ── CEO Intent Router（自然文コマンドレス操作）──
+  // CEOからの自然文（!コマンドで始まらない・50文字以下）をインテント解析する。
+  // CEO_USER_IDS 環境変数でCEOのDiscord User IDを設定する。
+  if (!content.startsWith('!')) {
+    const cir = require('./utils/ceo-intent-router');
+    if (cir.isCEOUser(message.author.id)) {
+      const intentResult = cir.detectIntent(content);
+      logger.info(`[CIR] intent=${intentResult.intent} | user=${message.author.id} | text="${content.slice(0, 40)}"`);
+
+      if (intentResult.intent !== cir.INTENTS.UNKNOWN) {
+        const currentPid = projectManager.getCurrentProject(message.channelId);
+
+        // SUMMARY_REQUEST → Daily Closing Report
+        if (intentResult.intent === cir.INTENTS.SUMMARY_REQUEST) {
+          try {
+            const { buildClosingSummary } = require('./utils/client-ops');
+            const { buildChangesSection } = require('./utils/daily-changes');
+            const result = buildClosingSummary({
+              taskManager,
+              projectManager,
+              projectId: currentPid || undefined,
+            });
+            const changesSection = buildChangesSection();
+            const reportText =
+              `📅 **Daily Summary**\n（「${content.slice(0, 20)}」を検知）\n\n` +
+              result.text + '\n\n━━━━━━━━━━━━━━━━\n\n' + changesSection;
+            await message.reply(reportText.slice(0, 1900)).catch(() => {});
+          } catch (e) {
+            await message.reply(`📅 サマリー生成エラー: ${e.message}`).catch(() => {});
+          }
+          return;
+        }
+
+        // RUN_REQUEST → auto-on 相当（キューが空の場合のみ）
+        if (intentResult.intent === cir.INTENTS.RUN_REQUEST) {
+          if (taskQueue.activeCount > 0 || taskQueue.pendingCount > 0) {
+            await message.reply(
+              `▶ すでに実行中です（${taskQueue.activeCount}件実行中・${taskQueue.pendingCount}件待機）。\n` +
+              `\`!queue\` で状況確認できます。`
+            ).catch(() => {});
+          } else {
+            // handleAutoOn に委譲（fire-and-forget で非同期実行）
+            await message.reply('▶ Auto Task Runner を開始します...').catch(() => {});
+            handleAutoOn(message).catch(err =>
+              logger.error(`[CIR] auto-on エラー: ${err.message}`)
+            );
+          }
+          return;
+        }
+
+        // その他インテント → 情報取得（副作用なし）
+        const reply = cir.formatIntentResponse(intentResult, {
+          taskManager,
+          approvalManager,
+          projectId: currentPid,
+          projectHint: intentResult.projectHint,
+        });
+
+        if (reply) {
+          await message.reply(reply.slice(0, 1900)).catch(() => {});
+          return;
+        }
+      }
+      // UNKNOWN or replyがnull → フォールスルー（既存処理へ）
+    }
+  }
+
   // ── コマンドルーティング ──
   if (content === '!help') {
     await handleHelp(message);
