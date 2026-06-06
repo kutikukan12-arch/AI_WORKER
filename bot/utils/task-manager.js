@@ -814,55 +814,19 @@ function updateTaskType(taskId, rawType) {
 // ─────────────────────────────────────────────────────
 // inferSplitChildType — split子タスクのタイプを推定する
 //
-// autoSplitOnTimeout / splitTask 時に呼ぶ。
-// 親タイプを単純継承せず、子タスク内容からタイプを推定する。
+// 正準実装は task-type.js に集約。ドリフト防止のためここから委譲する。
+// task-type.js は task-manager.js を require しないので循環依存なし。
 //
-// 優先順位:
-//   1. Phase番号パターン（Phase1→RESEARCH, Phase2→IMPLEMENT, Phase3→TEST）
-//   2. 調査・設計キーワード → RESEARCH/DESIGN
-//   3. テスト・確認キーワード → TEST
-//   4. ドキュメントキーワード → DOCS
-//   5. 実装キーワード明示 → IMPLEMENT
-//   6. 判断不能 → parentType 継承
+// 修正方針（NEED_FIX 対応）:
+//   hasImpl を Phase番号より先に評価する。
+//   「[Phase 1] ログイン機能を実装」→ IMPLEMENT（RESEARCH 誤分類を防ぐ）
+//   「[Phase 3] 残りのAPI連携を実装する」→ IMPLEMENT（TEST 誤分類を防ぐ）
+//   「[Phase 1] 調査・設計」→ RESEARCH（実装語なし → Phase1 判定 OK）
+//   「[Phase 3] 結合テストを実施」→ TEST（実装語なし → Phase3 判定 OK）
 // ─────────────────────────────────────────────────────
 function inferSplitChildType(proposal, parentType) {
-  const text = String(proposal || '').toLowerCase();
-
-  // ─ Phase番号パターン（最優先）─
-  const phaseMatch = text.match(/\[?phase\s*(\d+)\]?/) || text.match(/フェーズ\s*(\d+)/);
-  if (phaseMatch) {
-    const n = parseInt(phaseMatch[1], 10);
-    if (n === 1) return TASK_TYPES.RESEARCH;   // Phase1 = 調査・設計
-    if (n >= 3)  return TASK_TYPES.TEST;        // Phase3以降 = テスト・確認
-    // Phase2 = 実装
-    return TASK_TYPES.IMPLEMENT;
-  }
-
-  // ─ 強いドメインシグナル（実装語より優先）─
-  if (/^docs\b|\bdocs\b|readme|ドキュメント|手順書|マニュアル|セットアップガイド/.test(text)) {
-    return TASK_TYPES.DOCS;
-  }
-
-  const hasImpl = /実装|作成して|追加して|修正して|変更して|書いて|implement|create|fix|build|add|write|開発|作って|直して|新規/.test(text);
-
-  // ─ 調査・設計キーワード ─
-  if (/調査|設計|design|research|方針|要件|分析|調べ/.test(text) && !hasImpl) {
-    if (/設計|design|アーキテクチャ|方針|仕様/.test(text)) return TASK_TYPES.DESIGN;
-    return TASK_TYPES.RESEARCH;
-  }
-
-  // ─ テスト・確認キーワード ─
-  if (/テスト|test|確認|verify|動作確認|qa|受け入れ/.test(text) && !hasImpl) {
-    return TASK_TYPES.TEST;
-  }
-
-  // ─ 実装キーワード明示 ─
-  if (hasImpl) return TASK_TYPES.IMPLEMENT;
-
-  // ─ 最終フォールバック: 親タイプ継承 ─
-  const validTypes = new Set(Object.values(TASK_TYPES));
-  const pNorm = String(parentType || '').toUpperCase();
-  return validTypes.has(pNorm) ? pNorm : TASK_TYPES.IMPLEMENT;
+  const tt = require('./task-type');
+  return tt.inferSplitChildType(proposal, parentType);
 }
 
 // ─────────────────────────────────────────────────────

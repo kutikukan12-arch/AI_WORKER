@@ -468,67 +468,52 @@ function getCompletionCriteria(taskType) {
 function inferSplitChildType(proposal, parentType) {
   const text = String(proposal || '').toLowerCase();
 
-  // ─ Phase番号パターン（最優先）─
-  // [Phase 1] xxx の調査・設計 → RESEARCH
-  // [Phase 2] xxx の実装       → IMPLEMENT
-  // [Phase 3] xxx のテスト・確認 → TEST
-  const phaseMatch = text.match(/\[?phase\s*(\d+)\]?/i) || text.match(/フェーズ\s*(\d+)/i);
-  if (phaseMatch) {
-    const phaseNum = parseInt(phaseMatch[1], 10);
-    if (phaseNum === 1) {
-      // Phase1 → 調査・設計フェーズ
-      return TASK_TYPES.RESEARCH;
-    }
-    if (phaseNum >= 3) {
-      // Phase3以降 → テスト・確認フェーズ
-      return TASK_TYPES.TEST;
-    }
-    // Phase2 → 実装（親タイプが IMPLEMENT 系ならそのまま）
-    if (phaseNum === 2) {
-      const parentNorm = String(parentType || '').toUpperCase();
-      if (['IMPLEMENT', 'FIX', 'REFACTOR'].includes(parentNorm)) {
-        return TASK_TYPES.IMPLEMENT;
-      }
-      return TASK_TYPES.IMPLEMENT;
-    }
-  }
-
-  // ─ 強いドメインシグナル（実装語より優先）─
-  // docs/readme/手順書 → DOCS（「書いて」より docs の明示が優先）
+  // ─ Step1: DOCS明示（最強シグナル、実装語より優先）─
+  // 「docs セットアップ手順を書いて」→ DOCS（「書いて」に負けない）
   const hasDocsKeyword =
     /^docs\b|\bdocs\b|readme|ドキュメント|手順書|マニュアル|セットアップガイド/.test(text);
   if (hasDocsKeyword) return TASK_TYPES.DOCS;
 
+  // ─ Step2: hasImpl を Phase番号より先に計算（安全ゲート）─
+  // 実装語が明示されている場合は、Phase番号に関わらず IMPLEMENT を返す。
+  // これにより「[Phase 1] ログイン機能を実装」→ IMPLEMENT（RESEARCH誤分類を防ぐ）
+  // 「[Phase 3] 残りのAPI連携を実装する」→ IMPLEMENT（TEST誤分類を防ぐ）
   const hasImplKeyword = _hasImplKeyword(text);
-
-  // ─ 調査・設計キーワード（Phase番号がない場合）─
-  const hasDesignOrResearch =
-    /調査|設計|design|research|方針|要件|仕様|分析|調べ|リサーチ/.test(text);
-  if (hasDesignOrResearch && !hasImplKeyword) {
-    // 「設計」はDESIGN、「調査」はRESEARCHに分ける
-    if (/設計|design|アーキテクチャ|方針|仕様/.test(text)) return TASK_TYPES.DESIGN;
-    return TASK_TYPES.RESEARCH;
-  }
-
-  // ─ テスト・確認キーワード ─
-  const hasTestKeyword =
-    /テスト|test|確認|verify|動作確認|qa|受け入れ|βテスト|品質/.test(text);
-  if (hasTestKeyword && !hasImplKeyword) {
-    return TASK_TYPES.TEST;
-  }
-
-  // ─ 実装キーワード明示 ─
   if (hasImplKeyword) {
     return TASK_TYPES.IMPLEMENT;
   }
 
-  // ─ フォールバック: detectTaskType で判定 ─
-  const detected = detectTaskType(proposal);
-  if (detected !== TASK_TYPES.IMPLEMENT) {
-    return detected;
+  // ─ Step3: Phase番号パターン（実装語がない場合のみ適用）─
+  // [Phase 1] 調査・設計     → RESEARCH（実装語なしなので安全）
+  // [Phase 2] の実装         → Phase2はデフォルトIMPLEMENT（ただし実装語あるとStep2で解決）
+  // [Phase 3] 結合テストを実施 → TEST（実装語なしなので安全）
+  const phaseMatch =
+    text.match(/\[?phase\s*(\d+)\]?/i) || text.match(/フェーズ\s*(\d+)/i);
+  if (phaseMatch) {
+    const phaseNum = parseInt(phaseMatch[1], 10);
+    if (phaseNum === 1) return TASK_TYPES.RESEARCH;
+    if (phaseNum >= 3)  return TASK_TYPES.TEST;
+    // Phase2 → IMPLEMENT
+    return TASK_TYPES.IMPLEMENT;
   }
 
-  // ─ 最終フォールバック: 親タイプ継承 ─
+  // ─ Step4: 調査・設計キーワード（Phase番号も実装語もない場合）─
+  const hasDesignOrResearch =
+    /調査|設計|design|research|方針|要件|仕様|分析|調べ|リサーチ/.test(text);
+  if (hasDesignOrResearch) {
+    if (/設計|design|アーキテクチャ|方針|仕様/.test(text)) return TASK_TYPES.DESIGN;
+    return TASK_TYPES.RESEARCH;
+  }
+
+  // ─ Step5: テスト・確認キーワード ─
+  const hasTestKeyword =
+    /テスト|test|確認|verify|動作確認|qa|受け入れ|βテスト|品質/.test(text);
+  if (hasTestKeyword) return TASK_TYPES.TEST;
+
+  // ─ Step6: フォールバック: detectTaskType → 親タイプ継承 ─
+  const detected = detectTaskType(proposal);
+  if (detected !== TASK_TYPES.IMPLEMENT) return detected;
+
   const validTypes = new Set(Object.values(TASK_TYPES));
   const pNorm = String(parentType || '').toUpperCase();
   return validTypes.has(pNorm) ? pNorm : TASK_TYPES.IMPLEMENT;

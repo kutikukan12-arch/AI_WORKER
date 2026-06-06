@@ -96,6 +96,45 @@ test('Ri. 判断不能 → 親タイプ継承 (RESEARCH)', () => {
   );
 });
 
+// ─ NEED_FIX 追加テスト: Phase番号 + 実装語 → IMPLEMENT ─
+// 守谷CTOレビュー指摘: Phase番号だけで分類すると危険
+test('Rj. Phase1 + 実装語 → IMPLEMENT（RESEARCH誤分類防止）', () => {
+  assert.strictEqual(
+    tt.inferSplitChildType('[Phase 1] ログイン機能を実装', 'IMPLEMENT'),
+    'IMPLEMENT'
+  );
+});
+test('Rk. Phase3 + 実装語 → IMPLEMENT（TEST誤分類防止）', () => {
+  assert.strictEqual(
+    tt.inferSplitChildType('[Phase 3] 残りのAPI連携を実装する', 'IMPLEMENT'),
+    'IMPLEMENT'
+  );
+});
+test('Rl. Phase3 + テスト語（実装語なし）→ TEST（維持）', () => {
+  assert.strictEqual(
+    tt.inferSplitChildType('[Phase 3] 結合テストを実施', 'IMPLEMENT'),
+    'TEST'
+  );
+});
+test('Rm. Phase1 + 調査語（実装語なし）→ RESEARCH（維持）', () => {
+  assert.strictEqual(
+    tt.inferSplitChildType('[Phase 1] 調査・設計', 'IMPLEMENT'),
+    'RESEARCH'
+  );
+});
+test('Rn. フェーズ1 + 実装語 → IMPLEMENT（日本語パターン）', () => {
+  assert.strictEqual(
+    tt.inferSplitChildType('フェーズ1: 認証APIを作成して', 'IMPLEMENT'),
+    'IMPLEMENT'
+  );
+});
+test('Ro. フェーズ3 + 実装語 → IMPLEMENT（日本語パターン）', () => {
+  assert.strictEqual(
+    tt.inferSplitChildType('フェーズ3 残機能を追加して完成させる', 'IMPLEMENT'),
+    'IMPLEMENT'
+  );
+});
+
 // ─────────────────────────────────────────────────────
 // [P] 今回パターン再現: IMPLEMENT timeout → Phase 3分割
 // ─────────────────────────────────────────────────────
