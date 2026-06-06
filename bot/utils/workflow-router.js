@@ -45,6 +45,11 @@ const WORKFLOW_EVENTS = {
   STRATEGY_REVIEW:     'STRATEGY_REVIEW',
   // Phase3: 社員間ルート
   SPEC_READY:          'SPEC_READY',   // 市川→宮城: 仕様確定 → 実装開始
+  // Phase2: Internal Router 新ルート
+  PM_READY:            'PM_READY',         // 市川→相沢: PM確認OK → CSテスト
+  CS_READY:            'CS_READY',         // 相沢→黒川: CSテスト完了 → CoSまとめ
+  KUROKAWA_SUMMARY:    'KUROKAWA_SUMMARY', // 黒川→CEO: CEO判断必要案件のみ報告
+  TECH_REVIEW_DONE:    'TECH_REVIEW_DONE', // 守谷→黒川: 技術のみREADY（PM不要）
 };
 
 // ─── Phase10: 固定ルート allowlist ──────────────────
@@ -88,6 +93,27 @@ const FIXED_ROUTES = {
     allowedFrom: ['ichikawa'],
     to:          'miyagi',
     reason:      '固定ルート: 市川 PM 仕様確定 → 宮城 実装開始',
+  },
+  // Phase2: Internal Router 新ルート
+  PM_READY: {
+    allowedFrom: ['ichikawa'],
+    to:          'aizawa',
+    reason:      '固定ルート: 市川 PM READY → 相沢 CS テスト',
+  },
+  CS_READY: {
+    allowedFrom: ['aizawa'],
+    to:          'kurokawa',
+    reason:      '固定ルート: 相沢 CS READY → 黒川 CoS まとめ',
+  },
+  KUROKAWA_SUMMARY: {
+    allowedFrom: ['kurokawa'],
+    to:          'ceo',
+    reason:      '固定ルート: 黒川 CoS 最終報告 → CEO（判断必要案件のみ）',
+  },
+  TECH_REVIEW_DONE: {
+    allowedFrom: ['moriya'],
+    to:          'kurokawa',
+    reason:      '固定ルート: 守谷 技術のみ READY → 黒川 CoS まとめ（PM確認不要）',
   },
 };
 
@@ -230,6 +256,51 @@ const ROUTING_TABLE = {
       `\nタスク: ${ctx.taskId || '（未指定）'}\n` +
       `\n仕様概要:\n${ctx.summary || '（詳細なし）'}\n` +
       `\n→ 実装完了後、\`!workflow handoff IMPLEMENT_DONE\` で守谷 CTO にレビューを依頼してください。`,
+  },
+  // Phase2: Internal Router 新ルート
+  PM_READY: {
+    to:      'aizawa',
+    label:   '相沢 CS',
+    message: (ctx) =>
+      `【CSテスト依頼】\n` +
+      `市川 PM から商品確認 READY が出ました。\n` +
+      `CS 視点（初心者目線）でのテスト・フィードバックをお願いします。\n` +
+      `\nタスク: ${ctx.taskId || '（未指定）'}\n` +
+      `\n内容:\n${ctx.summary || '（詳細なし）'}\n` +
+      `\n→ テスト完了後、\`!workflow handoff CS_READY aizawa\` で黒川 CoS へ報告してください。`,
+  },
+  CS_READY: {
+    to:      'kurokawa',
+    label:   '黒川 Chief of Staff',
+    message: (ctx) =>
+      `【CS確認完了・まとめ依頼】\n` +
+      `相沢 CS から READY が出ました。\n` +
+      `黒川 CoS で進捗をまとめ、CEO 判断が必要な案件のみ \`!workflow handoff KUROKAWA_SUMMARY\` で報告してください。\n` +
+      `\nタスク: ${ctx.taskId || '（未指定）'}\n` +
+      `\n内容:\n${ctx.summary || '（詳細なし）'}\n` +
+      `\n→ 技術のみ完了の場合は CEO への報告不要（黒川判断でクローズ可）。`,
+  },
+  KUROKAWA_SUMMARY: {
+    to:      'ceo',
+    via:     'kurokawa',
+    label:   'CEO（黒川 CoS 経由）',
+    message: (ctx) =>
+      `【黒川 CoS 最終報告】\n` +
+      `黒川 Chief of Staff から CEO 判断が必要な案件の報告です。\n` +
+      `\nタスク: ${ctx.taskId || '（未指定）'}\n` +
+      `\n内容:\n${ctx.summary || '（詳細なし）'}\n` +
+      `\n→ CEO のご判断をお願いします（承認 / 却下 / 追加確認）。`,
+  },
+  TECH_REVIEW_DONE: {
+    to:      'kurokawa',
+    label:   '黒川 Chief of Staff',
+    message: (ctx) =>
+      `【技術レビュー完了・まとめ依頼】\n` +
+      `守谷 CTO が技術のみ READY と判定しました（PM・CS 確認不要）。\n` +
+      `黒川 CoS でまとめ、必要に応じて CEO へ \`!workflow handoff KUROKAWA_SUMMARY\` で報告してください。\n` +
+      `\nタスク: ${ctx.taskId || '（未指定）'}\n` +
+      `\n内容:\n${ctx.summary || '（詳細なし）'}\n` +
+      `\n→ 費用・公開を伴う場合は必ず CEO 判断を仰いでください。`,
   },
 };
 
@@ -514,12 +585,32 @@ function buildAutoHandoffText(result) {
   ].join('\n');
 }
 
+// ─────────────────────────────────────────────────────
+// _hasProductImpact(text) — 商品・ユーザー影響キーワード検出
+//
+// 商品/サービス/公開/課金 などの語が含まれる場合 true。
+// 守谷 CTO が REVIEW_READY を使う際、商品影響の有無を判断する補助。
+// 判断はあくまで守谷自身が行う。このヘルパーは参考値のみ。
+// ─────────────────────────────────────────────────────
+const _PRODUCT_IMPACT_KEYWORDS = [
+  '商品', '公開', 'β', 'ベータ', 'beta', 'web', 'ui',
+  '表示', '機能追加', 'リリース', 'youtube', '診断', 'ユーザー',
+  'エンドユーザー', '販売', '課金', 'product', 'feature', 'release',
+  'サービス', 'サイト', '外部', 'お客様', 'launch', 'publish',
+];
+
+function _hasProductImpact(text) {
+  const lower = String(text || '').toLowerCase();
+  return _PRODUCT_IMPACT_KEYWORDS.some(kw => lower.includes(kw.toLowerCase()));
+}
+
 module.exports = {
   route,
   detectEventFromTaskState,
   buildHandoffText,
   autoHandoff,
   buildAutoHandoffText,
+  _hasProductImpact,
   WORKFLOW_EVENTS,
   ROUTING_TABLE,
   FIXED_ROUTES,

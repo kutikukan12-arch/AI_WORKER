@@ -40,6 +40,11 @@ const ALLOWED_CHAINS = [
   { from: 'any',      to: 'ikuno',    event: 'LESSON_CANDIDATE'  },
   { from: 'any',      to: 'ikuno',    event: 'INCIDENT_CANDIDATE'},
   { from: 'ceo',      to: 'kanzaki',  event: 'VP_BRIEF_REQUEST'  },
+  // Phase2: Internal Router 新ルート
+  { from: 'ichikawa', to: 'aizawa',   event: 'PM_READY'          },
+  { from: 'aizawa',   to: 'kurokawa', event: 'CS_READY'          },
+  { from: 'kurokawa', to: 'ceo',      event: 'KUROKAWA_SUMMARY'  },
+  { from: 'moriya',   to: 'kurokawa', event: 'TECH_REVIEW_DONE'  },
 ];
 
 // ─────────────────────────────────────────────────────

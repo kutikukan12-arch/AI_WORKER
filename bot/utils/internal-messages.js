@@ -140,6 +140,28 @@ const REPLY_KEYWORD_ROUTES = [
     to:          'kanzaki',
     reason:      '固定ルート: CEO → 神崎 VP 判断材料整理',
   },
+  // Phase2: Internal Router 新ルート
+  {
+    event:       'PM_READY',
+    keywords:    ['pm_ready', '市川ready', 'pm確認ok', '商品ok', '価値確認ok', 'pm_ok'],
+    allowedFrom: ['ichikawa'],
+    to:          'aizawa',
+    reason:      '固定ルート: 市川 PM READY → 相沢 CS テスト',
+  },
+  {
+    event:       'CS_READY',
+    keywords:    ['cs_ready', '相沢ready', 'csテスト完了', 'cs_ok', 'テスト完了', 'csok'],
+    allowedFrom: ['aizawa'],
+    to:          'kurokawa',
+    reason:      '固定ルート: 相沢 CS READY → 黒川 CoS まとめ',
+  },
+  {
+    event:       'TECH_REVIEW_DONE',
+    keywords:    ['tech_review_done', '技術のみready', '技術ready', 'pm不要', 'pmスキップ', 'tech_ok'],
+    allowedFrom: ['moriya'],
+    to:          'kurokawa',
+    reason:      '固定ルート: 守谷 技術のみ READY → 黒川 CoS まとめ',
+  },
 ];
 
 // ─────────────────────────────────────────────────────

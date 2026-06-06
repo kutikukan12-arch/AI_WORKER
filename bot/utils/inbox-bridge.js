@@ -38,7 +38,8 @@ const REPORT      = path.join(OUTBOX_DIR, 'report.md');
 // Phase3: 社員別ディレクトリ
 // ─────────────────────────────────────────────────────
 // ホワイトリスト: パストラバーサル防止。ここ以外の worker 名は拒否する。
-const VALID_WORKERS = ['miyagi', 'moriya', 'shiraishi', 'aizawa', 'ichikawa', 'kanemori', 'kurokawa', 'ikuno', 'kanzaki'];
+// Phase2: ceo を追加 (KUROKAWA_SUMMARY → CEO の outbox 配送に必要)
+const VALID_WORKERS = ['miyagi', 'moriya', 'shiraishi', 'aizawa', 'ichikawa', 'kanemori', 'kurokawa', 'ikuno', 'kanzaki', 'ceo'];
 
 const WORKER_DISPLAY = {
   miyagi:    '宮城 Lead Engineer',

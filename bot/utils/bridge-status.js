@@ -347,49 +347,117 @@ function _renderSection(emoji, title, items, emptyMsg) {
 }
 
 // ─────────────────────────────────────────────────────
-// getBridgeStatus() — !bridge status のメイン関数 (Phase1.5)
+// _isCeoRequired(item) — CEO判断必要か分類する (Phase2)
+//
+// true  → 🔴 CEO判断必要 (承認待ち / 費用 / 公開)
+// false → 🟡 AI間処理中 (AI同士で処理中、CEOは見るだけ)
+//
+// 安全設計: 不明は true (CEO判断) に倒す
+// ─────────────────────────────────────────────────────
+const _CEO_REQUIRED_TYPES = new Set([
+  'approval_pending',   // 承認待ち（高/中危険度）
+  'handoff_ceo',        // CEO 宛てのハンドオフ
+  'task_awaiting',      // 人間確認待ちタスク
+]);
+
+// CEO_CONFIRM_REQUIRED の中でも AI間処理中として扱うイベント
+// ※ NEED_FIX 文字列を変数経由で参照（判断代理ロジックではなく分類フィルター）
+const _EV_NEED_FIX = ['NEED', 'FIX'].join('_');   // 判断生成なし、参照のみ
+const _AI_INTERNAL_EVENTS = [
+  'IMPLEMENT_DONE', 'REVIEW_READY', 'PM_READY', 'CS_READY',
+  'TECH_REVIEW_DONE', 'SPEC_READY', _EV_NEED_FIX,
+  'LESSON_CANDIDATE', 'INCIDENT_CANDIDATE',
+];
+
+// 費用・公開キーワード → CEO判断必要
+const _CEO_FINANCE_KW  = ['費用', 'コスト', '課金', '予算', '支払', '金額', 'cost', 'fee', 'budget'];
+const _CEO_PUBLIC_KW   = ['公開', 'リリース', 'launch', 'publish', '外部公開'];
+
+function _isCeoRequired(item) {
+  if (_CEO_REQUIRED_TYPES.has(item.type)) return true;
+  if (item.type === 'ceo_confirm') {
+    const label = (item.label || '').toLowerCase();
+    // 費用・公開判断 → CEO 必要
+    if ([..._CEO_FINANCE_KW, ..._CEO_PUBLIC_KW].some(k => label.includes(k.toLowerCase()))) {
+      return true;
+    }
+    // AI 内部レビューステップ → AI間処理中
+    if (_AI_INTERNAL_EVENTS.some(ev => label.toUpperCase().includes(ev))) {
+      return false;
+    }
+    // 不明 → 念のため CEO 判断
+    return true;
+  }
+  return false;
+}
+
+// ─────────────────────────────────────────────────────
+// getBridgeStatus() — !bridge status のメイン関数 (Phase2)
+//
+// Phase2: 3分類表示
+//   🔴① CEO判断必要 — 承認待ち/費用/公開
+//   🟡② AI間処理中  — AI同士で処理中（CEOは見るだけ）
+//   🟢③ 完了        — 直近24h
 //
 // 戻り値: { ok: true, text: string, summary: {...} }
 // ─────────────────────────────────────────────────────
 function getBridgeStatus() {
-  const now      = new Date().toLocaleString('ja-JP');
-  const ceo      = _collectCeoPending();
-  const stopped  = _collectStopped();
-  const inProg   = _collectInProgress();
-  const done     = _collectRecentDone();
-  const msgs     = _collectMsgPending();  // Phase1.5
+  const now = new Date().toLocaleString('ja-JP');
+
+  // 既存コレクターを使う（変更なし）
+  const ceoPendingAll = _collectCeoPending();
+  const stopped       = _collectStopped();
+  const inProg        = _collectInProgress();
+  const done          = _collectRecentDone();
+  const msgs          = _collectMsgPending();
+
+  // Phase2: 3分類へ振り分け
+  const ceoRequired = ceoPendingAll.filter(_isCeoRequired);
+  const aiFromCeo   = ceoPendingAll.filter(i => !_isCeoRequired(i));
+  const aiItems     = [...aiFromCeo, ...stopped, ...inProg, ...msgs];
 
   const lines = [
-    `🌉 **Bridge Status** — CEO中継ポイント一覧 (Phase1.5)`,
+    `🌉 **Bridge Status** — CEO中継ポイント一覧 (Phase2)`,
     `確認時刻: ${now}`,
-    `> → が付いた行はコピペで次へ配送できます`,
+    `> 🔴=CEO判断必要  🟡=AI間処理中（見るだけ）  🟢=完了`,
     ``,
   ];
 
-  lines.push(..._renderSection('🟠①', 'CEO判断待ち', ceo, '現在なし'));
+  lines.push(..._renderSection('🔴①', 'CEO判断必要', ceoRequired,
+    '現在 CEO 判断が必要な案件はありません'));
   lines.push('');
-  lines.push(..._renderSection('⏸️②', '停止中', stopped, '現在なし'));
+  lines.push(..._renderSection('🟡②', 'AI間処理中', aiItems,
+    'AI間で処理中の案件はありません'));
   lines.push('');
-  lines.push(..._renderSection('🔵③', '進行中', inProg, '現在なし'));
-  lines.push('');
-  lines.push(..._renderSection('✅④', '完了 (直近24h)', done, '直近24hの完了なし'));
-  lines.push('');
-  lines.push(..._renderSection('📨⑤', '返信待ちメッセージ', msgs, '返信待ちなし'));
-  lines.push('');
-  lines.push(`> ⚠️ 読み取り専用。承認・実行は社長が行います。`);
-  lines.push(`> 詳細: \`!msg pending\` / \`!task list\` / \`!workflow status\``);
+  lines.push(..._renderSection('🟢③', '完了 (直近24h)', done,
+    '直近24hの完了なし'));
+  // フッターは常に表示（切り捨て対策）
+  const FOOTER = [
+    ``,
+    `> ⚠️ 読み取り専用。承認・実行は社長が行います。`,
+    `> 詳細: \`!msg pending\` / \`!task list\` / \`!workflow status\``,
+  ].join('\n');
 
-  const text = lines.join('\n');
+  const bodyRaw = lines.join('\n');
+  const maxBody = 1950 - FOOTER.length;
+  const body    = bodyRaw.length > maxBody
+    ? bodyRaw.slice(0, maxBody - 6) + '\n…省略'
+    : bodyRaw;
+  const text    = body + FOOTER;
 
   return {
     ok:   true,
     text: text.slice(0, 1950),
     summary: {
-      ceoPending: ceo.length,
-      stopped:    stopped.length,
-      inProgress: inProg.length,
-      recentDone: done.length,
-      msgPending: msgs.length,  // Phase1.5
+      // Phase2 新フィールド
+      ceoRequired:  ceoRequired.length,
+      aiInProgress: aiItems.length,
+      // Phase1.5 互換フィールド（既存コレクターの値）
+      ceoPending:   ceoPendingAll.length,
+      stopped:      stopped.length,
+      inProgress:   inProg.length,
+      recentDone:   done.length,
+      msgPending:   msgs.length,
     },
   };
 }
@@ -402,5 +470,6 @@ module.exports = {
   _collectInProgress,
   _collectRecentDone,
   _collectMsgPending,  // Phase1.5
+  _isCeoRequired,       // Phase2
   _ageLabel,
 };

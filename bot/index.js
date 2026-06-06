@@ -7954,6 +7954,26 @@ client.on('messageCreate', async (message) => {
   }
 
   // ─────────────────────────────────────────────────────
+  // !router — Role Channel Router (Phase2) チャンネル設定確認
+  // ─────────────────────────────────────────────────────
+  if (content.startsWith('!router')) {
+    const rcr    = require('./utils/role-channel-router');
+    const rtrSub = (content.split(/\s+/)[1] || 'status').toLowerCase();
+    if (rtrSub === 'status') {
+      await message.reply(rcr.buildChannelStatusText().slice(0, 1950)).catch(() => {});
+    } else {
+      await message.reply(
+        '**!router — Role Channel Router (Phase2)**\n\n' +
+        '```\n' +
+        '!router status  → 社員ごとの Discord チャンネル設定状況を表示\n' +
+        '```\n\n' +
+        '設定方法: `.env` に `MORIYA_CHANNEL_ID=<ID>` 等を追加して再起動。'
+      ).catch(() => {});
+    }
+    return;
+  }
+
+  // ─────────────────────────────────────────────────────
   // !kurokawa — 黒川 Workflow Intelligence (Phase1)
   // ─────────────────────────────────────────────────────
   if (content.startsWith('!kurokawa')) {
@@ -8074,6 +8094,27 @@ client.on('messageCreate', async (message) => {
         summary: summaryArg,
       });
       const text = wfRouter.buildAutoHandoffText(result);
+
+      // Phase2: Role Channel Router — worker の Discord チャンネルへ直接配送
+      if (result.ok && result.dispatched) {
+        try {
+          const rcr       = require('./utils/role-channel-router');
+          const workerChId = rcr.getWorkerChannelId(result.to);
+          if (workerChId) {
+            const headerLine = `📬 **${result.toLabel} へのハンドオフ** (${result.handoffId})`;
+            const body       = result.message.slice(0, 1700);
+            await sendToChannel(workerChId, message.channel,
+              `${headerLine}\n\`${result.event}\`\n\n${body}`
+            );
+            await message.reply(
+              `✅ **${result.toLabel} チャンネルへ配送しました** (${result.handoffId})\n` +
+              `チャンネル: \`${workerChId}\``
+            ).catch(() => {});
+            return;
+          }
+        } catch { /* role-channel-router 失敗時は従来通り */ }
+      }
+
       await message.reply(text.slice(0, 1900)).catch(() => {});
       return;
     }

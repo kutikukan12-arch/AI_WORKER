@@ -138,25 +138,27 @@ test('3a. getBridgeStatus() が ok:true を返す', () => {
   assert.ok(typeof r.summary === 'object', 'summary がない');
 });
 
-test('3b. summary に4分類カウントが含まれる', () => {
+test('3b. summary に3分類カウントが含まれる (Phase2)', () => {
   const r = bs.getBridgeStatus();
-  assert.ok('ceoPending'  in r.summary, 'ceoPending がない');
-  assert.ok('stopped'     in r.summary, 'stopped がない');
-  assert.ok('inProgress'  in r.summary, 'inProgress がない');
-  assert.ok('recentDone'  in r.summary, 'recentDone がない');
+  // Phase2 新フィールド
+  assert.ok('ceoRequired'  in r.summary, 'ceoRequired がない');
+  assert.ok('aiInProgress' in r.summary, 'aiInProgress がない');
+  assert.ok('recentDone'   in r.summary, 'recentDone がない');
+  // Phase1.5 互換フィールド
+  assert.ok('ceoPending'   in r.summary, 'ceoPending がない (compat)');
+  assert.ok('stopped'      in r.summary, 'stopped がない (compat)');
+  assert.ok('inProgress'   in r.summary, 'inProgress がない (compat)');
   // 全て数値
-  assert.ok(typeof r.summary.ceoPending === 'number');
-  assert.ok(typeof r.summary.stopped    === 'number');
-  assert.ok(typeof r.summary.inProgress === 'number');
-  assert.ok(typeof r.summary.recentDone === 'number');
+  assert.ok(typeof r.summary.ceoRequired  === 'number');
+  assert.ok(typeof r.summary.aiInProgress === 'number');
+  assert.ok(typeof r.summary.recentDone   === 'number');
 });
 
-test('3c. text に4分類のセクションヘッダーが含まれる', () => {
+test('3c. text に3分類のセクションヘッダーが含まれる (Phase2)', () => {
   const r = bs.getBridgeStatus();
-  assert.ok(r.text.includes('CEO判断待ち'),  '① CEO判断待ち がない');
-  assert.ok(r.text.includes('停止中'),       '② 停止中 がない');
-  assert.ok(r.text.includes('進行中'),       '③ 進行中 がない');
-  assert.ok(r.text.includes('完了'),         '④ 完了 がない');
+  assert.ok(r.text.includes('CEO判断必要'),  '🔴① CEO判断必要 がない');
+  assert.ok(r.text.includes('AI間処理中'),   '🟡② AI間処理中 がない');
+  assert.ok(r.text.includes('完了'),         '🟢③ 完了 がない');
 });
 
 test('3d. text に出典コマンドが含まれる', () => {
@@ -181,20 +183,17 @@ test('3g. 「Bridge Status」見出しが含まれる', () => {
   assert.ok(r.text.includes('Bridge Status'), '見出しがない');
 });
 
-test('3h. 4セクションが固定順に出力される (CEO判断待ち→停止中→進行中→完了)', () => {
+test('3h. 3セクションが固定順に出力される (CEO判断必要→AI間処理中→完了) [Phase2]', () => {
   const r    = bs.getBridgeStatus();
   const text = r.text;
-  const p1   = text.indexOf('CEO判断待ち');
-  const p2   = text.indexOf('停止中');
-  const p3   = text.indexOf('進行中');
-  const p4   = text.indexOf('完了');
-  assert.ok(p1 >= 0, 'CEO判断待ち セクションがない');
-  assert.ok(p2 >= 0, '停止中 セクションがない');
-  assert.ok(p3 >= 0, '進行中 セクションがない');
-  assert.ok(p4 >= 0, '完了 セクションがない');
-  assert.ok(p1 < p2, `CEO判断待ち(${p1}) が 停止中(${p2}) より後にある`);
-  assert.ok(p2 < p3, `停止中(${p2}) が 進行中(${p3}) より後にある`);
-  assert.ok(p3 < p4, `進行中(${p3}) が 完了(${p4}) より後にある`);
+  const p1   = text.indexOf('CEO判断必要');
+  const p2   = text.indexOf('AI間処理中');
+  const p3   = text.indexOf('完了');
+  assert.ok(p1 >= 0, 'CEO判断必要 セクションがない');
+  assert.ok(p2 >= 0, 'AI間処理中 セクションがない');
+  assert.ok(p3 >= 0, '完了 セクションがない');
+  assert.ok(p1 < p2, `CEO判断必要(${p1}) が AI間処理中(${p2}) より後にある`);
+  assert.ok(p2 < p3, `AI間処理中(${p2}) が 完了(${p3}) より後にある`);
 });
 
 test('3i. 並べ替えロジックがない (固定バケツ順のみ)', () => {
