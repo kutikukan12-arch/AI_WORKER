@@ -812,6 +812,60 @@ function updateTaskType(taskId, rawType) {
 }
 
 // ─────────────────────────────────────────────────────
+// inferSplitChildType — split子タスクのタイプを推定する
+//
+// autoSplitOnTimeout / splitTask 時に呼ぶ。
+// 親タイプを単純継承せず、子タスク内容からタイプを推定する。
+//
+// 優先順位:
+//   1. Phase番号パターン（Phase1→RESEARCH, Phase2→IMPLEMENT, Phase3→TEST）
+//   2. 調査・設計キーワード → RESEARCH/DESIGN
+//   3. テスト・確認キーワード → TEST
+//   4. ドキュメントキーワード → DOCS
+//   5. 実装キーワード明示 → IMPLEMENT
+//   6. 判断不能 → parentType 継承
+// ─────────────────────────────────────────────────────
+function inferSplitChildType(proposal, parentType) {
+  const text = String(proposal || '').toLowerCase();
+
+  // ─ Phase番号パターン（最優先）─
+  const phaseMatch = text.match(/\[?phase\s*(\d+)\]?/) || text.match(/フェーズ\s*(\d+)/);
+  if (phaseMatch) {
+    const n = parseInt(phaseMatch[1], 10);
+    if (n === 1) return TASK_TYPES.RESEARCH;   // Phase1 = 調査・設計
+    if (n >= 3)  return TASK_TYPES.TEST;        // Phase3以降 = テスト・確認
+    // Phase2 = 実装
+    return TASK_TYPES.IMPLEMENT;
+  }
+
+  // ─ 強いドメインシグナル（実装語より優先）─
+  if (/^docs\b|\bdocs\b|readme|ドキュメント|手順書|マニュアル|セットアップガイド/.test(text)) {
+    return TASK_TYPES.DOCS;
+  }
+
+  const hasImpl = /実装|作成して|追加して|修正して|変更して|書いて|implement|create|fix|build|add|write|開発|作って|直して|新規/.test(text);
+
+  // ─ 調査・設計キーワード ─
+  if (/調査|設計|design|research|方針|要件|分析|調べ/.test(text) && !hasImpl) {
+    if (/設計|design|アーキテクチャ|方針|仕様/.test(text)) return TASK_TYPES.DESIGN;
+    return TASK_TYPES.RESEARCH;
+  }
+
+  // ─ テスト・確認キーワード ─
+  if (/テスト|test|確認|verify|動作確認|qa|受け入れ/.test(text) && !hasImpl) {
+    return TASK_TYPES.TEST;
+  }
+
+  // ─ 実装キーワード明示 ─
+  if (hasImpl) return TASK_TYPES.IMPLEMENT;
+
+  // ─ 最終フォールバック: 親タイプ継承 ─
+  const validTypes = new Set(Object.values(TASK_TYPES));
+  const pNorm = String(parentType || '').toUpperCase();
+  return validTypes.has(pNorm) ? pNorm : TASK_TYPES.IMPLEMENT;
+}
+
+// ─────────────────────────────────────────────────────
 // 分割案を生成する（splitTask() の内部処理）
 //
 // 抽出優先順位:
@@ -1011,9 +1065,11 @@ function autoSplitOnTimeout(taskId) {
   const newTasks = proposals.map((p, i) => {
     const rawSize  = estimateTaskSize(p);
     const safeSize = rawSize === TASK_SIZES.LARGE ? TASK_SIZES.MEDIUM : rawSize;
+    // 子タスクのタイプを内容から推定（親タイプ単純継承を廃止）
+    const childType = inferSplitChildType(p, original2.type || TASK_TYPES.IMPLEMENT);
     return {
       id:             `${rootId}_s${(root ? (root.childTasks || []).length : 0) + i + 1}`,
-      type:           original2.type || TASK_TYPES.IMPLEMENT,
+      type:           childType,
       size:           safeSize,
       projectId:      original2.projectId || 'default',
       prompt:         p.slice(0, 500),
@@ -1101,9 +1157,11 @@ function splitTask(taskId) {
   const newTasks = proposals.map((p, i) => {
     const rawSize = estimateTaskSize(p);
     const safeSize = rawSize === TASK_SIZES.LARGE ? TASK_SIZES.MEDIUM : rawSize;
+    // 子タスクのタイプを内容から推定（親タイプ単純継承を廃止）
+    const childType = inferSplitChildType(p, inheritedType);
     return {
     id:           `${taskId}_s${i + 1}`,
-    type:         inheritedType,
+    type:         childType,
     size:         safeSize,
     projectId:    original.projectId || 'default',
     prompt:       p.slice(0, 500),

@@ -4,13 +4,15 @@
 // task-type.js - タスク種別 & サイズバリデーター
 //
 // 役割:
-//   1. TaskType 判定: IMPLEMENT / RESEARCH / DESIGN / REVIEW / REVIEW_CODE / REVIEW_PRODUCT / REVIEW_SECURITY
+//   1. TaskType 判定: IMPLEMENT / RESEARCH / DESIGN / TEST / DOCS / REVIEW / REVIEW_CODE / REVIEW_PRODUCT / REVIEW_SECURITY
 //   2. TaskSize 判定: SMALL / MEDIUM / LARGE（大すぎる場合は分割提案）
 //
 // TaskType 別完了条件:
 //   IMPLEMENT      → コード変更あり必須 ＋ 実運用での到達確認【L-20】(軽微=到達経路1行宣言/重要機能=workflow・command経由テスト必須)
 //   RESEARCH       → 出力内容があれば完了（変更なしでOK）
 //   DESIGN         → 出力内容があれば完了（変更なしでOK）
+//   TEST           → テスト結果の出力があれば完了（変更なしでOK）
+//   DOCS           → ドキュメント出力があれば完了（変更なしでOK）
 //   REVIEW         → 出力内容があれば完了（変更なしでOK）
 //   REVIEW_CODE    → コードレビュー結果の出力があれば完了（変更なしでOK）
 //   REVIEW_PRODUCT → 商品/プロダクトレビュー結果の出力があれば完了（変更なしでOK）
@@ -34,6 +36,8 @@ const TASK_TYPES = {
   IMPLEMENT:       'IMPLEMENT',       // コード変更必須
   RESEARCH:        'RESEARCH',        // 調査・確認（変更不要）
   DESIGN:          'DESIGN',          // 設計・方針（変更不要）
+  TEST:            'TEST',            // テスト・動作確認（変更不要）
+  DOCS:            'DOCS',            // ドキュメント・手順書（変更不要）
   REVIEW:          'REVIEW',          // レビュー汎用（変更不要）
   REVIEW_CODE:     'REVIEW_CODE',     // コードレビュー（変更不要）
   REVIEW_PRODUCT:  'REVIEW_PRODUCT',  // 商品/プロダクトレビュー（変更不要）
@@ -53,6 +57,8 @@ const TYPE_EMOJI = {
   IMPLEMENT:       '🔨',
   RESEARCH:        '🔍',
   DESIGN:          '📐',
+  TEST:            '🧪',
+  DOCS:            '📝',
   REVIEW:          '🧐',
   REVIEW_CODE:     '💻',
   REVIEW_PRODUCT:  '📦',
@@ -123,6 +129,25 @@ const REVIEW_SECURITY_KEYWORDS = [
 ];
 
 // ─────────────────────────────────────────────────────
+// TEST 強シグナル（テスト・動作確認フェーズ）
+// ─────────────────────────────────────────────────────
+const TEST_KEYWORDS = [
+  'テスト', 'test', '動作確認', '確認して', 'verify', 'validation',
+  'テスト確認', 'テスト・確認', '確認・テスト', '動作チェック',
+  '結合テスト', '単体テスト', 'e2eテスト', '受け入れテスト', 'uat',
+  'β確認', 'βテスト', '品質確認', 'qa確認', 'qa',
+];
+
+// ─────────────────────────────────────────────────────
+// DOCS 強シグナル（ドキュメント・手順書・README）
+// ─────────────────────────────────────────────────────
+const DOCS_KEYWORDS = [
+  'docs', 'readme', 'ドキュメント', 'ドキュメント作成', 'ドキュメントを作成',
+  '手順書', '手順を書いて', '手順を作成', 'マニュアル', '仕様書',
+  'changelog', '変更履歴', 'リリースノート', 'setup guide', 'セットアップガイド',
+];
+
+// ─────────────────────────────────────────────────────
 // REVIEW 汎用シグナル（上記サブタイプにマッチしない場合のフォールバック）
 // ─────────────────────────────────────────────────────
 const REVIEW_KEYWORDS = [
@@ -176,7 +201,17 @@ function detectTaskType(prompt) {
     return TASK_TYPES.DESIGN;
   }
 
-  // 5. REVIEW サブタイプ（具体的なものを先に判定）
+  // 5. TEST（テスト・動作確認フェーズ）
+  if (TEST_KEYWORDS.some(kw => text.includes(kw.toLowerCase()))) {
+    return TASK_TYPES.TEST;
+  }
+
+  // 6. DOCS（ドキュメント・手順書）
+  if (DOCS_KEYWORDS.some(kw => text.includes(kw.toLowerCase()))) {
+    return TASK_TYPES.DOCS;
+  }
+
+  // 7. REVIEW サブタイプ（具体的なものを先に判定）
   if (REVIEW_SECURITY_KEYWORDS.some(kw => text.includes(kw.toLowerCase()))) {
     return TASK_TYPES.REVIEW_SECURITY;
   }
@@ -187,17 +222,17 @@ function detectTaskType(prompt) {
     return TASK_TYPES.REVIEW_PRODUCT;
   }
 
-  // 6. REVIEW 汎用フォールバック
+  // 8. REVIEW 汎用フォールバック
   if (REVIEW_KEYWORDS.some(kw => text.includes(kw.toLowerCase()))) {
     return TASK_TYPES.REVIEW;
   }
 
-  // 7. OPS（診断・Git操作・運用確認）
+  // 9. OPS（診断・Git操作・運用確認）
   if (OPS_KEYWORDS.some(kw => text.includes(kw.toLowerCase()))) {
     return TASK_TYPES.OPS;
   }
 
-  // 8. デフォルト
+  // 10. デフォルト
   return TASK_TYPES.IMPLEMENT;
 }
 
@@ -402,6 +437,8 @@ function getCompletionCriteria(taskType) {
     case TASK_TYPES.IMPLEMENT:       return 'コード変更あり必須 ＋ 実運用での到達確認【L-20】(軽微=到達経路を1行宣言/重要機能=workflow・command経由テスト必須)';
     case TASK_TYPES.RESEARCH:        return '調査結果の出力があれば完了';
     case TASK_TYPES.DESIGN:          return '設計案・方針書の出力があれば完了';
+    case TASK_TYPES.TEST:            return 'テスト結果・確認ログの出力があれば完了（コード変更不要）';
+    case TASK_TYPES.DOCS:            return 'ドキュメント・手順書の出力があれば完了（コード変更不要）';
     case TASK_TYPES.REVIEW:          return 'レビュー結果の出力があれば完了';
     case TASK_TYPES.REVIEW_CODE:     return 'コードレビュー結果の出力があれば完了';
     case TASK_TYPES.REVIEW_PRODUCT:  return '商品レビュー結果の出力があれば完了';
@@ -409,6 +446,97 @@ function getCompletionCriteria(taskType) {
     case TASK_TYPES.OPS:             return '実行ログ・診断結果の出力があれば完了';
     default:                         return 'コード変更あり必須 ＋ 実運用での到達確認【L-20】(軽微=到達経路を1行宣言/重要機能=workflow・command経由テスト必須)';
   }
+}
+
+// ─────────────────────────────────────────────────────
+// inferSplitChildType — split子タスクのタイプを推定する
+//
+// task split（autoSplitOnTimeout / splitTask）時に呼ぶ。
+// 親タイプを単純継承せず、子タスクの内容からタイプを推定する。
+//
+// 優先順位:
+//   1. Phase番号パターン（Phase1→RESEARCH, Phase2→IMPLEMENT, Phase3→TEST）
+//   2. キーワードマッチ（detectTaskType の結果）
+//   3. 判断不能なら parentType を継承
+//
+// 引数:
+//   proposal    - 子タスクのプロンプトテキスト
+//   parentType  - 親タスクのタイプ（フォールバック）
+//
+// 戻り値: TASK_TYPES の値
+// ─────────────────────────────────────────────────────
+function inferSplitChildType(proposal, parentType) {
+  const text = String(proposal || '').toLowerCase();
+
+  // ─ Phase番号パターン（最優先）─
+  // [Phase 1] xxx の調査・設計 → RESEARCH
+  // [Phase 2] xxx の実装       → IMPLEMENT
+  // [Phase 3] xxx のテスト・確認 → TEST
+  const phaseMatch = text.match(/\[?phase\s*(\d+)\]?/i) || text.match(/フェーズ\s*(\d+)/i);
+  if (phaseMatch) {
+    const phaseNum = parseInt(phaseMatch[1], 10);
+    if (phaseNum === 1) {
+      // Phase1 → 調査・設計フェーズ
+      return TASK_TYPES.RESEARCH;
+    }
+    if (phaseNum >= 3) {
+      // Phase3以降 → テスト・確認フェーズ
+      return TASK_TYPES.TEST;
+    }
+    // Phase2 → 実装（親タイプが IMPLEMENT 系ならそのまま）
+    if (phaseNum === 2) {
+      const parentNorm = String(parentType || '').toUpperCase();
+      if (['IMPLEMENT', 'FIX', 'REFACTOR'].includes(parentNorm)) {
+        return TASK_TYPES.IMPLEMENT;
+      }
+      return TASK_TYPES.IMPLEMENT;
+    }
+  }
+
+  // ─ 強いドメインシグナル（実装語より優先）─
+  // docs/readme/手順書 → DOCS（「書いて」より docs の明示が優先）
+  const hasDocsKeyword =
+    /^docs\b|\bdocs\b|readme|ドキュメント|手順書|マニュアル|セットアップガイド/.test(text);
+  if (hasDocsKeyword) return TASK_TYPES.DOCS;
+
+  const hasImplKeyword = _hasImplKeyword(text);
+
+  // ─ 調査・設計キーワード（Phase番号がない場合）─
+  const hasDesignOrResearch =
+    /調査|設計|design|research|方針|要件|仕様|分析|調べ|リサーチ/.test(text);
+  if (hasDesignOrResearch && !hasImplKeyword) {
+    // 「設計」はDESIGN、「調査」はRESEARCHに分ける
+    if (/設計|design|アーキテクチャ|方針|仕様/.test(text)) return TASK_TYPES.DESIGN;
+    return TASK_TYPES.RESEARCH;
+  }
+
+  // ─ テスト・確認キーワード ─
+  const hasTestKeyword =
+    /テスト|test|確認|verify|動作確認|qa|受け入れ|βテスト|品質/.test(text);
+  if (hasTestKeyword && !hasImplKeyword) {
+    return TASK_TYPES.TEST;
+  }
+
+  // ─ 実装キーワード明示 ─
+  if (hasImplKeyword) {
+    return TASK_TYPES.IMPLEMENT;
+  }
+
+  // ─ フォールバック: detectTaskType で判定 ─
+  const detected = detectTaskType(proposal);
+  if (detected !== TASK_TYPES.IMPLEMENT) {
+    return detected;
+  }
+
+  // ─ 最終フォールバック: 親タイプ継承 ─
+  const validTypes = new Set(Object.values(TASK_TYPES));
+  const pNorm = String(parentType || '').toUpperCase();
+  return validTypes.has(pNorm) ? pNorm : TASK_TYPES.IMPLEMENT;
+}
+
+// 実装キーワードの存在チェック（内部ユーティリティ）
+function _hasImplKeyword(text) {
+  return /実装|作成して|追加して|修正して|変更して|書いて|implement|create|fix|build|add|write|開発|作って|直して|新規/.test(text);
 }
 
 module.exports = {
@@ -422,4 +550,5 @@ module.exports = {
   buildExplorationRules,
   formatTaskInfo,
   getCompletionCriteria,
+  inferSplitChildType,
 };
