@@ -138,6 +138,13 @@ function handler(req, res) {
     return;
   }
 
+  // GET /health → 死活確認（Fly.io / 監視ツール向け）
+  if (req.method === 'GET' && req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ ok: true, mode: 'web' }));
+    return;
+  }
+
   res.writeHead(404);
   res.end('Not Found');
 }

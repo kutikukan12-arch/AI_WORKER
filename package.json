@@ -5,6 +5,7 @@
   "main": "bot/index.js",
   "scripts": {
     "start": "node bot/index.js",
+    "start:web": "node web/youtube-diagnostic-server.js",
     "dev": "node --watch bot/index.js",
     "test": "node --test tests/*.test.js",
     "patrol": "node scripts/lessons-patrol.js",
