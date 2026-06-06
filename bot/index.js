@@ -1439,15 +1439,23 @@ async function _handleHumanCheck(ctx, task, reason, details) {
 
   logger.warn(`[HumanCheck] CEO確認が必要: ${projectId} | task:${taskId} | reason:${reason}`);
 
-  // Phase D-1: CEO 向けフォーマット（承認/却下/放置の結果を明示）
-  const humanCheckText = fmt.formatHumanCheck({
-    taskId,
-    projectId,
-    reason,
-    details,
-    task,
-  });
-  await message.channel.send(humanCheckText.slice(0, 1900)).catch(() => {});
+  // Smart CEO Approval Card（ボタン付きカード）を試みる。
+  // Discord.js v14 のコンポーネントが使えない場合はテキストフォールバック。
+  try {
+    const card = fmt.buildCEOApprovalCard({ taskId, projectId, reason, task });
+    await message.channel.send({
+      content: card.content,
+      components: card.components,
+    }).catch(() => {
+      // コンポーネント送信失敗 → テキストフォールバック
+      const humanCheckText = fmt.formatHumanCheck({ taskId, projectId, reason, details, task });
+      return message.channel.send(humanCheckText.slice(0, 1900));
+    });
+  } catch (cardErr) {
+    logger.warn(`[HumanCheck] Approvalカード生成失敗（テキスト送信）: ${cardErr.message}`);
+    const humanCheckText = fmt.formatHumanCheck({ taskId, projectId, reason, details, task });
+    await message.channel.send(humanCheckText.slice(0, 1900)).catch(() => {});
+  }
 }
 
 // ─────────────────────────────────────────────────────
@@ -7067,6 +7075,84 @@ async function handleCodex(message, userContent) {
     await sendNotification('error', message.channel, errorText);
   }
 }
+
+// ─────────────────────────────────────────────────────
+// Smart CEO Approval Card — ボタンインタラクションハンドラ
+//
+// CEO Approval Card の「承認」「待機」「詳細確認」ボタンを処理する。
+// ボタン customId: 'approve:task_xxx' / 'deny:task_xxx' / 'detail:task_xxx'
+//
+// 禁止:
+//   - 高危険度操作の自動承認
+//   - CEO以外のユーザーによる承認
+// ─────────────────────────────────────────────────────
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isButton()) return;
+
+  const { customId, user, message: iMsg } = interaction;
+  const [action, taskId] = customId.split(':');
+
+  if (!['approve', 'deny', 'detail'].includes(action) || !taskId) return;
+
+  // CEO_USER_IDS チェック（設定されている場合のみ制限）
+  const cir = require('./utils/ceo-intent-router');
+  const ceoids = cir.getCEOUserIds();
+  if (ceoids.length > 0 && !ceoids.includes(user.id)) {
+    await interaction.reply({
+      content: '⚠️ この操作はCEOのみ実行できます。',
+      ephemeral: true,
+    }).catch(() => {});
+    return;
+  }
+
+  try {
+    if (action === 'approve') {
+      // !approve 相当（approvalManager経由で承認）
+      const result = approvalManager.approve(taskId, user.tag);
+      if (result) {
+        await interaction.update({
+          content: `✅ **承認しました**: \`${taskId}\`\n承認者: ${user.tag}`,
+          components: [],
+        }).catch(() => {});
+        logger.info(`[ApprovalCard] 承認: ${taskId} by ${user.tag}`);
+
+        // pendingExecutionsがあれば実行
+        const execFn = pendingExecutions.get(taskId);
+        if (execFn) {
+          pendingExecutions.delete(taskId);
+          execFn();
+        }
+      } else {
+        await interaction.reply({
+          content: `⚠️ 承認対象が見つかりません: \`${taskId}\`\n\`!approve ${taskId}\` で手動操作してください。`,
+          ephemeral: true,
+        }).catch(() => {});
+      }
+    } else if (action === 'deny') {
+      // !deny 相当（待機状態にして停止）
+      approvalManager.deny(taskId, user.tag);
+      await interaction.update({
+        content: `⏸ **保留にしました**: \`${taskId}\`\n操作者: ${user.tag}\n\`!resume ${taskId}\` で再開できます。`,
+        components: [],
+      }).catch(() => {});
+      logger.info(`[ApprovalCard] 保留: ${taskId} by ${user.tag}`);
+    } else if (action === 'detail') {
+      // タスク詳細を ephemeral で表示
+      const task = taskManager.getTask ? taskManager.getTask(taskId) : null;
+      const prompt = (task?.prompt || '詳細なし').slice(0, 300);
+      await interaction.reply({
+        content: `🔍 **タスク詳細**: \`${taskId}\`\n\n${prompt}\n\n\`!task show ${taskId}\` で全詳細を確認できます。`,
+        ephemeral: true,
+      }).catch(() => {});
+    }
+  } catch (err) {
+    logger.error(`[ApprovalCard] インタラクションエラー: ${err.message}`);
+    await interaction.reply({
+      content: `⚠️ エラーが発生しました。\`!approve ${taskId}\` または \`!deny ${taskId}\` で手動操作してください。`,
+      ephemeral: true,
+    }).catch(() => {});
+  }
+});
 
 // ─────────────────────────────────────────────────────
 // メッセージ受信ハンドラ

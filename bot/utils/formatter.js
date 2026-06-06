@@ -704,6 +704,72 @@ function formatHumanCheck({ taskId = '', projectId = '', reason = '', details = 
 }
 
 // ─────────────────────────────────────────────────────
+// ③b CEO Approval Card — Smart CEO Approval（Discord.js v14 コンポーネント付き）
+//
+// CEOへの承認依頼をカード形式で表示する。
+// Discord.js v14 の ButtonBuilder / ActionRowBuilder を使用。
+//
+// data:
+//   taskId      — タスクID
+//   projectId   — プロジェクトID
+//   reason      — 承認理由
+//   task        — タスクオブジェクト（省略可）
+//   sarRoute    — SARのroute決定結果
+//
+// 戻り値:
+//   { content: string, components: ActionRow[] }
+//   Discord message.reply(result) で使用可能
+// ─────────────────────────────────────────────────────
+function buildCEOApprovalCard({ taskId = '', projectId = '', reason = '', task = null }) {
+  const {
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+  } = require('discord.js');
+
+  const taskPrompt  = (task?.prompt || '').slice(0, 80);
+  const taskType    = task?.type || 'IMPLEMENT';
+  const dangerLevel = task?.dangerLevel || '高';
+  const dangerEmoji = { '高': '🔴', '中': '🟡', '低': '🟢' }[dangerLevel] || '🔴';
+
+  // カード本文
+  const content = [
+    `${dangerEmoji} **CEO判断が必要です**`,
+    ``,
+    `**内容**: ${taskPrompt || `タスク \`${taskId}\``} [${taskType}]`,
+    `**理由**: ${reason.slice(0, 100)}`,
+    `**危険度**: ${dangerEmoji} ${dangerLevel}`,
+    `**プロジェクト**: \`${projectId}\``,
+    ``,
+    `承認する: \`!approve ${taskId}\``,
+    `却下する: \`!deny ${taskId}\``,
+  ].join('\n');
+
+  // ボタン（Discord.js v14 コンポーネント）
+  const approveBtn = new ButtonBuilder()
+    .setCustomId(`approve:${taskId}`)
+    .setLabel('承認')
+    .setStyle(ButtonStyle.Success)
+    .setEmoji('✅');
+
+  const denyBtn = new ButtonBuilder()
+    .setCustomId(`deny:${taskId}`)
+    .setLabel('待機')
+    .setStyle(ButtonStyle.Secondary)
+    .setEmoji('⏸');
+
+  const detailBtn = new ButtonBuilder()
+    .setCustomId(`detail:${taskId}`)
+    .setLabel('詳細確認')
+    .setStyle(ButtonStyle.Primary)
+    .setEmoji('🔍');
+
+  const row = new ActionRowBuilder().addComponents(approveBtn, denyBtn, detailBtn);
+
+  return { content, components: [row] };
+}
+
+// ─────────────────────────────────────────────────────
 // ④ Codex 高危険度 HUMAN_CHECK フォーマット（CEO向け判断支援フォーマット）
 //
 // data:
@@ -848,6 +914,7 @@ module.exports = {
   formatGitHubPushFailed,
   formatTaskError,
   formatHumanCheck,
+  buildCEOApprovalCard,
   formatCodexHighDanger,
   translateErrorType,
   translateHumanCheckReason,
