@@ -1387,6 +1387,40 @@ async function _handleHumanCheck(ctx, task, reason, details) {
   ctx.pendingApproval = taskId;
   ctx.stopReason      = 'awaiting_human';
 
+  // ── SAR事前チェック: CEO不要なものはAI/CoSへルーティング ──
+  const sar = require('./utils/smart-approval-router');
+  const arm = require('./utils/auto-recovery-manager');
+  const sarRoute = sar.routeApproval(
+    reason,
+    task?.prompt || '',
+    task?.type || 'IMPLEMENT',
+    { danger: task?.dangerLevel || '中' }
+  );
+  logger.info(`[HumanCheck] SAR route=${sarRoute.route} | ${sarRoute.reason.slice(0, 80)}`);
+
+  if (sarRoute.route === 'ai') {
+    // AI自動処理 → CEO通知しない・approvalも不要
+    logger.info(`[HumanCheck] AI自動処理のためスキップ: ${reason.slice(0, 60)}`);
+    return;
+  }
+
+  if (sarRoute.route === 'cos') {
+    // CoS(黒川)へ通知 → CEO通知しない
+    const cosChannelId = process.env.KUROKAWA_CHANNEL_ID || '';
+    const cosMsg = arm.buildRecoveryMessage(arm.RECOVERY_ACTIONS.ESCALATE_COS,
+      task || { id: taskId },
+      { reason: sarRoute.reason + '\n元reason: ' + reason.slice(0, 120) }
+    );
+    if (cosChannelId) {
+      await sendToChannel(cosChannelId, message.channel, cosMsg).catch(() => {});
+    } else {
+      await message.channel.send(cosMsg.slice(0, 1900)).catch(() => {});
+    }
+    logger.info(`[HumanCheck] CoS通知完了（CEO未送信）: taskId=${taskId}`);
+    return;
+  }
+
+  // route === 'ceo' → CEO必須: 従来通りapproval記録 + CEO通知
   // C-1修正: approval record を作成して !approve / !deny が機能するようにする
   // M-2修正: ensurePending で「必ず PENDING」を保証する。
   //   過去に APPROVED/DENIED 済みの taskId でも再 HUMAN_CHECK を承認可能にする。
@@ -1395,7 +1429,7 @@ async function _handleHumanCheck(ctx, task, reason, details) {
       type:      'post',
       projectId,
       reason:    reason.slice(0, 200),
-      danger:    '中',
+      danger:    task?.dangerLevel || '中',
       prompt:    (task?.prompt || '').slice(0, 500),
       channelId: message.channelId,
     });
@@ -1403,7 +1437,7 @@ async function _handleHumanCheck(ctx, task, reason, details) {
     logger.warn(`[HumanCheck] approval 作成失敗（続行）: ${approvalErr.message}`);
   }
 
-  logger.warn(`[HumanCheck] 人間確認が必要: ${projectId} | task:${taskId} | reason:${reason}`);
+  logger.warn(`[HumanCheck] CEO確認が必要: ${projectId} | task:${taskId} | reason:${reason}`);
 
   // Phase D-1: CEO 向けフォーマット（承認/却下/放置の結果を明示）
   const humanCheckText = fmt.formatHumanCheck({
@@ -5453,27 +5487,38 @@ async function handleAutoTimeoutSplit({ message, task, contextLabel = 'AUTO' }) 
   }
 
   const splitResult = taskManager.autoSplitOnTimeout(task.id);
+  // ARM: Auto Recovery Manager で復旧アクションを分類
+  const arm = require('./utils/auto-recovery-manager');
 
   if (splitResult.ok) {
     logger.info(`[${contextLabel}] Auto Split: ${task.id} → ${splitResult.newTasks.length}件`);
-    await message.channel.send(
-      `⏱️ **タイムアウト → Auto Split**\n` +
-      `タスク: \`${task.id}\` [${task.type}]\n` +
-      `→ ${splitResult.newTasks.length}件の小タスクに分割して続行します。\n` +
-      splitResult.newTasks.map(t =>
-        `\`${t.id}\`: ${(t.prompt || '').slice(0, 45)}`
-      ).join('\n')
-    ).catch(() => {});
+    // ARM: 自動分割成功 → CoSチャンネルへ通知（CEOへは不要）
+    const splitMsg = arm.buildRecoveryMessage(arm.RECOVERY_ACTIONS.AUTO_SPLIT, task, {
+      children: splitResult.newTasks,
+    });
+    // CoSチャンネルがあればそちらへ、なければ一般チャンネルへ
+    const cosChannelId = process.env.KUROKAWA_CHANNEL_ID || '';
+    if (cosChannelId) {
+      const rcr = require('./utils/role-channel-router');
+      await sendToChannel(cosChannelId, message.channel, splitMsg).catch(() => {});
+    } else {
+      await message.channel.send(splitMsg).catch(() => {});
+    }
     return 'split_ok';
   }
 
   if (splitResult.reason === 'timeout_limit') {
     logger.warn(`[${contextLabel}] timeout_limit: ${task.id}`);
-    await message.channel.send(
-      `🛑 **タイムアウト2回目 → 人間確認が必要**\n` +
-      `タスク: \`${task.id}\` [${task.type}]\n` +
-      `同一タスク系統で2回タイムアウトしました。内容を確認してください。`
-    ).catch(() => {});
+    // ARM: 2回目タイムアウト → 守谷CTOへエスカレーション（CEO不要）
+    const limitMsg = arm.buildRecoveryMessage(arm.RECOVERY_ACTIONS.ESCALATE_MORIYA, task, {
+      reason: '同一タスク系統で2回タイムアウト。技術的検討が必要。',
+    });
+    const moriyaChannelId = process.env.MORIYA_CHANNEL_ID || '';
+    if (moriyaChannelId) {
+      await sendToChannel(moriyaChannelId, message.channel, limitMsg).catch(() => {});
+    } else {
+      await message.channel.send(limitMsg).catch(() => {});
+    }
     return 'timeout_limit';
   }
 
@@ -5514,6 +5559,27 @@ async function handleAutoOn(message) {
   }
 
   logger.info(`[AUTO-ON] 開始 | ch:${message.channelId} | max:${AUTO_MAX_TASKS}`);
+
+  // ── Stale Approval 自動クリーンアップ（CEO作業ゼロ化） ──
+  // AUTO-ON 開始時に孤児approvalを自動処理し、CEO通知不要なものを排除する。
+  try {
+    const arm = require('./utils/auto-recovery-manager');
+    const activeTasks = taskManager.listTasks().map(t => t.id);
+    const cleanupResult = arm.cleanupStaleApprovals({ excludeIds: activeTasks, resolvedBy: 'auto-on-start' });
+    if (cleanupResult.ok && cleanupResult.staled.length > 0) {
+      logger.info(`[AUTO-ON] stale approval クリーンアップ: ${cleanupResult.staled.length}件`);
+      const cosChannelId = process.env.KUROKAWA_CHANNEL_ID || '';
+      const cleanupMsg = arm.buildRecoveryMessage(arm.RECOVERY_ACTIONS.STALE_CLEANUP,
+        { id: 'batch', type: 'OPS' },
+        { reason: `AUTO-ON開始時クリーンアップ: ${cleanupResult.staled.length}件の孤児approvalを解消` }
+      );
+      if (cosChannelId) {
+        await sendToChannel(cosChannelId, message.channel, cleanupMsg).catch(() => {});
+      }
+    }
+  } catch (staleErr) {
+    logger.warn(`[AUTO-ON] stale クリーンアップエラー（続行）: ${staleErr.message}`);
+  }
 
   await message.reply(
     `▶ **Auto Task Runner 開始 (Phase E-1)**\n\n` +
