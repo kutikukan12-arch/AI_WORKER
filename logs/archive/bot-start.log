@@ -1,0 +1,21 @@
+[32m[2026/05/29 04:13:27] [INFO][0m Bot 起動完了: 社員#6469
+[32m[2026/05/29 04:13:27] [INFO][0m 起動診断 | Node v24.16.0 | PID=6268 | argv_count=2
+[32m[2026/05/29 04:13:27] [INFO][0m PID記録: 6268 → data/bot.pid
+
+════════════════════════════════════════════════════════════
+  ✅ AI_WORKER Bot Phase5 オンライン
+  Bot: 社員#6469
+  ⭕ GitHub | ⭕ Codex | ⭕ PR自動作成 | ⭕ 自動フィードバック | ✅ ナイトバッチ | ✅ タスクキュー(max:1)
+  監視CH: 1509545187846652034, 1509547954116104283, 1509547986911232204, 1509548020860194916, 1509548061884682453
+════════════════════════════════════════════════════════════
+
+[32m[2026/05/29 04:13:27] [INFO][0m ナイトバッチ スケジュール開始: 毎日 2:00
+[32m[2026/05/29 04:13:27] [INFO][0m 次回バッチ: 2026/5/30 2:00:00 (1307分後)
+[32m[2026/05/29 04:13:27] [INFO][0m 朝バッチ スケジュール開始: 毎日 8:00
+[32m[2026/05/29 04:13:27] [INFO][0m 次回朝バッチ: 2026/5/29 8:00:00 (227分後)
+(node:6268) DeprecationWarning: The ready event has been renamed to clientReady to distinguish it from the gateway READY event and will only emit under that name in v15. Please use clientReady instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[32m[2026/05/29 04:15:49] [INFO][0m 再起動状態保存 | CH: 1509545187846652034 | active=0 queued=0
+[32m[2026/05/29 04:15:50] [INFO][0m !restart 実行 | ユーザー: lapis12123
+[32m[2026/05/29 04:15:50] [INFO][0m Bot 再起動実行 | PID: 6268 → 新プロセス起動
+[32m[2026/05/29 04:15:50] [INFO][0m 新プロセス起動済み。1.5秒後に旧プロセス終了。

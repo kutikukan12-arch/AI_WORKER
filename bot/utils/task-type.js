@@ -8,7 +8,7 @@
 //   2. TaskSize 判定: SMALL / MEDIUM / LARGE（大すぎる場合は分割提案）
 //
 // TaskType 別完了条件:
-//   IMPLEMENT      → コード変更あり必須
+//   IMPLEMENT      → コード変更あり必須 ＋ 実運用での到達確認【L-20】(軽微=到達経路1行宣言/重要機能=workflow・command経由テスト必須)
 //   RESEARCH       → 出力内容があれば完了（変更なしでOK）
 //   DESIGN         → 出力内容があれば完了（変更なしでOK）
 //   REVIEW         → 出力内容があれば完了（変更なしでOK）
@@ -389,11 +389,17 @@ function formatTaskInfo(taskType, taskSize) {
 }
 
 // ─────────────────────────────────────────────────────
-// TaskType ごとの完了条件説明（Discord表示用）
+// TaskType ごとの完了条件説明（Discord表示用 / Definition of Done）
+//
+// L-20 反映（2026-06-04）: 完成判定を実運用基準へ合わせる。
+//   IMPLEMENT は「コードが変わった」だけでは完了でなく、実運用での到達確認まで含む。
+//   ・軽微変更    → 到達経路を1行宣言すれば可（例:「!diag→diagnosePrePub経由で確認」）
+//   ・重要機能    → workflow / command 経由のテスト必須（実際の入口から動かして確認）
+//   目的: 開発速度を落とすことではなく、DONE を実運用と一致させること。
 // ─────────────────────────────────────────────────────
 function getCompletionCriteria(taskType) {
   switch (taskType) {
-    case TASK_TYPES.IMPLEMENT:       return 'コード変更あり必須';
+    case TASK_TYPES.IMPLEMENT:       return 'コード変更あり必須 ＋ 実運用での到達確認【L-20】(軽微=到達経路を1行宣言/重要機能=workflow・command経由テスト必須)';
     case TASK_TYPES.RESEARCH:        return '調査結果の出力があれば完了';
     case TASK_TYPES.DESIGN:          return '設計案・方針書の出力があれば完了';
     case TASK_TYPES.REVIEW:          return 'レビュー結果の出力があれば完了';
@@ -401,7 +407,7 @@ function getCompletionCriteria(taskType) {
     case TASK_TYPES.REVIEW_PRODUCT:  return '商品レビュー結果の出力があれば完了';
     case TASK_TYPES.REVIEW_SECURITY: return 'セキュリティレビュー結果の出力があれば完了';
     case TASK_TYPES.OPS:             return '実行ログ・診断結果の出力があれば完了';
-    default:                         return 'コード変更あり必須';
+    default:                         return 'コード変更あり必須 ＋ 実運用での到達確認【L-20】(軽微=到達経路を1行宣言/重要機能=workflow・command経由テスト必須)';
   }
 }
 

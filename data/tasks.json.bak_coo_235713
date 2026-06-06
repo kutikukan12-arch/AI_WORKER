@@ -1,0 +1,2846 @@
+{
+  "tasks": [
+    {
+      "id": "task_1780159783097",
+      "type": "RESEARCH",
+      "size": "SMALL",
+      "projectId": "default",
+      "prompt": "AI_WORKERの運用課題を調査してください",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "test",
+      "createdAt": "2026-05-30T16:49:43.097Z",
+      "updatedAt": "2026-05-30T16:49:43.097Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-05-30T16:49:43.097Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": ""
+    },
+    {
+      "id": "task_1780165047522",
+      "type": "IMPLEMENT",
+      "size": "MEDIUM",
+      "projectId": "ai_worker",
+      "prompt": "Codexレビュー結果を元に、Project管理機能がDiscordで使えない原因を調査して修正してください。\n\nCodex指摘:\n【問題】!project ルーティングが存在しない可能性。!help コマンドが更新されていない可能性。最新コードでBotが起動していない可能性。\n【危険度】中\n【改善案】コード内で !project ルーティングを確認し、存在しない場合は追加する。!help 出力を確認し、!project が含まれていない場合は更新する。Botが最新コードで起動しているか確認し、必要なら安全に再起動する。\n\n確認してほしいこと:\n1. bot/index.js に !project ルーティングがあるか\n2. handleProject が定義・importされているか\n3. !help に !project current/list/create/switch が表示されるか\n4. 現在稼働中Botが最新コードか\n5. Discordで以下が動くか実地確認:\n   !project current\n   !project list\n   !project create",
+      "state": "保留",
+      "priority": "中",
+      "priorityReason": "スコア1 | 危険度高",
+      "dangerLevel": "高",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-05-30T18:17:27.522Z",
+      "updatedAt": "2026-05-31T15:41:04.044Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-05-30T18:17:27.522Z",
+          "note": "作成"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-05-30T18:17:37.317Z",
+          "note": "Claude Code 実行開始"
+        },
+        {
+          "state": "保留",
+          "at": "2026-05-31T15:41:04.044Z",
+          "note": "lease reap: leaseExpiresAt 期限切れ"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780174654836",
+      "type": "IMPLEMENT",
+      "size": "MEDIUM",
+      "projectId": "ai_worker",
+      "prompt": "GitHub Push失敗の原因を修正してください。\n\n症状:\n\ngit push origin main --set-upstream\n\nerror: src refspec main does not match any\nerror: failed to push some refs to\nhttps://github.com/kutikukan12-arch/社員.git\n\n正しい状態:\n\nbranch:\nmaster\n\nremote:\nhttps://github.com/kutikukan12-arch/AI_WORKER.git\n\n確認:\n\n1. git remote -v\n2. git branch -vv\n3. git status\n4. git log --oneline -3\n\n修正:\n\n1. remote が 社員.git なら AI_WORKER.git に修正\n2. push先を main ではなく master に修正\n3. push成功まで実施\n\n完了報告:\n\n* remote URL\n* branch\n* 最新commit\n* push結果",
+      "state": "保留",
+      "priority": "中",
+      "priorityReason": "スコア0 | キーワード: error",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-05-30T20:57:34.836Z",
+      "updatedAt": "2026-06-01T12:06:29.252Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-05-30T20:57:34.836Z",
+          "note": "作成"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-05-30T20:57:34.839Z",
+          "note": "Claude Code 実行開始"
+        },
+        {
+          "state": "レビュー待ち",
+          "at": "2026-05-30T20:58:06.399Z",
+          "note": "未完了 — mtime/git変更0件 — 実装された形跡なし"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-01T12:06:29.252Z",
+          "note": "孤立タスク整理（24時間超過 → 保留）"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": ""
+    },
+    {
+      "id": "task_1780191651544",
+      "type": "IMPLEMENT",
+      "size": "MEDIUM",
+      "projectId": "ai_worker",
+      "prompt": "GitHub push失敗を診断して修正してください。\n\n目的:\nAI_WORKERの最新commitをGitHubへ正常にpushできる状態にする。\n\n必ず実行:\n1. git status\n2. git log --oneline -5\n3. git branch --show-current\n4. git remote -v\n5. git push origin master\n\npush失敗時:\n- エラーログを確認\n- 認証問題 / remote URL問題 / non-fast-forward / branch名違い を分類\n- force pushは禁止\n- 必要なら git pull --rebase origin master を使う\n- remote URLが壊れている場合は正しいoriginへ直す\n\n禁止:\n- git push --force\n- .env や秘密情報の表示\n- bot.lock / bot.pid / data/history / reports / reviews をgit管理に追加すること\n\n完了条件:\n- git status が clea",
+      "state": "保留",
+      "priority": "高",
+      "priorityReason": "スコア2 | キーワード: エラー | 危険度高",
+      "dangerLevel": "高",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-05-31T01:40:51.544Z",
+      "updatedAt": "2026-06-01T12:06:29.253Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-05-31T01:40:51.544Z",
+          "note": "作成"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-05-31T01:41:30.979Z",
+          "note": "Claude Code 実行開始"
+        },
+        {
+          "state": "レビュー待ち",
+          "at": "2026-05-31T01:42:55.332Z",
+          "note": "未完了 — mtime/git変更0件 — 実装された形跡なし"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-01T12:06:29.253Z",
+          "note": "孤立タスク整理（24時間超過 → 保留）"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": ""
+    },
+    {
+      "id": "task_1780192131750",
+      "type": "IMPLEMENT",
+      "size": "MEDIUM",
+      "projectId": "ai_worker",
+      "prompt": "task_1780191907447\n\n目的:\nOPS・Git診断系タスクが「コード変更0件」で未完了になる不具合を修正してください。\n\n現在の問題:\nGitHub push診断タスクが正常終了しても、\n「mtime/git変更0件 — 実装された形跡なし」\nで未完了判定される。\n\n修正内容:\n- IMPLEMENT/FIX/REFACTOR は従来通りコード変更必須\n- RESEARCH/DOCS/REVIEW/OPS はコード変更0件でも完了可能\n- reports/research_*.md 生成\n- reviews/result_*.md 生成\n- 会話応答ログ\n- Git診断結果報告\nのいずれかがあれば完了扱い\n\n確認:\n- 現在の完了判定ロジックを特定\n- 最小変更で修正\n- テスト追加\n- commit作成\n- 最後に変更ファイル、テスト結果、commit hash を報告\n\n禁止:\n- git push --force\n- .env表示\n- 秘密情報表示",
+      "state": "保留",
+      "priority": "低",
+      "priorityReason": "スコア-1 | 危険度高 | 低優先: refactor",
+      "dangerLevel": "高",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-05-31T01:48:51.751Z",
+      "updatedAt": "2026-05-31T15:41:04.045Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-05-31T01:48:51.751Z",
+          "note": "作成"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-05-31T01:50:01.523Z",
+          "note": "Claude Code 実行開始"
+        },
+        {
+          "state": "保留",
+          "at": "2026-05-31T15:41:04.045Z",
+          "note": "lease reap: leaseExpiresAt 期限切れ"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780221880100",
+      "type": "IMPLEMENT",
+      "size": "MEDIUM",
+      "projectId": "ai_worker",
+      "prompt": "[FIX] bot/utils/completion-validator.js だけ修正してください。\n\n目的:\nprompt に「診断」「確認」「push」「status」「調査」が含まれる場合、コード変更0件でも完了判定を通す。\n\n条件:\n- 対象ファイルは bot/utils/completion-validator.js のみ\n- IMPLEMENT/FIX/REFACTOR でも上記キーワードがあれば運用タスク扱い\n- 上記キーワードが無い IMPLEMENT/FIX/REFACTOR は従来通り変更必須\n- 空出力だけは完了扱いにしない\n- git push / commit / reset 禁止\n- .env と秘密情報表示禁止\n\n完了報告:\n修正箇所とテスト結果",
+      "state": "保留",
+      "priority": "中",
+      "priorityReason": "スコア0 | 危険度高 | 低優先: refactor",
+      "dangerLevel": "高",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-05-31T10:04:40.100Z",
+      "updatedAt": "2026-05-31T10:05:06.339Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-05-31T10:04:40.100Z",
+          "note": "作成"
+        },
+        {
+          "state": "保留",
+          "at": "2026-05-31T10:05:06.339Z",
+          "note": "却下"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": ""
+    },
+    {
+      "id": "task_1780222236399",
+      "type": "IMPLEMENT",
+      "size": "MEDIUM",
+      "projectId": "ai_worker",
+      "prompt": "[FIX] bot/utils/completion-validator.js の operationLike 判定だけ修正してください。\n\n目的:\n運用確認タスクを task.type より優先して判定する。\n\n条件:\n- 対象ファイルは bot/utils/completion-validator.js のみ\n- 判定キーワードは 診断 / 確認 / status / 調査 / GitHub送信確認\n- 上記キーワードが prompt にあれば operationLike=true\n- operationLike=true の場合は IMPLEMENT / FIX / REFACTOR より優先\n- 空出力の扱いは今回は変更しない\n- 他ファイルは変更しない\n\n完了報告:\n修正箇所と確認結果",
+      "state": "保留",
+      "priority": "低",
+      "priorityReason": "スコア-2 | 低優先: refactor",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-05-31T10:10:36.399Z",
+      "updatedAt": "2026-05-31T15:41:04.045Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-05-31T10:10:36.399Z",
+          "note": "作成"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-05-31T10:10:36.402Z",
+          "note": "Claude Code 実行開始"
+        },
+        {
+          "state": "保留",
+          "at": "2026-05-31T15:41:04.045Z",
+          "note": "lease reap: leaseExpiresAt 期限切れ"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780239049453",
+      "type": "IMPLEMENT",
+      "size": "MEDIUM",
+      "projectId": "ai_worker",
+      "prompt": "Phase E-4 Failure Recovery: タスク失敗時に lastError/errorType を保存し、TIMEOUT/AUTH/PERMISSION/SYNTAX/UNKNOWN を分類できるようにする",
+      "state": "保留",
+      "priority": "中",
+      "priorityReason": "スコア0 | キーワード: error",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-05-31T14:50:49.453Z",
+      "updatedAt": "2026-06-01T13:25:22.137Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-05-31T14:50:49.453Z",
+          "note": "作成"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-05-31T15:13:38.723Z",
+          "note": "claim: test-hold"
+        },
+        {
+          "state": "保留",
+          "at": "2026-05-31T15:13:38.724Z",
+          "note": "test hold"
+        },
+        {
+          "state": "未着手",
+          "at": "2026-06-01T13:17:40.262Z",
+          "note": "auto-resume"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-01T13:17:40.586Z",
+          "note": "claim: project-run"
+        },
+        {
+          "state": "未着手",
+          "at": "2026-06-01T13:17:40.587Z",
+          "note": "lease released"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-01T13:19:46.306Z",
+          "note": "手動保留"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780239597479",
+      "type": "REVIEW",
+      "size": "SMALL",
+      "projectId": "ai_worker",
+      "prompt": "Phase E-4 Failure Recovery 第1段階 errorType/lastError 統合レビュー",
+      "state": "保留",
+      "priority": "中",
+      "priorityReason": "スコア0 | キーワード: error",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-05-31T14:59:57.479Z",
+      "updatedAt": "2026-06-01T13:25:22.139Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-05-31T14:59:57.479Z",
+          "note": "作成"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-05-31T15:13:38.726Z",
+          "note": "claim: legacy-test"
+        },
+        {
+          "state": "未着手",
+          "at": "2026-05-31T15:13:38.727Z",
+          "note": "lease released"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-05-31T15:46:31.989Z",
+          "note": "claim by w-rev [REVIEWER]"
+        },
+        {
+          "state": "保留",
+          "at": "2026-05-31T16:27:35.397Z",
+          "note": "lease reap: leaseExpiresAt 期限切れ"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780239906154",
+      "type": "IMPLEMENT",
+      "size": "MEDIUM",
+      "projectId": "ai_worker",
+      "prompt": "Phase E-4 Failure Recovery 第2段階 Retry Policy を実装する。errorTypeごとに RETRY / SPLIT / STOP / HUMAN_CHECK を判定できるようにする",
+      "state": "保留",
+      "priority": "中",
+      "priorityReason": "スコア0 | キーワード: error",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-05-31T15:05:06.154Z",
+      "updatedAt": "2026-06-01T13:25:22.139Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-05-31T15:05:06.154Z",
+          "note": "作成"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-05-31T15:46:31.986Z",
+          "note": "claim by w-impl [IMPLEMENTER]"
+        },
+        {
+          "state": "保留",
+          "at": "2026-05-31T16:27:35.397Z",
+          "note": "lease reap: leaseExpiresAt 期限切れ"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780323074481",
+      "type": "TEST",
+      "size": "SMALL",
+      "projectId": "youtube予測ai",
+      "prompt": "[TEST] YouTube予測AIの精度テスト\nモデルの精度を確認し、改善点を特定するため。",
+      "state": "保留",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "auto-runner",
+      "createdAt": "2026-06-01T14:11:14.481Z",
+      "updatedAt": "2026-06-01T14:26:12.958Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-01T14:11:14.481Z",
+          "note": "作成"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-01T14:21:11.248Z",
+          "note": "claim: project-run"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-01T14:21:11.539Z",
+          "note": "Claude Code 実行開始"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-01T14:26:11.871Z",
+          "note": "失敗: TIMEOUT"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-01T14:26:12.958Z",
+          "note": "auto-split: タイムアウト"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [
+        "task_1780323074481_s1",
+        "task_1780323074481_s2"
+      ],
+      "timeoutCount": 1,
+      "splitCount": 1,
+      "lastError": "⏱️ タイムアウト: 5分以内に完了しませんでした\nタスクが複雑すぎる可能性があります。指示を分割してお試しください。",
+      "errorType": "TIMEOUT",
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780322688347_s2",
+      "type": "TEST",
+      "size": "SMALL",
+      "projectId": "youtube予測ai",
+      "prompt": "[Phase 2] YouTube予測AIの精度テスト の実装",
+      "state": "保留",
+      "priority": "低",
+      "priorityReason": "auto-split (task_1780322688347 タイムアウト)",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-01T14:16:16.780Z",
+      "updatedAt": "2026-06-03T14:54:00.029Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-01T14:16:16.780Z",
+          "note": "auto-split from task_1780322688347"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-01T14:27:55.045Z",
+          "note": "claim: project-run"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-01T14:27:55.315Z",
+          "note": "Claude Code 実行開始"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-01T14:32:55.614Z",
+          "note": "失敗: TIMEOUT"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-03T14:54:00.028Z",
+          "note": "[整理クローズ] 精度テスト重複(代表 task_1780323074481 を残す) / 市川PM"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "[整理クローズ・重複] 精度テスト重複(代表 task_1780323074481 を残す)",
+      "rootTaskId": "task_1780322688347",
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null,
+      "lastError": "⏱️ タイムアウト: 5分以内に完了しませんでした\nタスクが複雑すぎる可能性があります。指示を分割してお試しください。",
+      "errorType": "TIMEOUT"
+    },
+    {
+      "id": "task_1780323074481_s1",
+      "type": "TEST",
+      "size": "SMALL",
+      "projectId": "youtube予測ai",
+      "prompt": "[TEST] YouTube予測AIの精度テスト",
+      "state": "保留",
+      "priority": "低",
+      "priorityReason": "auto-split (task_1780323074481 タイムアウト)",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "auto-runner",
+      "createdAt": "2026-06-01T14:26:12.958Z",
+      "updatedAt": "2026-06-03T14:54:00.027Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-01T14:26:12.958Z",
+          "note": "auto-split from task_1780323074481"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-01T14:41:34.730Z",
+          "note": "claim: project-run"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-01T14:41:34.977Z",
+          "note": "Claude Code 実行開始"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-01T14:46:35.369Z",
+          "note": "失敗: TIMEOUT"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-03T14:54:00.026Z",
+          "note": "[整理クローズ] 精度テスト重複(代表 task_1780323074481 を残す) / 市川PM"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "[整理クローズ・重複] 精度テスト重複(代表 task_1780323074481 を残す)",
+      "rootTaskId": "task_1780323074481",
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null,
+      "lastError": "⏱️ タイムアウト: 5分以内に完了しませんでした\nタスクが複雑すぎる可能性があります。指示を分割してお試しください。",
+      "errorType": "TIMEOUT"
+    },
+    {
+      "id": "task_1780329606501",
+      "type": "FIX",
+      "size": "SMALL",
+      "projectId": "youtube予測ai",
+      "prompt": "失敗したタスク（1件）のエラー原因を調査し修正する。特にタイムアウトが繰り返す処理は分割または最適化する。",
+      "state": "保留",
+      "priority": "中",
+      "priorityReason": "スコア1 | キーワード: エラー",
+      "dangerLevel": "中",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-01T16:00:06.501Z",
+      "updatedAt": "2026-06-01T16:12:20.859Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-01T16:00:06.501Z",
+          "note": "作成"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-01T16:07:11.652Z",
+          "note": "claim: project-run"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-01T16:07:19.489Z",
+          "note": "Claude Code 実行開始"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-01T16:12:19.795Z",
+          "note": "失敗: TIMEOUT"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-01T16:12:20.859Z",
+          "note": "auto-split: タイムアウト"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [
+        "task_1780329606501_s1",
+        "task_1780329606501_s2",
+        "task_1780329606501_s3"
+      ],
+      "timeoutCount": 1,
+      "splitCount": 1,
+      "lastError": "⏱️ タイムアウト: 5分以内に完了しませんでした\nタスクが複雑すぎる可能性があります。指示を分割してお試しください。",
+      "errorType": "TIMEOUT",
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780329606501_s1",
+      "type": "FIX",
+      "size": "SMALL",
+      "projectId": "youtube予測ai",
+      "prompt": "[Phase 1] 失敗したタスク（1件）のエラー原因を調査し修正する。特にタイムアウトが繰り返す処 の調査・設計",
+      "state": "保留",
+      "priority": "中",
+      "priorityReason": "auto-split (task_1780329606501 タイムアウト)",
+      "dangerLevel": "中",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-01T16:12:20.859Z",
+      "updatedAt": "2026-06-01T16:25:08.009Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-01T16:12:20.859Z",
+          "note": "auto-split from task_1780329606501"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-01T16:20:01.737Z",
+          "note": "claim: project-run"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-01T16:20:06.918Z",
+          "note": "Claude Code 実行開始"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-01T16:25:08.009Z",
+          "note": "失敗: TIMEOUT"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "auto-split 由来 (root: task_1780329606501)",
+      "rootTaskId": "task_1780329606501",
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null,
+      "lastError": "⏱️ タイムアウト: 5分以内に完了しませんでした\nタスクが複雑すぎる可能性があります。指示を分割してお試しください。",
+      "errorType": "TIMEOUT"
+    },
+    {
+      "id": "task_1780333257307",
+      "type": "IMPLEMENT",
+      "size": "SMALL",
+      "projectId": "youtube予測ai",
+      "prompt": "[IMPLEMENT] 診断AI !diag のUI/表示設計\n内容: 総合スコア+ランク+6軸(★+数値+色)+良い点+改善提案TOP2(理由/対策)+免責フッターのEmbedレイアウトを実装。初見が説明なしで1回完了できること。\n参照: docs/youtube-diagnostic-ai-dev-requirements.md §3",
+      "state": "保留",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "Claude-E(PM市川)",
+      "createdAt": "2026-06-01T17:00:57.307Z",
+      "updatedAt": "2026-06-03T14:54:00.016Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-01T17:00:57.307Z",
+          "note": "作成"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-01T17:39:45.467Z",
+          "note": "claim: project-run"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-01T17:39:45.876Z",
+          "note": "Claude Code 実行開始"
+        },
+        {
+          "state": "レビュー待ち",
+          "at": "2026-06-01T17:43:41.996Z",
+          "note": "AIレビュー: 問題なし"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-03T08:49:15.981Z",
+          "note": "孤立タスク整理（24時間超過 → 保留）"
+        }
+      ],
+      "reviewResult": {
+        "verdict": "問題なし"
+      },
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "視聴予測→診断型へ転換(市川PM)",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": "Expected token to be set for this request, but none was present",
+      "errorType": "UNKNOWN",
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780333257308",
+      "type": "DOCS",
+      "size": "SMALL",
+      "projectId": "youtube予測ai",
+      "prompt": "YouTube予測AIの使用ガイドライン作成",
+      "state": "保留",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-01T17:00:57.308Z",
+      "updatedAt": "2026-06-03T08:49:15.981Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-01T17:00:57.308Z",
+          "note": "作成"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-01T17:43:42.000Z",
+          "note": "claim: project-run"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-01T17:44:03.303Z",
+          "note": "Claude Code 実行開始"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-01T17:44:03.309Z",
+          "note": "Claude Code 実行開始"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-03T08:49:15.981Z",
+          "note": "孤立タスク整理（24時間超過 → 保留）"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": "project-run",
+      "leaseExpiresAt": "2026-06-01T17:53:42.000Z",
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780333257308",
+      "type": "TEST",
+      "size": "SMALL",
+      "projectId": "youtube予測ai",
+      "prompt": "ユーザーインターフェースのユーザビリティテスト",
+      "state": "保留",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-01T17:00:57.308Z",
+      "updatedAt": "2026-06-03T08:49:15.981Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-01T17:00:57.308Z",
+          "note": "作成"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-01T17:44:03.306Z",
+          "note": "claim: project-run"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-03T08:49:15.981Z",
+          "note": "孤立タスク整理（24時間超過 → 保留）"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": "project-run",
+      "leaseExpiresAt": "2026-06-01T17:54:03.306Z",
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780333257303_s2",
+      "type": "IMPLEMENT",
+      "size": "SMALL",
+      "projectId": "youtube予測ai",
+      "prompt": "[IMPLEMENT] 診断AI !diag の入力エラーメッセージ\n内容: 必須(タイトル/ジャンル)不足時に使い方と入力例を返す。落ちない。再生数系の語は出さない。",
+      "state": "保留",
+      "priority": "中",
+      "priorityReason": "auto-split (task_1780333257303 タイムアウト)",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "Claude-E(PM市川)",
+      "createdAt": "2026-06-01T17:15:24.715Z",
+      "updatedAt": "2026-06-03T14:54:00.017Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-01T17:15:24.715Z",
+          "note": "auto-split from task_1780333257303"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-01T17:19:09.880Z",
+          "note": "claim: project-run"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-01T17:19:28.219Z",
+          "note": "Claude Code 実行開始"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-01T17:24:28.565Z",
+          "note": "失敗: TIMEOUT"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "視聴予測→診断型へ転換(市川PM)",
+      "rootTaskId": "task_1780333257303",
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null,
+      "lastError": "⏱️ タイムアウト: 5分以内に完了しませんでした\nタスクが複雑すぎる可能性があります。指示を分割してお試しください。",
+      "errorType": "TIMEOUT"
+    },
+    {
+      "id": "task_1780361058480",
+      "type": "IMPLEMENT",
+      "size": "MEDIUM",
+      "projectId": "ai_worker",
+      "prompt": "Finance Manager Phase1 を実装する。 目的: AI_WORKERの開発コストを管理する。 追加: 🅵 Finance Manager 機能: 1. Cost Tracking - taskId - projectId - AI worker - token - 推定費用 - 日付 2. Cost Report 表示: 今日 今月 プロジェクト別 3. Budget Warning 例: 月予算80%到達 ↓ CEO通知 4. Project ROI 開発費 予想利益 回収人数 5. 案件判断準備 将来的に: 仕事依頼 ↓ 予想コスト ↓ 利益率 ↓ 受注判断 条件: - 推測料金は推定表示 - 不明は不明と表示 - APIキー非表示 - CEO Report統合 - テスト追加 - commit",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-2 | 低優先: 将来",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-02T00:44:18.480Z",
+      "updatedAt": "2026-06-02T00:44:18.480Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-02T00:44:18.480Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780361078014",
+      "type": "FIX",
+      "size": "MEDIUM",
+      "projectId": "ai_worker",
+      "prompt": "GitHub Push Failure Recoveryを実装する。 問題: commit成功後push失敗すると人間確認が必要になる。 改善: Push失敗時: 1. 原因分類 - 認証 - network - conflict - lock 2. 安全なものは自動復旧 例: network retry index.lock cleanup確認 3. 危険なものだけCEO通知 通知: - 何が起きたか - データは安全か - 必要操作 禁止: - force push自動実行 - token表示 テスト追加 commit",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-2 | 低優先: cleanup",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-02T00:44:38.014Z",
+      "updatedAt": "2026-06-02T00:44:38.014Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-02T00:44:38.014Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780361085803",
+      "type": "FIX",
+      "size": "MEDIUM",
+      "projectId": "ai_worker",
+      "prompt": "Discord Notification Optimizerを実装する。 問題: 同じ状態通知が何度も投稿される。 改善: - 同じ内容は1回のみ - 状態変化時だけ通知 - 長時間作業はまとめ通知 対象: Project Runner Approval Waiting Review 目的: CEOが見る通知量を減らす。 テスト追加 commit",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-02T00:44:45.803Z",
+      "updatedAt": "2026-06-02T00:44:45.803Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-02T00:44:45.803Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780361297371",
+      "type": "FIX",
+      "size": "MEDIUM",
+      "projectId": "ai_worker",
+      "prompt": "Auto Runner停止理由表示を改善する。 問題: LARGEタスク停止時にBLOCKED表示になり、 危険停止なのかサイズ停止なのか分からない。 改善: 停止理由を分離する。 例: 🔴 LARGE このタスクは大きすぎます。 おすすめ: !task split preview !task split 🚫 SECURITY BLOCKED 安全上停止しました。 目的: CEOが次の行動を迷わない通知にする。 テスト追加 commit",
+      "state": "保留",
+      "priority": "中",
+      "priorityReason": "スコア0 | キーワード: security",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-02T00:48:17.371Z",
+      "updatedAt": "2026-06-02T02:56:15.388Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-02T00:48:17.371Z",
+          "note": "作成"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-02T02:51:14.113Z",
+          "note": "claim: project-run"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-02T02:51:14.582Z",
+          "note": "Claude Code 実行開始"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-02T02:56:14.879Z",
+          "note": "失敗: TIMEOUT"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-02T02:56:15.388Z",
+          "note": "auto-split: タイムアウト"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [
+        "task_1780361297371_s1",
+        "task_1780361297371_s2",
+        "task_1780361297371_s3"
+      ],
+      "timeoutCount": 1,
+      "splitCount": 1,
+      "lastError": "⏱️ タイムアウト: 5分以内に完了しませんでした\nタスクが複雑すぎる可能性があります。指示を分割してお試しください。",
+      "errorType": "TIMEOUT",
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780362552056",
+      "type": "DOCS",
+      "size": "SMALL",
+      "projectId": "ai_worker",
+      "prompt": "[DOCS] 通知振り分けの仕様書作成\n通知振り分け機能の詳細な仕様が不明なため、仕様書を作成する必要がある。",
+      "state": "未着手",
+      "priority": "中",
+      "priorityReason": "スコア0 | 危険度高 | 低優先: docs",
+      "dangerLevel": "高",
+      "assignee": "Claude Code",
+      "requestedBy": "auto-runner",
+      "createdAt": "2026-06-02T01:09:12.056Z",
+      "updatedAt": "2026-06-03T03:59:31.395Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-02T01:09:12.056Z",
+          "note": "作成"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-02T02:56:15.707Z",
+          "note": "claim: project-run"
+        },
+        {
+          "state": "未着手",
+          "at": "2026-06-02T02:56:15.711Z",
+          "note": "lease released"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-02T11:47:55.914Z",
+          "note": "claim: project-run"
+        },
+        {
+          "state": "未着手",
+          "at": "2026-06-02T11:47:55.915Z",
+          "note": "lease released"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-03T03:59:31.393Z",
+          "note": "claim: project-run"
+        },
+        {
+          "state": "未着手",
+          "at": "2026-06-03T03:59:31.395Z",
+          "note": "lease released"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780368633886",
+      "type": "FIX",
+      "size": "MEDIUM",
+      "projectId": "ai_worker",
+      "prompt": "Failure Analyzer を実装する。 目的: Auto Runner停止時にCEOへ原因と次アクションを提示する。 現在: consecutive_errors_3 → 人間が原因調査 改善後: 例: 停止しました。 原因分析: ・LARGEタスク停止 3件 AI判断: 実装失敗ではありません。 タスクサイズ問題です。 おすすめ: 自動split 実行案: !task split xxx 対象: - timeout - LARGE - BLOCKED - push失敗 - approval待ち CEO Report統合。 テスト追加 commit",
+      "state": "未着手",
+      "priority": "中",
+      "priorityReason": "スコア0 | キーワード: error",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-02T02:50:33.886Z",
+      "updatedAt": "2026-06-02T02:50:33.886Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-02T02:50:33.886Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780361297371_s1",
+      "type": "FIX",
+      "size": "SMALL",
+      "projectId": "ai_worker",
+      "prompt": "[Phase 1] Auto Runner停止理由表示を改善する。 問題: LARGEタスク停止時に の調査・設計",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-02T02:56:15.388Z",
+      "updatedAt": "2026-06-02T23:00:00.016Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-02T02:56:15.388Z",
+          "note": "auto-split from task_1780361297371"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "auto-split 由来 (root: task_1780361297371)",
+      "rootTaskId": "task_1780361297371",
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780361297371_s2",
+      "type": "FIX",
+      "size": "SMALL",
+      "projectId": "ai_worker",
+      "prompt": "[Phase 2] Auto Runner停止理由表示を改善する。 問題: LARGEタスク停止時に の実装",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-02T02:56:15.388Z",
+      "updatedAt": "2026-06-02T23:00:00.018Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-02T02:56:15.388Z",
+          "note": "auto-split from task_1780361297371"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "auto-split 由来 (root: task_1780361297371)",
+      "rootTaskId": "task_1780361297371",
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780361297371_s3",
+      "type": "FIX",
+      "size": "SMALL",
+      "projectId": "ai_worker",
+      "prompt": "[Phase 3] Auto Runner停止理由表示を改善する。 問題: LARGEタスク停止時に のテスト・確認",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-02T02:56:15.388Z",
+      "updatedAt": "2026-06-02T23:00:00.020Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-02T02:56:15.388Z",
+          "note": "auto-split from task_1780361297371"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "auto-split 由来 (root: task_1780361297371)",
+      "rootTaskId": "task_1780361297371",
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780400809532",
+      "type": "FIX",
+      "size": "MEDIUM",
+      "projectId": "ai_worker",
+      "prompt": "GitHub Push失敗の原因を診断して修正する。新しいGitHub Personal Access Tokenへ交換済み。Token値は表示しないこと。git remote、認証方式、credential manager、pushエラーを確認し、force pushは禁止。原因と修正内容を報告する。",
+      "state": "未着手",
+      "priority": "中",
+      "priorityReason": "スコア0 | キーワード: エラー",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-02T11:46:49.532Z",
+      "updatedAt": "2026-06-02T11:46:49.532Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-02T11:46:49.532Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780424593653",
+      "type": "TEST",
+      "size": "MEDIUM",
+      "projectId": "youtube予測ai",
+      "prompt": "[TEST] 診断AI(diagnosePrePub)の動作確認テスト\n確認: タイトル+ジャンルのみ/タグ無し/尺無し/登録者数無し 等の欠損入力でも落ちず6軸+改善提案+免責が返ること。診断時にLLM/有料APIを呼ばないこと。",
+      "state": "保留",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "Claude-E(PM市川)",
+      "createdAt": "2026-06-02T18:23:13.653Z",
+      "updatedAt": "2026-06-03T14:54:00.015Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-02T18:23:13.653Z",
+          "note": "作成"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-02T18:33:12.125Z",
+          "note": "claim: project-run"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-02T18:33:24.872Z",
+          "note": "Claude Code 実行開始"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-02T18:38:22.730Z",
+          "note": "auto-split: タイムアウト"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "視聴予測→診断型へ転換(市川PM)",
+      "rootTaskId": null,
+      "childTasks": [
+        "task_1780424593653_s1",
+        "task_1780424593653_s2",
+        "task_1780424593653_s3"
+      ],
+      "timeoutCount": 1,
+      "splitCount": 1,
+      "lastError": "⏱️ タイムアウト: 5分以内に完了しませんでした\nタスクが複雑すぎる可能性があります。指示を分割してお試しください。",
+      "errorType": "TIMEOUT",
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780424593653_s3",
+      "type": "TEST",
+      "size": "SMALL",
+      "projectId": "youtube予測ai",
+      "prompt": "[Phase 3] YouTube視聴予測AIの動作確認テストを追加する。 確認: - APIキーな のテスト・確認",
+      "state": "保留",
+      "priority": "低",
+      "priorityReason": "auto-split (task_1780424593653 タイムアウト)",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-02T18:38:22.730Z",
+      "updatedAt": "2026-06-02T18:50:58.419Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-02T18:38:22.730Z",
+          "note": "auto-split from task_1780424593653"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-02T18:45:43.913Z",
+          "note": "claim: project-run"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-02T18:45:58.042Z",
+          "note": "Claude Code 実行開始"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-02T18:50:58.419Z",
+          "note": "失敗: TIMEOUT"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "auto-split 由来 (root: task_1780424593653)",
+      "rootTaskId": "task_1780424593653",
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null,
+      "lastError": "⏱️ タイムアウト: 5分以内に完了しませんでした\nタスクが複雑すぎる可能性があります。指示を分割してお試しください。",
+      "errorType": "TIMEOUT"
+    },
+    {
+      "id": "task_1780459164588",
+      "type": "IMPLEMENT",
+      "size": "MEDIUM",
+      "projectId": "ai_worker",
+      "prompt": "投稿前（未公開）動画の視聴数を予測できるエンドポイント / 関数を実装する。タイトル・サムネイル・タグ・投稿時間帯から予測し、結果を返す。",
+      "state": "未着手",
+      "priority": "中",
+      "priorityReason": "スコア0",
+      "dangerLevel": "中",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T03:59:24.588Z",
+      "updatedAt": "2026-06-03T03:59:24.588Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T03:59:24.588Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780459164592",
+      "type": "IMPLEMENT",
+      "size": "SMALL",
+      "projectId": "ai_worker",
+      "prompt": "処理失敗時に分かりやすいエラーメッセージを表示する。入力エラー・API エラー・タイムアウトそれぞれの案内文を追加。",
+      "state": "未着手",
+      "priority": "中",
+      "priorityReason": "スコア0 | キーワード: エラー",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T03:59:24.592Z",
+      "updatedAt": "2026-06-03T03:59:24.592Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T03:59:24.592Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780459164601",
+      "type": "IMPLEMENT",
+      "size": "SMALL",
+      "projectId": "ai_worker",
+      "prompt": "DiscordでのProject管理機能の実装",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T03:59:24.601Z",
+      "updatedAt": "2026-06-03T03:59:24.601Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T03:59:24.601Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780459164607",
+      "type": "IMPLEMENT",
+      "size": "SMALL",
+      "projectId": "ai_worker",
+      "prompt": "タスク失敗時のエラーログの詳細表示",
+      "state": "未着手",
+      "priority": "中",
+      "priorityReason": "スコア0 | キーワード: エラー",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T03:59:24.607Z",
+      "updatedAt": "2026-06-03T03:59:24.607Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T03:59:24.607Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780459164611",
+      "type": "REVIEW",
+      "size": "SMALL",
+      "projectId": "ai_worker",
+      "prompt": "Phase E-4 Failure Recovery 第2段階のレビュー",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T03:59:24.611Z",
+      "updatedAt": "2026-06-03T03:59:24.611Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T03:59:24.611Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780459164613",
+      "type": "TEST",
+      "size": "SMALL",
+      "projectId": "ai_worker",
+      "prompt": "GitHub Push修正のテスト",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T03:59:24.613Z",
+      "updatedAt": "2026-06-03T03:59:24.613Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T03:59:24.613Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780427878100_s1",
+      "type": "DOCS",
+      "size": "MEDIUM",
+      "projectId": "youtube予測ai",
+      "prompt": "[Phase 1] プロジェクトの全体的なドキュメントの整備 の調査・設計",
+      "state": "保留",
+      "priority": "低",
+      "priorityReason": "分割タスク (task_1780427878100 から)",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T08:58:35.910Z",
+      "updatedAt": "2026-06-03T14:54:00.031Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T08:58:35.910Z",
+          "note": "task_1780427878100 から分割"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-03T08:59:38.270Z",
+          "note": "手動保留"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-03T14:54:00.030Z",
+          "note": "[整理クローズ] ドキュメント整備3分割(docs作成済みにつき廃止) / 市川PM"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "[整理クローズ・重複] ドキュメント整備3分割(docs作成済みにつき廃止)",
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780427878100_s2",
+      "type": "DOCS",
+      "size": "MEDIUM",
+      "projectId": "youtube予測ai",
+      "prompt": "[Phase 2] プロジェクトの全体的なドキュメントの整備 の実装",
+      "state": "保留",
+      "priority": "低",
+      "priorityReason": "分割タスク (task_1780427878100 から)",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T08:58:35.910Z",
+      "updatedAt": "2026-06-03T14:54:00.034Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T08:58:35.910Z",
+          "note": "task_1780427878100 から分割"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-03T09:00:00.275Z",
+          "note": "手動保留"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-03T14:54:00.032Z",
+          "note": "[整理クローズ] ドキュメント整備3分割(docs作成済みにつき廃止) / 市川PM"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "[整理クローズ・重複] ドキュメント整備3分割(docs作成済みにつき廃止)",
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780427878100_s3",
+      "type": "DOCS",
+      "size": "MEDIUM",
+      "projectId": "youtube予測ai",
+      "prompt": "[Phase 3] プロジェクトの全体的なドキュメントの整備 のテスト・確認",
+      "state": "保留",
+      "priority": "低",
+      "priorityReason": "分割タスク (task_1780427878100 から)",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T08:58:35.910Z",
+      "updatedAt": "2026-06-03T14:54:00.036Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T08:58:35.910Z",
+          "note": "task_1780427878100 から分割"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-03T09:00:09.402Z",
+          "note": "手動保留"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-03T14:54:00.035Z",
+          "note": "[整理クローズ] ドキュメント整備3分割(docs作成済みにつき廃止) / 市川PM"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "[整理クローズ・重複] ドキュメント整備3分割(docs作成済みにつき廃止)",
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780481207914",
+      "type": "IMPLEMENT",
+      "size": "MEDIUM",
+      "projectId": "youtube予測ai",
+      "prompt": "YouTube診断AI MVP表示機能を実装 商品戦略レビュー task_1780479325951 を反映。 目的: 予測AIではなく診断AIとして提供する。 実装: 1. 既存特徴量を利用して診断結果を生成する。 表示: ・総合スコア 0-100 ・ランク A/B/C/D ・良い点 ・改善点Top3 2. 予測再生数やヒット確率をメイン表示しない。 3. 改善理由を必ず表示する。 例: タイトル: 数字入り → 加点 短すぎる → 改善提案 投稿時間: おすすめ時間との差 4. 既存実装を最大利用。 新規AIモデル作成は禁止。 5. テスト追加。 完了条件: ユーザーが動画情報を入れる ↓ 改善アドバイスが返る",
+      "state": "保留",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T10:06:47.914Z",
+      "updatedAt": "2026-06-03T10:11:56.948Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T10:06:47.914Z",
+          "note": "作成"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-03T10:06:55.230Z",
+          "note": "claim: auto"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-03T10:06:55.620Z",
+          "note": "Claude Code 実行開始"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-03T10:11:55.912Z",
+          "note": "失敗: TIMEOUT"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-03T10:11:56.948Z",
+          "note": "auto-split: タイムアウト"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [
+        "task_1780481207914_s1",
+        "task_1780481207914_s2",
+        "task_1780481207914_s3"
+      ],
+      "timeoutCount": 1,
+      "splitCount": 1,
+      "lastError": "⏱️ タイムアウト: 5分以内に完了しませんでした\nタスクが複雑すぎる可能性があります。指示を分割してお試しください。",
+      "errorType": "TIMEOUT",
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780481207914_s2",
+      "type": "IMPLEMENT",
+      "size": "SMALL",
+      "projectId": "youtube予測ai",
+      "prompt": "[Phase 2] YouTube診断AI MVP表示機能を実装 商品戦略レビュー task_178 の実装",
+      "state": "保留",
+      "priority": "低",
+      "priorityReason": "auto-split (task_1780481207914 タイムアウト)",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T10:11:56.948Z",
+      "updatedAt": "2026-06-03T11:42:37.156Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T10:11:56.948Z",
+          "note": "auto-split from task_1780481207914"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-03T11:37:35.288Z",
+          "note": "claim: auto"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-03T11:37:36.704Z",
+          "note": "Claude Code 実行開始"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-03T11:42:37.156Z",
+          "note": "失敗: TIMEOUT"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "auto-split 由来 (root: task_1780481207914)",
+      "rootTaskId": "task_1780481207914",
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null,
+      "lastError": "⏱️ タイムアウト: 5分以内に完了しませんでした\nタスクが複雑すぎる可能性があります。指示を分割してお試しください。",
+      "errorType": "TIMEOUT"
+    },
+    {
+      "id": "task_1780486998103",
+      "type": "FIX",
+      "size": "MEDIUM",
+      "projectId": "youtube予測ai",
+      "prompt": "Project Runner stale claim 復旧改善 問題: claim後に停止したタスクが作業中で残る。 改善: ・一定時間経過したclaimのみタスク検出 ・cleanup対象化 ・LARGE停止時はON_HOLDへ戻す",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-2 | 低優先: cleanup",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T11:43:18.103Z",
+      "updatedAt": "2026-06-03T11:43:18.103Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T11:43:18.103Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780487016212",
+      "type": "RESEARCH",
+      "size": "MEDIUM",
+      "projectId": "youtube予測ai",
+      "prompt": "Discord副社長AI接続方法調査 目的: Discord自然文 ↓ GPT相談 ↓ 回答返却 API利用/代替方法/コスト比較。",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T11:43:36.212Z",
+      "updatedAt": "2026-06-03T11:43:36.212Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T11:43:36.212Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780489003078",
+      "type": "RESEARCH",
+      "size": "MEDIUM",
+      "projectId": "youtube予測ai",
+      "prompt": "GPT副社長AIをDiscord連携する方法調査 目的: ユーザーがDiscordで自然文相談 ↓ GPT視点の経営判断 ↓ Discord返信 確認: ・API利用 ・代替方法 ・コスト ・安全な実装方法",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T12:16:43.078Z",
+      "updatedAt": "2026-06-03T12:16:43.078Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T12:16:43.078Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780489042944",
+      "type": "RESEARCH",
+      "size": "MEDIUM",
+      "projectId": "youtube予測ai",
+      "prompt": "YouTube診断AIの初回ユーザーテスト計画作成 目的: 完成後すぐ人に試してもらう準備。 作成: ・誰に頼むか ・何を聞くか ・テスト手順 ・改善判断基準 ・無料β募集文 注意: 開発は禁止。 テスト計画のみ。",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T12:17:22.944Z",
+      "updatedAt": "2026-06-03T12:17:22.944Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T12:17:22.944Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780489046872",
+      "type": "RESEARCH",
+      "size": "MEDIUM",
+      "projectId": "youtube予測ai",
+      "prompt": "ココナラ初案件獲得戦略を作成 目的: AI_WORKERを使った初売上を作る。 確認: ・狙うジャンル ・避ける案件 ・応募文テンプレ ・価格戦略 ・実績0から信用を作る方法 結果: 今日からできる行動リスト化。",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T12:17:26.872Z",
+      "updatedAt": "2026-06-03T12:17:26.872Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T12:17:26.872Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780489050520",
+      "type": "RESEARCH",
+      "size": "MEDIUM",
+      "projectId": "youtube予測ai",
+      "prompt": "VTuber事業者へのヒアリング質問作成 目的: 売り込みではなく本当の困りごと調査。 作成: ・聞く質問10個 ・AIで解決できそうな分類 ・聞いてはいけない質問 ・提案タイミング 対象: VTuber運営者",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T12:17:30.520Z",
+      "updatedAt": "2026-06-03T12:17:30.520Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T12:17:30.520Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780489053570",
+      "type": "RESEARCH",
+      "size": "MEDIUM",
+      "projectId": "youtube予測ai",
+      "prompt": "AI_WORKER事業化ロードマップ整理 目的: 開発支援AIから会社運営AIへの成長計画。 整理: ・今できること ・不足機能 ・収益化ルート ・半年計画",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-2 | 低優先: 整理",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T12:17:33.570Z",
+      "updatedAt": "2026-06-03T12:17:33.570Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T12:17:33.570Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780490068705",
+      "type": "FIX",
+      "size": "MEDIUM",
+      "projectId": "youtube予測ai",
+      "prompt": "GitHub push失敗復旧確認 GitHub token更新後のpush確認をしてください。 状況: ・commitは作成済み ・前回pushが403 Forbiddenで失敗 ・GITHUB_TOKENは更新済み ・doctor結果はClaude/Node/.env正常 作業内容: 1. git status確認 2. 未push commit確認 3. git push実行 4. push成功したcommit hash報告 禁止: - force push - reset - token表示 - .env内容表示 完了条件: origin/masterへpush成功",
+      "state": "保留",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T12:34:28.705Z",
+      "updatedAt": "2026-06-03T14:54:00.019Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T12:34:28.705Z",
+          "note": "作成"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-03T14:54:00.018Z",
+          "note": "[整理クローズ] GitHub push重複(代表 task_1780492196495 を残す) / 市川PM"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "[整理クローズ・重複] GitHub push重複(代表 task_1780492196495 を残す)",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780490603743",
+      "type": "FIX",
+      "size": "MEDIUM",
+      "projectId": "youtube予測ai",
+      "prompt": "change log の重複登録防止 目的: 日次更新ログの品質向上。 改善: ・同カテゴリ内で類似文章検出 ・重複なら登録確認 ・同じ内容を複数保存しない 対象: !change command/rule/ops/category/channel",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T12:43:23.743Z",
+      "updatedAt": "2026-06-03T12:43:23.743Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T12:43:23.743Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780490681643",
+      "type": "FIX",
+      "size": "MEDIUM",
+      "projectId": "youtube予測ai",
+      "prompt": "GitHub Token更新後のpush再確認 状況: ・前回 403 Forbidden ・Token作成後 401 Unauthorized ・原因は新Token未反映の可能性あり ・commitはPC内保存済み 確認: 1. GITHUB_TOKENが存在するか確認（値は表示禁止） 2. git remote確認 3. git status確認 4. 未push commit確認 5. git push実行 禁止: - token文字列表示 - .env内容表示 - force push - reset 完了条件: GitHub origin/masterへ保存成功",
+      "state": "保留",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T12:44:41.643Z",
+      "updatedAt": "2026-06-03T14:54:00.022Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T12:44:41.643Z",
+          "note": "作成"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-03T14:54:00.021Z",
+          "note": "[整理クローズ] GitHub push重複(代表 task_1780492196495 を残す) / 市川PM"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "[整理クローズ・重複] GitHub push重複(代表 task_1780492196495 を残す)",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780491008346",
+      "type": "FIX",
+      "size": "MEDIUM",
+      "projectId": "youtube予測ai",
+      "prompt": "GitHub Tokenの反映確認とpush再試行 目的: GitHub Token更新後も401 Unauthorizedが出る原因を確認する。 確認: 1. GITHUB_TOKENが存在するかだけ確認（値は絶対表示しない） 2. git remote -v のURL形式を確認 3. 未push commitを確認 4. git pushを再試行 5. 成功/失敗を報告 禁止: - token表示 - .env内容表示 - force push - reset - 新規コード変更 完了条件: origin/masterへpush成功",
+      "state": "保留",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T12:50:08.346Z",
+      "updatedAt": "2026-06-03T14:54:00.025Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T12:50:08.346Z",
+          "note": "作成"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-03T14:54:00.023Z",
+          "note": "[整理クローズ] GitHub push重複(代表 task_1780492196495 を残す) / 市川PM"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "[整理クローズ・重複] GitHub push重複(代表 task_1780492196495 を残す)",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780492196495",
+      "type": "FIX",
+      "size": "MEDIUM",
+      "projectId": "youtube予測ai",
+      "prompt": "AI_WORKER GitHub push認証処理修正 問題: PCから git push は成功した。 しかしAI_WORKER経由のpushだけ401 Unauthorizedになる。 判明: ・GitHub Token正常 ・remote正常 ・手動push成功 ・原因はAI_WORKER側のpush処理 調査/修正: 1. GitHub push実行部分を確認 2. .env の GITHUB_TOKEN を正しく利用しているか確認 3. 古いtoken/cache/credential依存があれば修正 4. push成功判定を確認 禁止: - token表示 - .env内容表示 - tokenをコードへ直書き 完了条件: AI_WORKER経由のpush成功",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T13:09:56.495Z",
+      "updatedAt": "2026-06-03T13:09:56.495Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T13:09:56.495Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780492903052",
+      "type": "IMPLEMENT",
+      "size": "MEDIUM",
+      "projectId": "youtube予測ai",
+      "prompt": "指定タスク実行コマンド追加 目的: 緊急対応時に特定タスクだけ実行可能にする。 追加: !task run <taskId> 理由: !auto run 1 は優先度順実行のため、 GitHub障害対応などで不要タスクが先に走る。 安全: 既存の危険度判定 HUMAN_CHECK Codexレビュー は維持する。",
+      "state": "未着手",
+      "priority": "中",
+      "priorityReason": "スコア0 | キーワード: 緊急",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T13:21:43.052Z",
+      "updatedAt": "2026-06-03T13:21:43.052Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T13:21:43.052Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780492935780",
+      "type": "IMPLEMENT",
+      "size": "MEDIUM",
+      "projectId": "youtube予測ai",
+      "prompt": "change重要ルール昇格機能追加 目的: 1日上限で登録できなかった重要ルールを失わない。 追加: ・rule満杯時はpending_ruleへ保存 ・翌日確認 ・重要度判断して正式登録 理由: 重要な学習を捨てないため。",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T13:22:15.780Z",
+      "updatedAt": "2026-06-03T13:22:15.780Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T13:22:15.780Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780493532526",
+      "type": "IMPLEMENT",
+      "size": "SMALL",
+      "projectId": "default",
+      "prompt": "テスト用プロンプト for task_run_test_1780493532523",
+      "state": "ARCHIVED",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "test-user",
+      "createdAt": "2026-06-03T13:32:12.526Z",
+      "updatedAt": "2026-06-03T13:32:12.543Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T13:32:12.526Z",
+          "note": "作成"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-03T13:32:12.540Z",
+          "note": "claim by test-owner"
+        },
+        {
+          "state": "未着手",
+          "at": "2026-06-03T13:32:12.541Z",
+          "note": "lease released"
+        },
+        {
+          "state": "ARCHIVED",
+          "at": "2026-06-03T13:32:12.543Z",
+          "note": "テスト後クリーンアップ"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780493532538",
+      "type": "IMPLEMENT",
+      "size": "SMALL",
+      "projectId": "default",
+      "prompt": "別タスク task_run_test_1780493532523",
+      "state": "ARCHIVED",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "test-user",
+      "createdAt": "2026-06-03T13:32:12.538Z",
+      "updatedAt": "2026-06-03T13:32:12.544Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T13:32:12.538Z",
+          "note": "作成"
+        },
+        {
+          "state": "ARCHIVED",
+          "at": "2026-06-03T13:32:12.544Z",
+          "note": "テスト後クリーンアップ"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780493532545",
+      "type": "IMPLEMENT",
+      "size": "SMALL",
+      "projectId": "default",
+      "prompt": "ON_HOLDテスト for task_run_test_1780493532523",
+      "state": "ARCHIVED",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "test-user",
+      "createdAt": "2026-06-03T13:32:12.545Z",
+      "updatedAt": "2026-06-03T13:32:12.552Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T13:32:12.545Z",
+          "note": "作成"
+        },
+        {
+          "state": "保留",
+          "at": "2026-06-03T13:32:12.547Z",
+          "note": "テスト保留"
+        },
+        {
+          "state": "未着手",
+          "at": "2026-06-03T13:32:12.548Z",
+          "note": "task run 一時解除"
+        },
+        {
+          "state": "作業中",
+          "at": "2026-06-03T13:32:12.549Z",
+          "note": "claim by run-task-cmd"
+        },
+        {
+          "state": "未着手",
+          "at": "2026-06-03T13:32:12.551Z",
+          "note": "lease released"
+        },
+        {
+          "state": "ARCHIVED",
+          "at": "2026-06-03T13:32:12.552Z",
+          "note": "テスト後クリーンアップ"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780493742648",
+      "type": "DOCS",
+      "size": "MEDIUM",
+      "projectId": "ai_worker",
+      "prompt": "[DOCS] 通知振り分けの詳細な仕様書作成\n通知振り分け機能の仕様が不明確であり、今後の実装やテストに影響を与える可能性があるため。",
+      "state": "未着手",
+      "priority": "中",
+      "priorityReason": "スコア0 | 危険度高 | 低優先: docs",
+      "dangerLevel": "高",
+      "assignee": "Claude Code",
+      "requestedBy": "auto-runner",
+      "createdAt": "2026-06-03T13:35:42.648Z",
+      "updatedAt": "2026-06-03T13:35:42.648Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T13:35:42.648Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780494921252",
+      "type": "IMPLEMENT",
+      "size": "MEDIUM",
+      "projectId": "ai_worker",
+      "prompt": "Decision Log Manager を実装する。目的: AI_WORKERの重要な意思決定について、決定内容・理由・却下案・再検討条件・関連プロジェクトを記録できるようにする。コマンド例: !decision add / !decision list / !decision show。会社の判断記憶を残し、後から「なぜその方針にしたか」を追跡できるようにする。",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T13:55:21.252Z",
+      "updatedAt": "2026-06-03T13:55:21.252Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T13:55:21.252Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780494923023",
+      "type": "IMPLEMENT",
+      "size": "MEDIUM",
+      "projectId": "ai_worker",
+      "prompt": "Beta Test Manager を実装する。目的: YouTube診断AIなどのβテスト反応を記録し、ユーザー不満・要望・混乱・改善案を分類して、優先度と対応価値を判断できるようにする。コマンド例: !feedback add / !feedback list / !feedback analyze。必要に応じて改善タスクを生成する。",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T13:55:23.023Z",
+      "updatedAt": "2026-06-03T13:55:23.023Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T13:55:23.023Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780494928820",
+      "type": "IMPLEMENT",
+      "size": "MEDIUM",
+      "projectId": "ai_worker",
+      "prompt": "System Health Manager を実装する。目的: AI_WORKER自身の運用状態を定期確認し、タスク数・未レビュー・失敗・停止理由・重要注意点・CEOが見るべき項目をまとめる。コマンド例: !health / !health detail。Daily ClosingやMorning Briefingと連携できる設計にする。",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T13:55:28.820Z",
+      "updatedAt": "2026-06-03T13:55:28.820Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T13:55:28.820Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780494930096",
+      "type": "IMPLEMENT",
+      "size": "MEDIUM",
+      "projectId": "ai_worker",
+      "prompt": "Incident Manager を実装する。目的: Secret Guardian誤検知/弱体化のような事故・障害・ヒヤリハットを記録し、原因・影響・対応・再発防止・会社ルール化要否を残す。コマンド例: !incident add / !incident list / !incident show / !incident close。",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T13:55:30.096Z",
+      "updatedAt": "2026-06-03T13:55:30.096Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T13:55:30.096Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780497142659",
+      "type": "IMPLEMENT",
+      "size": "MEDIUM",
+      "projectId": "ai_worker",
+      "prompt": "YouTube診断AI Phase1を実装する。目的: 投稿前の動画企画・タイトル・説明・タグ・投稿時間を診断し、初回ユーザーがすぐ価値を感じられるMVPを作る。要件: !diag コマンドを追加。最低入力はタイトル＋ジャンルで診断可能にする。6軸スコア（CTR/維持率/SEO/感情/投稿時間/差別化）を出す。各軸は 🟢🟡🔴 と点数で表示。改善提案TOP2を出す。簡易リライト例を最低1つ出す。免責「再生数保証ではなく投稿前最適化診断」を表示。YouTube APIや学習データには依存しない。Phase1ではClaude API/ルールベースで動かす。既存 !doctor と衝突しない。テスト追加。Codexレビューまで通す。",
+      "state": "未着手",
+      "priority": "低",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "1154113366374228079",
+      "createdAt": "2026-06-03T14:32:22.659Z",
+      "updatedAt": "2026-06-03T14:32:22.659Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T14:32:22.659Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780498439992",
+      "type": "IMPLEMENT",
+      "size": "MEDIUM",
+      "projectId": "youtube予測ai",
+      "prompt": "[IMPLEMENT] 診断AIシード補充＆モデル拡充（β最優先）\n目的: 現状モデル20件では初回診断の信頼度が低く需要検証が成立しない。\n作業: !youtube collect を各ジャンル(VTuber/切り抜き/音楽/実写/ゲーム実況)で実行し、!youtube train で更新。\n[AC] 各ジャンル最低限のシードで学習済み・!youtube status で sampleCount 大幅増・診断時API¥0を維持。\n参照: docs/youtube-diagnostic-ai-dev-requirements.md",
+      "state": "未着手",
+      "priority": "高",
+      "priorityReason": "スコア-2 | 低優先: docs",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "Claude-E(PM市川)",
+      "createdAt": "2026-06-03T14:53:59.992Z",
+      "updatedAt": "2026-06-03T14:54:00.005Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T14:53:59.992Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "診断AIβ要件(市川PM) v2.0",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780498440007",
+      "type": "IMPLEMENT",
+      "size": "MEDIUM",
+      "projectId": "youtube予測ai",
+      "prompt": "[IMPLEMENT] !diag コマンド＋6軸マッピング＋免責表示\n目的: 投稿前診断のユーザー導線を完成させる。\n作業: 入力(タイトル+ジャンル必須/URL不要)→ diagnosePrePub() → 6軸へマッピング → buildDiagnosisSummary拡張 → Embed返信。\n[AC] 総合スコア/ランク/6軸/良い点/改善提案TOP2(理由+対策)/免責が表示・LLM/有料API呼び出しゼロ・再生数の数値/レンジ/断定語なし。\n参照: docs/youtube-diagnostic-ai-dev-requirements.md",
+      "state": "未着手",
+      "priority": "高",
+      "priorityReason": "スコア-2 | 低優先: docs",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "Claude-E(PM市川)",
+      "createdAt": "2026-06-03T14:54:00.007Z",
+      "updatedAt": "2026-06-03T14:54:00.009Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T14:54:00.007Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "診断AIβ要件(市川PM) v2.0",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780498440010",
+      "type": "IMPLEMENT",
+      "size": "MEDIUM",
+      "projectId": "youtube予測ai",
+      "prompt": "[IMPLEMENT] 投稿時間評価＋ジャンル比較の実装\n作業: ジャンル別視聴者活動時間帯の静的ヒート表で投稿予定時間を評価(タイミング軸)。feature-extractorがジャンルを反映するか確認し、未反映ならジャンル基準値を導入(ローカルのみ/APIなし)。\n[AC] ジャンル選択で相対診断が変化・投稿時間入力でタイミング軸に反映。\n参照: docs/youtube-diagnostic-ai-dev-requirements.md",
+      "state": "未着手",
+      "priority": "中",
+      "priorityReason": "スコア-2 | 低優先: docs",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "Claude-E(PM市川)",
+      "createdAt": "2026-06-03T14:54:00.010Z",
+      "updatedAt": "2026-06-03T14:54:00.011Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T14:54:00.010Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "診断AIβ要件(市川PM) v2.0",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    },
+    {
+      "id": "task_1780498440012",
+      "type": "IMPLEMENT",
+      "size": "MEDIUM",
+      "projectId": "youtube予測ai",
+      "prompt": "[IMPLEMENT] 旧出力(hit/miss%・再生数レンジ)を診断スコアへ置換確認\n目的: 商品メッセージ統一。再生数予測/レンジ表現を排除し診断スコア+改善提案に一本化。\n[AC] !youtube predict/関連出力に再生数の数値・レンジ・「バズる/○万回」等の断定語が残っていないこと。後方互換を壊さない。",
+      "state": "未着手",
+      "priority": "中",
+      "priorityReason": "スコア-1",
+      "dangerLevel": "低",
+      "assignee": "Claude Code",
+      "requestedBy": "Claude-E(PM市川)",
+      "createdAt": "2026-06-03T14:54:00.012Z",
+      "updatedAt": "2026-06-03T14:54:00.014Z",
+      "stateHistory": [
+        {
+          "state": "未着手",
+          "at": "2026-06-03T14:54:00.012Z",
+          "note": "作成"
+        }
+      ],
+      "reviewResult": null,
+      "codexResult": null,
+      "prUrl": null,
+      "notes": "診断AIβ要件(市川PM) v2.0",
+      "rootTaskId": null,
+      "childTasks": [],
+      "timeoutCount": 0,
+      "splitCount": 0,
+      "lastError": null,
+      "errorType": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "leaseRole": null
+    }
+  ]
+}
