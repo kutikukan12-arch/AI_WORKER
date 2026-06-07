@@ -311,6 +311,20 @@ client.once('ready', async () => {
   console.log(`  監視CH: ${ALLOWED_CHANNEL_IDS.join(', ') || '全チャンネル'}`);
   console.log('═'.repeat(60) + '\n');
 
+  // ─── Natural CEO Interface 設定チェック ───
+  // CEO_USER_IDS 未設定の場合は自然文操作 + Approval Card ボタンが無効になる。
+  // fail-closed 設計のため、未設定 = 全員拒否（意図的な動作）。
+  // 設定方法は docs/ceo-natural-interface-setup.md を参照。
+  const _ceoIdsRaw = (process.env.CEO_USER_IDS || '').trim();
+  if (!_ceoIdsRaw) {
+    logger.warn('⚠️ CEO_USER_IDS 未設定 — 自然文CEO操作は無効です。.env に CEO_USER_IDS を設定して Bot を再起動してください。');
+    console.warn('  ⚠️ CEO_USER_IDS 未設定 — 自然文CEO操作は無効です');
+    console.warn('     設定方法: docs/ceo-natural-interface-setup.md を参照\n');
+  } else {
+    const _ceoCount = _ceoIdsRaw.split(',').filter(s => s.trim()).length;
+    logger.info(`[CEO] CEO_USER_IDS 設定済み (${_ceoCount}件) — 自然文CEO操作: 有効`);
+  }
+
   startDashboard(logger);
 
   // ─── 再起動後の完了通知（restart-state.json があれば）───
