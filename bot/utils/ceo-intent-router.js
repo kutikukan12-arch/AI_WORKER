@@ -30,6 +30,86 @@ const fs     = require('fs');
 const path   = require('path');
 
 // ─────────────────────────────────────────────────────
+// lastProjectContext — CEO の直前プロジェクト文脈を記憶
+//
+// 「YouTubeどう？」→「進めて」のように、直前の STATUS_CHECK 等で
+// 言及されたプロジェクトを記憶し、RUN_REQUEST 時に使う。
+//
+// 設計:
+//   - userId キーで管理（複数CEOに対応）
+//   - TTL: 30分（古いコンテキストで誤ったプロジェクトを起動しないため）
+//   - RUN_REQUEST でプロジェクトヒントが直接含まれる場合はそちら優先
+//
+// 安全制約:
+//   - コンテキストなし / ヒント解決不可 → 確認要求（global auto-on 禁止）
+//   - AI_WORKER 本体の高危険タスクを自然文で拾わない
+// ─────────────────────────────────────────────────────
+const _projectContextMap = new Map();         // userId → { projectHint, projectId, updatedAt }
+const PROJECT_CONTEXT_TTL_MS = 30 * 60 * 1000; // 30分
+
+/**
+ * プロジェクトコンテキストを更新する。
+ * STATUS_CHECK / READY_CHECK / PROBLEM_CHECK 等でプロジェクトヒントが
+ * 検出されたときに呼び出す（bot/index.js から）。
+ *
+ * @param {string} userId     Discord User ID
+ * @param {string} projectHint 「YouTube」等のヒントテキスト
+ * @param {string} projectId  解決済みプロジェクトID（null可）
+ */
+function updateProjectContext(userId, projectHint, projectId) {
+  if (!userId) return;
+  _projectContextMap.set(String(userId), {
+    projectHint: projectHint || null,
+    projectId:   projectId   || null,
+    updatedAt:   Date.now(),
+  });
+  logger.debug(`[CIR] ctx更新 | user=${userId} | hint=${projectHint} | pid=${projectId}`);
+}
+
+/**
+ * 保存済みのプロジェクトコンテキストを取得する（TTL チェック付き）。
+ *
+ * @param {string} userId Discord User ID
+ * @returns {{ projectHint: string|null, projectId: string|null, updatedAt: number }|null}
+ */
+function getProjectContext(userId) {
+  if (!userId) return null;
+  const ctx = _projectContextMap.get(String(userId));
+  if (!ctx) return null;
+  if (Date.now() - ctx.updatedAt > PROJECT_CONTEXT_TTL_MS) {
+    _projectContextMap.delete(String(userId));
+    logger.debug(`[CIR] ctx TTL切れ | user=${userId}`);
+    return null;
+  }
+  return ctx;
+}
+
+/**
+ * プロジェクトコンテキストを消去する（RUN_REQUEST 実行後等）。
+ *
+ * @param {string} userId Discord User ID
+ */
+function clearProjectContext(userId) {
+  if (!userId) return;
+  _projectContextMap.delete(String(userId));
+}
+
+/**
+ * RUN_REQUEST 時に「どのプロジェクト？」と確認を求める返信テキストを返す。
+ */
+function buildRunAskProjectReply() {
+  return [
+    '❓ **どのプロジェクトを進めますか？**',
+    '',
+    'まずプロジェクトを指定してください:',
+    '  例: 「YouTubeどう？」と確認してから「進めて」',
+    '  または: 「YouTube進めて」と直接指定',
+    '',
+    '`!project list` でプロジェクト一覧を確認できます。',
+  ].join('\n');
+}
+
+// ─────────────────────────────────────────────────────
 // インテント定数
 // ─────────────────────────────────────────────────────
 const INTENTS = {
@@ -676,4 +756,9 @@ module.exports = {
   buildBotStatusReply,
   isCEOUser,
   getCEOUserIds,
+  // プロジェクトコンテキスト管理（RUN_REQUEST の文脈記憶）
+  updateProjectContext,
+  getProjectContext,
+  clearProjectContext,
+  buildRunAskProjectReply,
 };

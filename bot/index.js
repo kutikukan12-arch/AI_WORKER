@@ -7272,20 +7272,69 @@ client.on('messageCreate', async (message) => {
           return;
         }
 
-        // RUN_REQUEST → auto-on 相当（キューが空の場合のみ）
+        // RUN_REQUEST → プロジェクトコンテキスト確認後 handleProjectRun に委譲
+        // ─────────────────────────────────────────────────────────────────
+        // 安全ゲート:
+        //   - コンテキストなし / ヒント解決不可 → 確認要求（global auto-on 禁止）
+        //   - 対象 projectId が解決できた場合のみ handleProjectRun へ委譲
+        //   - AI_WORKER 本体の高危険タスクを「進めて」で拾わない
+        // ─────────────────────────────────────────────────────────────────
         if (intentResult.intent === cir.INTENTS.RUN_REQUEST) {
+          let runPid  = null;
+          let runHint = intentResult.projectHint || null;
+
+          // ① インテント直接ヒント（「YouTube進めて」等）→ プロジェクト名解決
+          if (runHint) {
+            try {
+              const allProjects = projectManager.listProjects();
+              const hl = runHint.toLowerCase();
+              const matched = allProjects.find(p =>
+                p.id.toLowerCase().includes(hl) ||
+                (p.name || '').toLowerCase().includes(hl)
+              );
+              if (matched) runPid = matched.id;
+            } catch (_) {}
+          }
+
+          // ② ストアドコンテキスト（直前の「YouTubeどう？」等から記憶）
+          if (!runPid && !runHint) {
+            const ctx = cir.getProjectContext(message.author.id);
+            if (ctx) {
+              runPid  = ctx.projectId  || null;
+              runHint = ctx.projectHint || null;
+            }
+          }
+
+          // ③ プロジェクトIDが解決できない → 確認要求（global handleAutoOn は使わない）
+          if (!runPid) {
+            if (runHint) {
+              // ヒントはあるがプロジェクトが見つからない
+              await message.reply(
+                `❓ **「${runHint}」に一致するプロジェクトが見つかりません**\n\n` +
+                `\`!project list\` でIDを確認して \`!project run <id>\` で実行してください。`
+              ).catch(() => {});
+            } else {
+              // ヒントもコンテキストもない → 対象プロジェクトを確認
+              await message.reply(cir.buildRunAskProjectReply()).catch(() => {});
+            }
+            return;
+          }
+
+          // ④ キュー確認（実行中なら拒否）
           if (taskQueue.activeCount > 0 || taskQueue.pendingCount > 0) {
             await message.reply(
               `▶ すでに実行中です（${taskQueue.activeCount}件実行中・${taskQueue.pendingCount}件待機）。\n` +
               `\`!queue\` で状況確認できます。`
             ).catch(() => {});
-          } else {
-            // handleAutoOn に委譲（fire-and-forget で非同期実行）
-            await message.reply('▶ Auto Task Runner を開始します...').catch(() => {});
-            handleAutoOn(message).catch(err =>
-              logger.error(`[CIR] auto-on エラー: ${err.message}`)
-            );
+            return;
           }
+
+          // ⑤ handleProjectRun に委譲（handleAutoOn は使わない）
+          logger.info(`[CIR] RUN_REQUEST → handleProjectRun(${runPid}) | hint=${runHint} | user=${message.author.id}`);
+          await message.reply(`▶ **${runHint || runPid}** の Project Runner を開始します...`).catch(() => {});
+          handleProjectRun(message, runPid).catch(err =>
+            logger.error(`[CIR] project-run エラー: ${err.message}`)
+          );
           return;
         }
 
@@ -7360,6 +7409,29 @@ client.on('messageCreate', async (message) => {
             await message.reply(`🟡 黒川Operator停止エラー: ${e.message.slice(0, 100)}\n\`!operator pause\` で手動操作してください。`).catch(() => {});
           }
           return;
+        }
+
+        // ── コンテキスト更新（STATUS_CHECK / READY_CHECK / PROBLEM_CHECK でプロジェクト指定があった場合）──
+        // 直前に言及されたプロジェクトを記憶し、直後の「進めて」（RUN_REQUEST）で使う。
+        // 例: 「YouTubeどう？」→ context=youtube予測ai → 「進めて」→ youtube予測ai の Project Runner 起動
+        if (
+          (intentResult.intent === cir.INTENTS.STATUS_CHECK  ||
+           intentResult.intent === cir.INTENTS.READY_CHECK   ||
+           intentResult.intent === cir.INTENTS.PROBLEM_CHECK) &&
+          intentResult.projectHint
+        ) {
+          let ctxPid = currentPid;
+          try {
+            const allProjects = projectManager.listProjects();
+            const hl = intentResult.projectHint.toLowerCase();
+            const matched = allProjects.find(p =>
+              p.id.toLowerCase().includes(hl) ||
+              (p.name || '').toLowerCase().includes(hl)
+            );
+            if (matched) ctxPid = matched.id;
+          } catch (_) {}
+          cir.updateProjectContext(message.author.id, intentResult.projectHint, ctxPid);
+          logger.info(`[CIR] ctx更新 | user=${message.author.id} | hint=${intentResult.projectHint} | pid=${ctxPid}`);
         }
 
         // その他インテント → 情報取得（副作用なし）
