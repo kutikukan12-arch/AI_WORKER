@@ -224,9 +224,15 @@ const INTENT_PATTERNS = [
   },
 
   // RUN_REQUEST: 続行・起動
+  //
+  // 評価順:
+  //   1. 単体動詞（^進めて 等）— 末尾 $ で短い発話をキャッチ
+  //   2. [project]進めて 形（.+進めて）— プロジェクト名直接指定
+  //      ※ OPERATOR_* は ^黒川 / ^AI_WORKER.*(起こして) で先に捕捉済み
   {
     intent: INTENTS.RUN_REQUEST,
     patterns: [
+      // ── 単体動詞（コンテキスト依存）──
       /^進めといて[。\.！!]?$/,
       /^進めて[。\.！!]?$/,
       /^続けて[。\.！!]?$/,
@@ -239,6 +245,14 @@ const INTENT_PATTERNS = [
       /^走らせて[。\.！!]?$/,
       /自動.*動かして/,
       /auto.*on/i,
+      // ── [project名]進めて 形（プロジェクト直接指定型）──
+      // 例: 「YouTube進めて」「youtube予測ai進めて」「AI_WORKER進めて」
+      // extractRunProjectPrefix がプロジェクト名プレフィックスを抽出する
+      /^.+進めて[。\.！!]?$/,
+      /^.+進めといて[。\.！!]?$/,
+      /^.+続けて[。\.！!]?$/,
+      /^.+続けといて[。\.！!]?$/,
+      /^.+走らせて[。\.！!]?$/,
     ],
   },
 
@@ -330,12 +344,19 @@ function detectIntent(text) {
   for (const entry of INTENT_PATTERNS) {
     for (const pattern of entry.patterns) {
       if (pattern.test(normalized)) {
-        logger.debug(`[CIR] intent=${entry.intent} | pattern=${pattern} | text="${normalized}"`);
+        // RUN_REQUEST で [project]進めて 形の場合:
+        //   extractProjectHint が null → extractRunProjectPrefix でプレフィックスを補完
+        //   例: 「AI_WORKER進めて」→ hint="AI_WORKER"（キーワード外でも取れる）
+        let hint = projectHint;
+        if (entry.intent === INTENTS.RUN_REQUEST && !hint) {
+          hint = extractRunProjectPrefix(normalized);
+        }
+        logger.debug(`[CIR] intent=${entry.intent} | pattern=${pattern} | text="${normalized}" | hint=${hint}`);
         return {
           intent:      entry.intent,
           confidence:  'high',
           keyword:     normalized,
-          projectHint,
+          projectHint: hint,
         };
       }
     }
@@ -345,7 +366,7 @@ function detectIntent(text) {
 }
 
 // ─────────────────────────────────────────────────────
-// extractProjectHint — テキストからプロジェクト名を抽出
+// extractProjectHint — テキストからプロジェクト名を抽出（キーワードマッチ）
 // ─────────────────────────────────────────────────────
 function extractProjectHint(text) {
   // YouTube / 診断AI / 報告書 などの固有名詞を抽出
@@ -357,6 +378,26 @@ function extractProjectHint(text) {
   const lower = text.toLowerCase();
   for (const kw of PROJECT_KEYWORDS) {
     if (lower.includes(kw.toLowerCase())) return kw;
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────
+// extractRunProjectPrefix — 「[project]進めて」形のプレフィックスを抽出
+//
+// キーワードマッチ（extractProjectHint）で取れない場合に使う補完。
+// 例:
+//   「YouTube進めて」     → "YouTube"  （extractProjectHint でも取れる）
+//   「AI_WORKER進めて」  → "AI_WORKER" （キーワードに含まれていないため必要）
+//   「youtube予測ai進めて」→ "youtube予測ai"
+//   「進めて」            → null （プレフィックスなし）
+// ─────────────────────────────────────────────────────
+const _RUN_SUFFIX_RE = /^(.+?)(進めて|進めといて|続けて|続けといて|走らせて)[。\.！!]?$/;
+
+function extractRunProjectPrefix(text) {
+  const m = text.match(_RUN_SUFFIX_RE);
+  if (m && m[1] && m[1].trim().length > 0) {
+    return m[1].trim();
   }
   return null;
 }
@@ -761,4 +802,6 @@ module.exports = {
   getProjectContext,
   clearProjectContext,
   buildRunAskProjectReply,
+  // 一発形ヒント抽出（テスト・外部確認用）
+  extractRunProjectPrefix,
 };

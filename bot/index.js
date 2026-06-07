@@ -7284,15 +7284,28 @@ client.on('messageCreate', async (message) => {
           let runHint = intentResult.projectHint || null;
 
           // ① インテント直接ヒント（「YouTube進めて」等）→ プロジェクト名解決
+          //    複数一致の場合は勝手に実行せず確認要求する
           if (runHint) {
             try {
               const allProjects = projectManager.listProjects();
               const hl = runHint.toLowerCase();
-              const matched = allProjects.find(p =>
+              const matches = allProjects.filter(p =>
                 p.id.toLowerCase().includes(hl) ||
                 (p.name || '').toLowerCase().includes(hl)
               );
-              if (matched) runPid = matched.id;
+              if (matches.length === 1) {
+                runPid = matches[0].id;
+              } else if (matches.length > 1) {
+                // 複数一致 → どれを実行するか確認（勝手に実行しない）
+                const candidates = matches.slice(0, 5).map(p => `  • \`${p.id}\``).join('\n');
+                await message.reply(
+                  `❓ **「${runHint}」が複数のプロジェクトに一致します**\n\n` +
+                  `${candidates}\n\n` +
+                  `どれを進めますか？ \`!project run <id>\` で明示的に指定してください。`
+                ).catch(() => {});
+                return;
+              }
+              // matches.length === 0: runPid は null のまま（③ で処理）
             } catch (_) {}
           }
 
